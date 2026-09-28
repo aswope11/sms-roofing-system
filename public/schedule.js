@@ -26,6 +26,8 @@ export async function schedulePage(start) {
   const crew = groupCrew(w.crew).filter(c => c.active || w.stops.some(s => s.crew_id === c.id));
   const jobsById = Object.fromEntries(w.jobs.map(j => [j.id, j]));
   const open = w.jobs.filter(j => !j.done_at);
+  // SHOP (9/28/26): Shop is only a pick when logging a man's day — never a row in the job lists below the grid.
+  const listed = open.filter(j => j.customer_name !== 'SMS Shop');
   const shares = stopShares(w);
   const nobody = d => open.filter(j => j.scheduled_date === d && !w.stops.some(s => s.job_id === j.id && s.work_date === d));
   const pfx = j => `<span class="pfx">${esc(j.tag)} -</span> `;
@@ -82,15 +84,15 @@ export async function schedulePage(start) {
   const rowHTML = j => j.tag === 'R' ? `<div class="smsrep">${pRow(j)}</div>` : pRow(j);
   const fold = foldState();
   let sections = '';
-  const readyRows = open.filter(j => bucketOf(j) === 'ready').sort(jobCmp);
+  const readyRows = listed.filter(j => bucketOf(j) === 'ready').sort(jobCmp);
   if (readyRows.length) sections += `<div class="psec"><h3 data-fold="readytowork">${fold.readytowork ? '▸' : '▾'} Ready to work <span class="n">${readyRows.length}</span></h3>${fold.readytowork ? '' : readyRows.map(rowHTML).join('')}</div>`;
   [{ k: 'hold', l: 'Waiting on the customer' }, { k: 'trades', l: 'Waiting on other trades' }].forEach(h => {
-    const rows = open.filter(j => bucketOf(j) === h.k); if (!rows.length) return;
+    const rows = listed.filter(j => bucketOf(j) === h.k); if (!rows.length) return;
     sections += `<div class="${schedOpen[h.k] ? 'parked open' : 'parked'}"><h3 data-hold="${h.k}">${schedOpen[h.k] ? '▾' : '▸'} ${esc(h.l)} <span class="n">${rows.length}</span></h3>
       <div class="plist"><div class="psec">${rows.sort(jobCmp).map(rowHTML).join('')}</div></div></div>`;
   });
   {
-    const rows = open.filter(j => bucketOf(j) === 'contract').sort(jobCmp);
+    const rows = listed.filter(j => bucketOf(j) === 'contract').sort(jobCmp);
     sections += `<div class="parked open" id="smsAwardedLane"><h3 data-fold="awarded">${fold.awarded ? '▸' : '▾'} Awarded <span class="n">${rows.length}</span></h3>${
       fold.awarded ? '' : `<div class="plist"><div class="psec">${rows.map(rowHTML).join('') || '<div class="empty">Nothing sold without a ticket right now.</div>'}</div></div>`}</div>`;
   }
