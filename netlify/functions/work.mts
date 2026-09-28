@@ -584,6 +584,26 @@ export default async (req: Request) => {
       return json(norm(r));
     }
 
+    // ================= SHOP (9/28/26) =================
+    // The Shop job file = customer "SMS Shop" → property "Shop". Its labor is read off the job cost sheet;
+    // this only finds that job and keeps the WHY for each day. Shop is paid, never billed (it's a JC — green never bills a JC).
+    if (kind === "shop") {
+      const [shop] = norm(await sql`SELECT j.id FROM jobs j JOIN properties p ON p.id = j.property_id JOIN customers c ON c.id = p.customer_id
+        WHERE c.name = 'SMS Shop' AND p.address = 'Shop' ORDER BY j.id LIMIT 1`);
+      if (m === "GET" && !idRaw) {
+        const whys = norm(await sql`SELECT work_date, shows_as, why FROM shop_why ORDER BY work_date, shows_as`);
+        return json({ job_id: shop ? shop.id : null, whys });
+      }
+      if (m === "PUT" && idRaw === "why") {
+        const b = await body();
+        const date = String(b.work_date || ""), who = String(b.shows_as || "").trim(), why = String(b.why || "").trim();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !who) return refuse("Which day and who — both are needed to save the why.", 400);
+        const [row] = norm(await sql`INSERT INTO shop_why (work_date, shows_as, why, changed_at) VALUES (${date}, ${who}, ${why}, NOW())
+          ON CONFLICT (work_date, shows_as) DO UPDATE SET why = EXCLUDED.why, changed_at = NOW() RETURNING work_date, shows_as, why`);
+        return json(row);
+      }
+    }
+
     // ================= CREW ORDER (he drags men up and down) =================
     if (kind === "crew-order" && m === "PUT") {
       const b = await body();

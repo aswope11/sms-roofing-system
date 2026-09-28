@@ -11,6 +11,7 @@ import { crewPage } from './crew.js';
 import { subsPage } from './subs.js';
 import { renderTicket } from './ledger.js';
 import { jobCostPage } from './jobcost.js';
+import { shopPage } from './shop.js';
 import { ticketName, isWork } from './money.js';
 
 const $app = document.getElementById('app');
@@ -305,7 +306,7 @@ async function search(q) {
 async function route() {
   const [, page, id, sub] = location.hash.split('/');
   try {
-    setTab(page === 'payroll' ? 'crew' : ['schedule', 'bids', 'invoicing', 'ar', 'supply', 'subs', 'crew'].includes(page) ? page : 'customers');
+    setTab(page === 'payroll' ? 'crew' : ['schedule', 'bids', 'invoicing', 'ar', 'supply', 'subs', 'crew', 'shop'].includes(page) ? page : 'customers');
     if (page === 'customer') await customer(id);
     else if (page === 'property') await property(id);
     else if (page === 'job') await job(id);
@@ -321,6 +322,7 @@ async function route() {
     else if (page === 'supply') await supplyPage();
     else if (page === 'subs') await subsPage(id);
     else if (page === 'crew' || page === 'payroll') await crewPage();
+    else if (page === 'shop') await shopPage();
     else await home();
     window.scrollTo(0, 0);
   } catch (e) { $app.innerHTML = `<div class="card err">${esc(e.message)}</div>`; }
