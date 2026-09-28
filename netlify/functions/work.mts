@@ -629,6 +629,16 @@ export default async (req: Request) => {
       }
     }
 
+    // ================= PUT A SUB ON THIS WEEK'S BOARD (old app's "Put somebody on the board", 9/28/26) =================
+    if (kind === "board-add" && m === "PUT") {
+      const b = await body();
+      const start = M.payWeekStart(String(b.week_start || today())), cid = Number(b.crew_id);
+      if (!cid) return refuse("Which man — pick him first.", 400);
+      const [row] = norm(await sql`INSERT INTO board_add (week_start, crew_id, on_board, changed_at) VALUES (${start}, ${cid}, ${b.on !== false}, NOW())
+        ON CONFLICT (week_start, crew_id) DO UPDATE SET on_board = EXCLUDED.on_board, changed_at = NOW() RETURNING *`);
+      return json(row);
+    }
+
     // ================= CREW ORDER (he drags men up and down) =================
     if (kind === "crew-order" && m === "PUT") {
       const b = await body();
@@ -659,7 +669,8 @@ export default async (req: Request) => {
       const scopes = norm(await sql`SELECT job_id, name FROM job_scopes WHERE job_id = ANY(${jobs.map((j: any) => j.id)}::int[]) ORDER BY id`);
       const wInvs = jobs.length ? norm(await sql`SELECT * FROM invoices WHERE job_id = ANY(${jobs.map((j: any) => j.id)}::int[]) AND kind IN ('real','draw') AND paid_at IS NULL`) : [];
       const agedJobs = jobs.map((j: any) => ({ ...j, aging: M.drawAging(j, wInvs, today()) }));
-      return json({ start, dates, today: today(), crew, stops, crewDays, green, jobs: agedJobs, scopes });
+      const boardAdd = norm(await sql`SELECT crew_id FROM board_add WHERE week_start = ${start} AND on_board`).map((r: any) => r.crew_id);
+      return json({ start, dates, today: today(), crew, stops, crewDays, green, jobs: agedJobs, scopes, board_add: boardAdd });
     }
 
     // ================= STOPS =================

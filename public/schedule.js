@@ -23,7 +23,14 @@ export async function schedulePage(start) {
   setTab('schedule'); crumbs([['Schedule']]);
   const w = await call('/w/week' + (start ? `?start=${start}` : ''));
   // same order and groups as the Crew tab: SMS employees, then each sub with his men right under him
-  const crew = groupCrew(w.crew).filter(c => c.active || w.stops.some(s => s.crew_id === c.id));
+  const allCrew = groupCrew(w.crew).filter(c => c.active || w.stops.some(s => s.crew_id === c.id));
+  // SUBS ONLY THE WEEK THEY WORK (9/28/26, same as the old board): SMS employees always show. A sub shows when he or
+  // one of his men has a job this week, or when he was put up with "Put somebody on the board"; ✕ takes him back off.
+  const workedMen = new Set(w.stops.map(s => s.crew_id));
+  w.crew.forEach(c => { if (c.boss_id && workedMen.has(c.id)) workedMen.add(c.boss_id); });
+  const onBoard = new Set([...workedMen, ...(w.board_add || [])]);
+  const crew = groupCrew(w.crew).filter(c => allCrew.some(a => a.id === c.id) && (c.group === 'employee' || onBoard.has(c.id)));
+  const offBoard = allCrew.filter(c => c.active && c.group !== 'employee' && !onBoard.has(c.id));
   const jobsById = Object.fromEntries(w.jobs.map(j => [j.id, j]));
   const open = w.jobs.filter(j => !j.done_at);
   // SHOP (9/28/26): Shop is only a pick when logging a man's day — never a row in the job lists below the grid.
@@ -99,7 +106,7 @@ export async function schedulePage(start) {
 
   // ADD A MAN, WHERE HE IS STANDING WHEN HE HIRES ONE (off the Crew page, 9/18).
   const bossOpts = `<option value="">— nobody, he's his own —</option>` +
-    crew.filter(c => !c.boss_id && c.kind === 'sub').map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+    allCrew.filter(c => !c.boss_id && c.kind === 'sub').map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
   $app().innerHTML = `<div class="oldgrid">
     <h1>Schedule</h1>
     <div style="margin-bottom:12px"><button type="button" id="addManBtn">Add a man</button></div>
@@ -117,6 +124,9 @@ export async function schedulePage(start) {
       <button id="next">Next ›</button>
       <button id="thisw">Today</button>
     </div>
+    ${offBoard.length ? `<div class="btnrow" style="margin-bottom:10px"><span class="mute">Put somebody on the board</span>
+      <select id="acPick"><option value="">— pick a sub —</option>${offBoard.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
+      <button type="button" class="small" id="acAdd">Add</button></div>` : ''}
     <div class="card fitgrid">
       <table class="grid schedgrid">
         <colgroup><col class="mancol">${dates.map(() => '<col>').join('')}</colgroup>
@@ -124,8 +134,8 @@ export async function schedulePage(start) {
           <div class="d">${dayName(d)}</div><div class="dt">${dayShort(d)}</div>
           <div class="dchk">${st === 'acct' ? '✓ good to bill' : st === 'late' ? 'not accounted' : 'tap when right'}</div></th>`; }).join('')}</tr>
         <tr><th>Nobody on it yet</th>${dates.map(d => `<td class="cell">${nobody(d).map(j => `${jobCardHTML(j, '', d)}
-          <select class="small putman" data-job="${j.id}" data-date="${d}"><option value="">put a man on it</option>${crew.filter(c => c.active).map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>`).join('')}</td>`).join('')}</tr>
-        ${crew.map((c, i) => `${i === 0 || (crew[i - 1].group === 'employee') !== (c.group === 'employee') ? `<tr class="grouphead"><th colspan="${dates.length + 1}">${c.group === 'employee' ? 'SMS employees' : 'Subs'}</th></tr>` : ''}<tr><th style="border-left:4px solid ${crewColor(c, w.crew)}">${c.group.startsWith('under-') ? '<span class="mute">↳ </span>' : ''}${esc(c.name)}</th>${dates.map(d => {
+          <select class="small putman" data-job="${j.id}" data-date="${d}"><option value="">put a man on it</option>${allCrew.filter(c => c.active).map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>`).join('')}</td>`).join('')}</tr>
+        ${crew.map((c, i) => `${i === 0 || (crew[i - 1].group === 'employee') !== (c.group === 'employee') ? `<tr class="grouphead"><th colspan="${dates.length + 1}">${c.group === 'employee' ? 'SMS employees' : 'Subs'}</th></tr>` : ''}<tr><th style="border-left:4px solid ${crewColor(c, w.crew)}">${c.group.startsWith('under-') ? '<span class="mute">↳ </span>' : ''}${esc(c.name)}${c.group !== 'employee' && !workedMen.has(c.id) ? ` <span class="delx" data-drop="${c.id}" title="Take him off this week" style="cursor:pointer">✕</span>` : ''}</th>${dates.map(d => {
           const mine = w.stops.filter(s => s.crew_id === c.id && s.work_date === d);
           return `<td class="cell">${mine.map(s => jobsById[s.job_id] ? jobCardHTML(jobsById[s.job_id], c.id, d, s.id) : '').join('')}
             <div class="plus ${mine.length ? 'has' : ''}" data-crew="${c.id}" data-date="${d}">+</div></td>`;
@@ -165,6 +175,12 @@ export async function schedulePage(start) {
   const addStop = (crew_id, job_id, work_date) => doAndProve('/w/stops', { method: 'POST', body: { crew_id, job_id, work_date } }, weekUrl,
     back => back.stops.some(s => s.crew_id === Number(crew_id) && s.job_id === Number(job_id) && s.work_date === work_date));
   const run = async fn => { try { await fn(); reload(); } catch (e) { fail(e); } };
+  // put a sub up for this week / take him back off (only a sub who has no job this week can come off)
+  const board = (id, on) => run(() => doAndProve('/w/board-add', { method: 'PUT', body: { week_start: w.start, crew_id: id, on } }, weekUrl,
+    back => (back.board_add || []).includes(id) === on, on ? 'On the board this week — read back and he is there' : 'Off this week\'s board — he comes back the week he works'));
+  const acAdd = document.getElementById('acAdd');
+  if (acAdd) acAdd.onclick = () => { const v = Number(document.getElementById('acPick').value); if (v) board(v, true); };
+  $app().querySelectorAll('[data-drop]').forEach(x => x.onclick = ev => { ev.stopPropagation(); board(Number(x.dataset.drop), false); });
 
   // tap a day header: green it (good to bill) or take it back
   $app().querySelectorAll('th[data-green]').forEach(th => th.onclick = () => {
