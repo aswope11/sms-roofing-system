@@ -1,4 +1,4 @@
-// MAIL — the app's own Gmail. It reads ONLY the five SMS labels (and his sent invoices). It never sends or replies.
+// MAIL — the app's own Gmail. It reads ONLY the SMS labels. It never reads Sent, never sends or replies (his call 9/28/26: "don't read every email").
 // Lives as one fold on Customers: what it filed, and the few it can't place without you.
 import { esc, call, doAndProve, fail, ask, toast } from './ui.js';
 import { ticketName, shortDateYY } from './money.js';
@@ -10,12 +10,13 @@ export async function mailStrip(mount) {
       <div class="row"><a href="/api/gmail/connect">Connect Gmail — it reads only your five SMS labels, and it can never send</a></div></details>`;
     return;
   }
-  const need = d.needs_you || [], filed = d.filed || [];
+  // 9/28/26: Sent is no longer read — any old "Sent invoice" misses stay in the database but never show here.
+  const need = (d.needs_you || []).filter(r => !/^Sent invoice/.test(r.what || '')), filed = d.filed || [];
   mount.innerHTML = `<details class="card bidstrip"${need.length ? ' open' : ''}>
     <summary><b>Mail</b>${need.length ? ` <span class="lanen">${need.length}</span> <span class="redtxt">need you</span>` : ' <span class="mute">nothing waiting</span>'}</summary>
     <div class="btnrow" style="padding:0 14px 8px"><button class="small ghost" id="mailScan">Check the labels now</button></div>
     ${st.can_label ? '' : `<div class="row"><a href="/api/gmail/connect" class="redtxt">Reconnect Gmail once so it can take the label off an email when it is done</a></div>`}
-    <div class="row"><span class="mute">It reads ONLY emails you put in !SMS/BID, !SMS/R, !SMS/CO, !SMS/JC or !SMS/UC — every 15 minutes on its own. Each one is matched to its property by address, a ticket with that tag is made, the email and attachments go in that job file, and the label comes off. Nothing else in your inbox is read. It also still reads what you SENT for invoices, so an invoice you email is marked sent and lands in AR.</span></div>
+    <div class="row"><span class="mute">It reads ONLY emails you put in !SMS/BID, !SMS/R, !SMS/CO, !SMS/JC or !SMS/UC — every 15 minutes on its own. Each one is matched to its property by address, a ticket with that tag is made, the email and attachments go in that job file, and the label comes off. Nothing else in your inbox is read.</span></div>
     ${need.map(r => `<div class="row">
       <span><b>${esc(r.subject || '(no subject)')}</b><br><span class="mute">${esc(r.from_addr)}${r.sent_at ? ' · ' + shortDateYY(String(r.sent_at).slice(0, 10)) : ''} — ${esc(r.what)}</span></span>
       <span class="lanebtns">${/^!?SMS\//.test(r.what || '') ? `<button class="lb send place" data-id="${r.id}">Who's it for?</button>` : `<button class="lb send put" data-id="${r.id}">Put it on a job</button>`}<button class="lb skip" data-id="${r.id}">Not ours</button></span>
@@ -37,11 +38,7 @@ export async function mailStrip(mount) {
         ev.target.textContent = `Reading the labels… ${filed + asked} so far`;
         if (!r.left) break;
       }
-      ev.target.textContent = 'Reading what you sent…';
-      const sent = await call('/w/mail/sent', { method: 'POST', body: {} });
-      toast(`Labels: ${filed} filed · ${asked} need you` +
-        ` — Sent: ${sent.finished} invoice${sent.finished === 1 ? '' : 's'} finished and in AR` +
-        (sent.needs_you ? ` · ${sent.needs_you} need you` : ''), !(asked + sent.needs_you));
+      toast(`Labels: ${filed} filed · ${asked} need you`, !asked);
       again();
     } catch (e) { fail(e); ev.target.disabled = false; ev.target.textContent = 'Check the mail now'; }
   };
