@@ -114,7 +114,8 @@ export default async (req: Request, context: Context) => {
         return note(j, miss);
       }
       if (m === "PUT" && id) {
-        const [j] = await sql`UPDATE jobs SET tag=${tag}, title=${title}, notes=${b.notes || ""}
+        const [j] = await sql`UPDATE jobs SET tag=${tag}, title=${title}, notes=${b.notes || ""},
+          property_id=COALESCE(${b.property_id ? Number(b.property_id) : null}, property_id)
           WHERE id=${id} RETURNING *`;
         return note(j, miss);
       }
