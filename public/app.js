@@ -93,7 +93,7 @@ async function customer(id) {
         const bidOnly = c.properties.filter(p => p.job_count > 0 && p.work_count === 0);
         const rest = c.properties.filter(p => !bidOnly.includes(p));
         if (!c.properties.length) return '<div class="empty">No properties yet.</div>';
-        return rest.map(propRow).join('') + (bidOnly.length ? `<details class="bidspill"><summary><span class="pill">Bids ${bidOnly.length}</span></summary>${bidOnly.map(propRow).join('')}</details>` : '');
+        return rest.map(propRow).join('') + (bidOnly.length ? `<details class="bidspill" open><summary><span class="pill">Bids ${bidOnly.length}</span></summary>${bidOnly.map(propRow).join('')}</details>` : '');
       })()}
     </div>
     <div class="card">
