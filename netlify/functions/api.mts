@@ -32,6 +32,8 @@ export default async (req: Request, context: Context) => {
           SELECT p.*, (SELECT COUNT(*)::int FROM jobs j WHERE j.property_id = p.id) AS job_count,
             (SELECT COUNT(*)::int FROM jobs j WHERE j.property_id = p.id AND j.tag IS DISTINCT FROM 'BID') AS work_count
           FROM properties p WHERE p.customer_id = ${id} ORDER BY LOWER(p.address)`;
+        c.files = await sql`SELECT id, name, content_type, size_bytes, created_at FROM files
+          WHERE customer_id = ${id} AND complete ORDER BY created_at`;
         return json(c);
       }
       const b = await req.json();
@@ -129,10 +131,10 @@ export default async (req: Request, context: Context) => {
         const b = await req.json();
         const miss = missingOnFile(b);            // a note that rides back, never a refusal
         const chunks = chunkCount(Number(b.size_bytes) || 0);
-        const owner = b.sub_id ? `sub-${b.sub_id}` : b.supply_invoice_id ? `supply-${b.supply_invoice_id}` : `job-${b.job_id}`;
+        const owner = b.customer_id ? `customer-${b.customer_id}` : b.sub_id ? `sub-${b.sub_id}` : b.supply_invoice_id ? `supply-${b.supply_invoice_id}` : `job-${b.job_id}`;
         const key = `${owner}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        const [f] = await sql`INSERT INTO files (job_id, supply_invoice_id, sub_id, drawer, name, content_type, size_bytes, chunks, blob_key)
-          VALUES (${b.job_id || null}, ${b.supply_invoice_id || null}, ${b.sub_id || null}, ${b.sub_id ? "W-9" : b.supply_invoice_id ? "Paper" : (b.drawer || "")}, ${String(b.name || "").trim()}, ${b.content_type || "application/octet-stream"}, ${Number(b.size_bytes) || 0}, ${chunks}, ${key})
+        const [f] = await sql`INSERT INTO files (job_id, supply_invoice_id, sub_id, customer_id, drawer, name, content_type, size_bytes, chunks, blob_key)
+          VALUES (${b.job_id || null}, ${b.supply_invoice_id || null}, ${b.sub_id || null}, ${b.customer_id || null}, ${b.customer_id ? "Pinned" : b.sub_id ? "W-9" : b.supply_invoice_id ? "Paper" : (b.drawer || "")}, ${String(b.name || "").trim()}, ${b.content_type || "application/octet-stream"}, ${Number(b.size_bytes) || 0}, ${chunks}, ${key})
           RETURNING *`;
         return note({ ...f, chunk_bytes: CHUNK_BYTES }, miss);
       }

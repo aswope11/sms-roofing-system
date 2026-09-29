@@ -49,8 +49,8 @@ export function missingOnJob(j) {
 }
 export function missingOnFile(f) {
   const miss = [];
-  if (!f || (!f.job_id && !f.supply_invoice_id && !f.sub_id)) miss.push('Job');
-  if (!f || (!f.supply_invoice_id && !f.sub_id && !DRAWERS.includes(f.drawer))) miss.push('Drawer');
+  if (!f || (!f.job_id && !f.supply_invoice_id && !f.sub_id && !f.customer_id)) miss.push('Job');
+  if (!f || (!f.supply_invoice_id && !f.sub_id && !f.customer_id && !DRAWERS.includes(f.drawer))) miss.push('Drawer');
   if (!f || !String(f.name || '').trim()) miss.push('File name');
   if (!f || !(f.size_bytes >= 0)) miss.push('File size');
   return miss;

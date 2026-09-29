@@ -97,6 +97,11 @@ async function customer(id) {
       })()}
     </div>
     <div class="card">
+      <h2>Pinned</h2>
+      ${(c.files || []).map(f => `<div class="row"><a href="/api/files/${f.id}" target="_blank">${esc(f.name)}</a><span class="mute">${new Date(f.created_at).toLocaleDateString()}</span></div>`).join('') || '<div class="empty">Nothing pinned.</div>'}
+      <div class="drop" id="pindrop" style="margin-top:10px">Drop a file to pin it to ${esc(c.name)} — or click to pick<input type="file" hidden multiple></div><div class="mute" id="pinprog"></div>
+    </div>
+    <div class="card">
       <h2>New property</h2>
       <p class="help">The roof's street address. The app checks every address already on file first, so the same building never gets two records.</p>
       <form id="f">
@@ -137,6 +142,29 @@ async function customer(id) {
     try { await saveAndProve(`customers/${id}`, 'PUT', formData(ev.target), () => `customers/${id}`, ['name', 'phone', 'email', 'notes']); route(); }
     catch (e) { fail(e, document.getElementById('ee')); btn.disabled = false; }
   };
+  // Pinned on the company: same pieces-upload as job files, then read the company back to prove it stuck.
+  const pin = document.getElementById('pindrop'), pinIn = pin.querySelector('input'), pinProg = document.getElementById('pinprog');
+  const pinUp = async files => {
+    try {
+      for (const file of files) {
+        const meta = await api('files', { method: 'POST', body: JSON.stringify({ customer_id: Number(id), name: file.name, content_type: file.type || 'application/octet-stream', size_bytes: file.size }) });
+        for (let n = 0; n < meta.chunks; n++) {
+          pinProg.textContent = `${file.name}: piece ${n + 1} of ${meta.chunks}`;
+          const r = await fetch(`/api/files/${meta.id}/chunk/${n}`, { method: 'PUT', headers: { 'content-type': 'application/octet-stream' }, body: file.slice(n * CHUNK_BYTES, (n + 1) * CHUNK_BYTES) });
+          if (!r.ok) throw new Error(`Piece ${n + 1} failed`);
+        }
+        await api(`files/${meta.id}/finish`, { method: 'POST' });
+        const back = await api(`customers/${id}`);
+        if (!(back.files || []).some(x => x.id === meta.id)) throw new Error(`${file.name} did not stick`);
+      }
+      route();
+    } catch (e) { pinProg.textContent = ''; fail(e, pinProg); }
+  };
+  pin.onclick = () => pinIn.click();
+  pinIn.onchange = () => pinUp([...pinIn.files]);
+  pin.ondragover = e => { e.preventDefault(); pin.classList.add('over'); };
+  pin.ondragleave = () => pin.classList.remove('over');
+  pin.ondrop = e => { e.preventDefault(); pin.classList.remove('over'); pinUp([...e.dataTransfer.files]); };
 }
 
 // ---------------- PROPERTY ----------------
