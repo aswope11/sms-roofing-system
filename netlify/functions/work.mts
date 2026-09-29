@@ -826,7 +826,10 @@ export default async (req: Request) => {
           const billed = M.round2(mine(invoices, c.id).filter(M.isBill).reduce((a: number, x: any) => a + Number(x.amount), 0));
           return { id: c.id, tag: c.tag, title: c.title, address: c.address, city: c.city, co_amount: c.co_amount, labor: lab, material: mat, cost: M.round2(lab + mat), billed };
         });
-        return json({ job, contract, today: today(), scopes, categories, cos,
+        // his ask 9/29: a CO's labor shows on the main job's Labor-by-scope under the CO's own scope names (e.g. "CO - Additional 1/12")
+        const coScopes = allShares.filter((x: any) => x.job_id !== id).flatMap((x: any) => M.splitByScope(x.cost, splitOf[x.stop_id]))
+          .map((x: any) => ({ name: x.name || "CO - no scope", amount: x.amount }));
+        return json({ job, contract, today: today(), scopes, categories, cos, coScopes,
           labor, material: mine(material, id), invoices: mine(invoices, id), places: M.whereIs(job, mine(invoices, id)) });
       }
       const b = await body();

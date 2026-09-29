@@ -39,7 +39,7 @@ export async function jobCostPage(jobId, sub) {
   const coBilled = round2(D.cos.reduce((a, c) => a + c.billed, 0));
   const profit = round2(billed - cost);
   const margin = billed > 0 ? Math.round(profit / billed * 1000) / 10 : null;
-  const scopeT = budgetTable(D.scopes, D.labor.flatMap(s => s.scopes));
+  const scopeT = budgetTable(D.scopes, [...D.labor.flatMap(s => s.scopes), ...(D.coScopes || [])]);   // CO labor rows under the CO's scope names (9/29)
   const catOf = l => l.category || l.house;
   const catT = budgetTable(D.categories, D.material.map(l => ({ name: catOf(l), amount: l.line_total })));
   const pb = pricedBack(matTotal, smsTotal, subTotal);
