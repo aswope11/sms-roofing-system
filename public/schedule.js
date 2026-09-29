@@ -124,9 +124,10 @@ export async function schedulePage(start) {
       <button id="next">Next ›</button>
       <button id="thisw">Today</button>
     </div>
-    ${offBoard.length ? `<div class="btnrow" style="margin-bottom:10px"><span class="mute">Put somebody on the board</span>
-      <select id="acPick"><option value="">— pick a sub —</option>${offBoard.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
-      <button type="button" class="small" id="acAdd">Add</button></div>` : ''}
+    <div class="btnrow" style="margin-bottom:10px"><span class="mute">Put somebody on the board</span>
+      <input id="acName" list="acList" placeholder="type his name — new or on file" autocomplete="off">
+      <datalist id="acList">${offBoard.map(c => `<option value="${esc(c.name)}">`).join('')}</datalist>
+      <button type="button" class="small" id="acAdd">Add</button></div>
     <div class="card fitgrid">
       <table class="grid schedgrid">
         <colgroup><col class="mancol">${dates.map(() => '<col>').join('')}</colgroup>
@@ -179,7 +180,23 @@ export async function schedulePage(start) {
   const board = (id, on) => run(() => doAndProve('/w/board-add', { method: 'PUT', body: { week_start: w.start, crew_id: id, on } }, weekUrl,
     back => (back.board_add || []).includes(id) === on, on ? 'On the board this week — read back and he is there' : 'Off this week\'s board — he comes back the week he works'));
   const acAdd = document.getElementById('acAdd');
-  if (acAdd) acAdd.onclick = () => { const v = Number(document.getElementById('acPick').value); if (v) board(v, true); };
+  // TYPE A GUY IN (9/29/26, the old board's way): a name on file goes up for this week; a new name is added
+  // to the crew as a sub for good (rate blank until it's settled) and goes up for this week.
+  const acName = document.getElementById('acName');
+  const addTyped = async () => {
+    const name = acName.value.trim(); if (!name) return;
+    const known = w.crew.find(c => c.name.trim().toLowerCase() === name.toLowerCase());
+    if (known && ((known.kind !== 'sub' && !known.boss_id) || onBoard.has(known.id))) { toast(`${known.name} is already on the board this week`); return; }
+    if (known) return board(known.id, true);
+    acAdd.disabled = true;
+    try {
+      const { result } = await doAndProve('/w/crew', { method: 'POST', body: { name, kind: 'sub' } }, '/w/crew',
+        (list, r) => list.some(c => c.id === r.id && c.name === name), `${name} is on the crew for good — read back and he is there`);
+      board(result.id, true);
+    } catch (e) { fail(e); acAdd.disabled = false; }
+  };
+  acAdd.onclick = addTyped;
+  acName.onkeydown = ev => { if (ev.key === 'Enter') { ev.preventDefault(); addTyped(); } };
   $app().querySelectorAll('[data-drop]').forEach(x => x.onclick = ev => { ev.stopPropagation(); board(Number(x.dataset.drop), false); });
 
   // tap a day header: green it (good to bill) or take it back
