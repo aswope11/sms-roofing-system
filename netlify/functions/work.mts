@@ -119,6 +119,11 @@ async function pushInvoiceToQB(sql: any, invoiceId: number, job: any) {
   if (inv.kind !== "real") throw new Error("Only a real invoice goes to QuickBooks from here.");
   if (inv.qb_id) throw new Error(`Already in QuickBooks as #${inv.number}.`);
   if (!(Number(inv.amount) > 0)) throw new Error("Can't do that yet — missing: the dollar amount");
+  // Four Corners check (9/28, his words: "make sure we don't send out bullshit"): a Four Corners invoice never goes to
+  // QuickBooks without the owning entity (LLC) and its address on the property. Check it against the property list
+  // pinned on the Four Corners page (Keeson, 7/23/26), fill Edit property → Invoice bill-to, then send again.
+  if (/four\s*corners/i.test(String(job.customer_name || "")) && !(String(job.bill_name || "").trim() && String(job.bill_addr || "").trim()))
+    throw new Error("Four Corners invoice stopped — this property has no bill-to entity (LLC) and address. Look it up in the property list pinned on the Four Corners page, fill Edit property → Invoice bill-to, then send again.");
   try {
     const cust = await qbCustomerFor(job);
     const DocNumber = await qbNextNumber();
