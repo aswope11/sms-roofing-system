@@ -125,9 +125,16 @@ export async function schedulePage(start) {
       <button id="thisw">Today</button>
     </div>
     <div class="btnrow" style="margin-bottom:10px"><span class="mute">Put somebody on the board</span>
-      <input id="acName" list="acList" placeholder="type his name — new or on file" autocomplete="off">
-      <datalist id="acList">${offBoard.map(c => `<option value="${esc(c.name)}">`).join('')}</datalist>
+      <select id="acPick"><option value="">— pick a sub —</option>${offBoard.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}<option value="__new">＋ Somebody new…</option></select>
       <button type="button" class="small" id="acAdd">Add</button></div>
+    <div class="btnrow" id="newMan" style="display:none;margin-bottom:10px">
+      <input id="nmName" placeholder="His name, then Enter" autocomplete="off">
+      <select id="nmType"><option value="employee">SMS — one of mine</option><option value="sub">Sub — crew leader</option><option value="under">Sub — works under somebody</option></select>
+      <select id="nmLead" style="display:none">${allCrew.filter(c => !c.boss_id && c.kind === 'sub').map(c => `<option value="${c.id}">under ${esc(c.name)}</option>`).join('') || '<option value="">— no crew leaders yet —</option>'}</select>
+      <input id="nmPayTo" placeholder="Pay to — company name" style="display:none">
+      <input id="nmRate" type="number" min="0" step="0.01" placeholder="Day rate">
+      <button type="button" class="small" id="nmAdd">Add him</button>
+      <button type="button" class="small" id="nmCancel">Cancel</button></div>
     <div class="card fitgrid">
       <table class="grid schedgrid">
         <colgroup><col class="mancol">${dates.map(() => '<col>').join('')}</colgroup>
@@ -180,23 +187,31 @@ export async function schedulePage(start) {
   const board = (id, on) => run(() => doAndProve('/w/board-add', { method: 'PUT', body: { week_start: w.start, crew_id: id, on } }, weekUrl,
     back => (back.board_add || []).includes(id) === on, on ? 'On the board this week — read back and he is there' : 'Off this week\'s board — he comes back the week he works'));
   const acAdd = document.getElementById('acAdd');
-  // TYPE A GUY IN (9/29/26, the old board's way): a name on file goes up for this week; a new name is added
-  // to the crew as a sub for good (rate blank until it's settled) and goes up for this week.
-  const acName = document.getElementById('acName');
-  const addTyped = async () => {
-    const name = acName.value.trim(); if (!name) return;
-    const known = w.crew.find(c => c.name.trim().toLowerCase() === name.toLowerCase());
-    if (known && ((known.kind !== 'sub' && !known.boss_id) || onBoard.has(known.id))) { toast(`${known.name} is already on the board this week`); return; }
-    if (known) return board(known.id, true);
-    acAdd.disabled = true;
+  // THE OLD BOARD'S WAY (9/29/26): the drop-down puts a sub up for this week; "＋ Somebody new…" opens the
+  // add box right here — name, SMS or sub (or under a crew leader), rate — he's on the crew for good,
+  // and a sub goes on this week's board.
+  const acPick = document.getElementById('acPick'), newMan = document.getElementById('newMan');
+  const nm = id => document.getElementById(id);
+  const showNew = on => { newMan.style.display = on ? 'flex' : 'none'; if (on) nm('nmName').focus(); else acPick.value = ''; };
+  acPick.onchange = () => { if (acPick.value === '__new') showNew(true); };
+  acAdd.onclick = () => { const v = acPick.value; if (v === '__new') return showNew(true); if (Number(v)) board(Number(v), true); };
+  nm('nmType').onchange = () => { const t = nm('nmType').value; nm('nmLead').style.display = t === 'under' ? '' : 'none'; nm('nmPayTo').style.display = t === 'sub' ? '' : 'none'; };
+  nm('nmCancel').onclick = () => showNew(false);
+  const addManHere = async () => {
+    const name = nm('nmName').value.trim(); if (!name) { toast("What's his name?", false); return nm('nmName').focus(); }
+    if (w.crew.some(c => c.name.trim().toLowerCase() === name.toLowerCase())) { toast(`${name} is already on the crew — pick him from the list`, false); return; }
+    const t = nm('nmType').value, lead = t === 'under' ? Number(nm('nmLead').value) : null;
+    if (t === 'under' && !lead) { toast('Who does he run with? Add that crew leader first.', false); return; }
+    const body = { name, kind: t === 'employee' ? 'employee' : 'sub', day_rate: nm('nmRate').value, pay_to: t === 'sub' ? nm('nmPayTo').value : '', boss_id: lead };
+    nm('nmAdd').disabled = true;
     try {
-      const { result } = await doAndProve('/w/crew', { method: 'POST', body: { name, kind: 'sub' } }, '/w/crew',
+      const { result } = await doAndProve('/w/crew', { method: 'POST', body }, '/w/crew',
         (list, r) => list.some(c => c.id === r.id && c.name === name), `${name} is on the crew for good — read back and he is there`);
-      board(result.id, true);
-    } catch (e) { fail(e); acAdd.disabled = false; }
+      if (t !== 'employee') board(result.id, true); else reload();
+    } catch (e) { fail(e); nm('nmAdd').disabled = false; }
   };
-  acAdd.onclick = addTyped;
-  acName.onkeydown = ev => { if (ev.key === 'Enter') { ev.preventDefault(); addTyped(); } };
+  nm('nmAdd').onclick = addManHere;
+  ['nmName', 'nmRate'].forEach(id => nm(id).onkeydown = ev => { if (ev.key === 'Enter') { ev.preventDefault(); addManHere(); } });
   $app().querySelectorAll('[data-drop]').forEach(x => x.onclick = ev => { ev.stopPropagation(); board(Number(x.dataset.drop), false); });
 
   // tap a day header: green it (good to bill) or take it back
