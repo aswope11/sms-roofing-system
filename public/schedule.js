@@ -142,7 +142,9 @@ export async function schedulePage(start) {
           <div class="d">${dayName(d)}</div><div class="dt">${dayShort(d)}</div>
           <div class="dchk">${st === 'acct' ? '✓ good to bill' : st === 'late' ? 'not accounted' : 'tap when right'}</div></th>`; }).join('')}</tr>
         <tr><th>Nobody on it yet</th>${dates.map(d => `<td class="cell">${nobody(d).map(j => `${jobCardHTML(j, '', d)}
-          <select class="small putman" data-job="${j.id}" data-date="${d}"><option value="">put a man on it</option>${allCrew.filter(c => c.active).map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>`).join('')}</td>`).join('')}</tr>
+          <select class="small putman" data-job="${j.id}" data-date="${d}"><option value="">put a man on it</option>${allCrew.filter(c => c.active).map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
+          <span class="delx" data-unplan="${j.id}" title="Take it off this day" style="cursor:pointer">✕</span>`).join('')}
+          <div class="plus ${nobody(d).length ? 'has' : ''}" data-nobody="1" data-date="${d}">+</div></td>`).join('')}</tr>
         ${crew.map((c, i) => `${i === 0 || (crew[i - 1].group === 'employee') !== (c.group === 'employee') ? `<tr class="grouphead"><th colspan="${dates.length + 1}">${c.group === 'employee' ? 'SMS employees' : 'Subs'}</th></tr>` : ''}<tr><th style="border-left:4px solid ${crewColor(c, w.crew)}">${c.group.startsWith('under-') ? '<span class="mute">↳ </span>' : ''}${esc(c.name)}${c.group !== 'employee' && !workedMen.has(c.id) ? ` <span class="delx" data-drop="${c.id}" title="Take him off this week" style="cursor:pointer">✕</span>` : ''}</th>${dates.map(d => {
           const mine = w.stops.filter(s => s.crew_id === c.id && s.work_date === d);
           return `<td class="cell">${mine.map(s => jobsById[s.job_id] ? jobCardHTML(jobsById[s.job_id], c.id, d, s.id) : '').join('')}
@@ -243,17 +245,26 @@ export async function schedulePage(start) {
       <span class="jhp" style="background:${typeColor(j.tag)}">${esc(j.tag)}</span>
       <span class="jhn">${esc(j.address)}${j.parent_title ? ' — ' + esc(j.parent_title) : ''}${j.title ? ' — ' + esc(j.title) : ''}${j.done_at ? ' <b class="ambertxt">(marked done)</b>' : ''}</span>
       <span class="jhs">${esc([j.tenant, j.city, j.customer_name].filter(Boolean).join(' · '))}</span></div>`).join('') || `<div class="empty">${q ? 'No open ticket matches.' : 'Nothing is marked ready to work — type to find any job.'}</div>`;
-    document.querySelectorAll('#lHits .jhit').forEach(h => h.onclick = () => openLogForm(Number(h.dataset.job)));
+    // "Nobody on it yet" + (9/29): picking a job only puts it on that day — scheduled_date, no man, no pay
+    document.querySelectorAll('#lHits .jhit').forEach(h => h.onclick = () => logFor && logFor.nobody ? planJob(Number(h.dataset.job), logFor.date) : openLogForm(Number(h.dataset.job)));
   };
   $app().querySelectorAll('.plus').forEach(p => p.onclick = e => {
     e.stopPropagation(); hidePeek();
-    logFor = { crew: p.dataset.crew, date: p.dataset.date };
+    logFor = { crew: p.dataset.crew, date: p.dataset.date, nobody: !!p.dataset.nobody };
     const man = crew.find(c => c.id === Number(p.dataset.crew));
-    document.getElementById('logTitle').textContent = `${man ? man.name : ''} — ${dayHead(p.dataset.date)}`;
+    document.getElementById('logTitle').textContent = `${logFor.nobody ? 'Nobody on it yet' : man ? man.name : ''} — ${dayHead(p.dataset.date)}`;
     document.getElementById('lSearch').value = '';
     document.getElementById('lPick').style.display = ''; document.getElementById('lForm').style.display = 'none';
     renderHits(); logBack.style.display = 'flex'; document.getElementById('lSearch').focus();
   });
+
+  // put a job on a day with nobody on it / take it back off — saves ONLY the job's scheduled_date, read back from the week
+  const planJob = (id, date) => { logBack.style.display = 'none'; run(() => doAndProve(`/w/job/${id}/plan`, { method: 'PUT', body: { scheduled_date: date } }, weekUrl,
+    back => back.jobs.some(j => j.id === id && j.scheduled_date === date), date ? `On ${dayHead(date)} — read back and it is there` : 'Taken off the day — read back and it is gone')); };
+  $app().querySelectorAll('[data-unplan]').forEach(x => x.onclick = ev => { ev.stopPropagation();
+    const id = Number(x.dataset.unplan); logBack.style.display = 'none';
+    run(() => doAndProve(`/w/job/${id}/plan`, { method: 'PUT', body: { scheduled_date: null } }, weekUrl,
+      back => back.jobs.some(j => j.id === id && !j.scheduled_date), 'Taken off the day — read back and it is gone')); });
 
   // the popup, step 2: full/half day (what he's PAID), what he did, change order, and how his day splits by percent
   function openLogForm(jobId) {
