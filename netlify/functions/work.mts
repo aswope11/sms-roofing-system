@@ -119,12 +119,12 @@ async function pushInvoiceToQB(sql: any, invoiceId: number, job: any) {
   if (inv.kind !== "real") throw new Error("Only a real invoice goes to QuickBooks from here.");
   if (inv.qb_id) throw new Error(`Already in QuickBooks as #${inv.number}.`);
   if (!(Number(inv.amount) > 0)) throw new Error("Can't do that yet — missing: the dollar amount");
-  // Four Corners check (9/28, his words: "make sure we don't send out bullshit"): a Four Corners invoice never goes to
-  // QuickBooks without the owning entity (LLC) and its address on the property. Check it against the property list
-  // pinned on the Four Corners page (Keeson, 7/23/26), fill Edit property → Invoice bill-to, then send again.
-  if (/four\s*corners/i.test(String(job.customer_name || "")) && !(String(job.bill_name || "").trim() && String(job.bill_addr || "").trim()))
-    throw new Error("Four Corners invoice stopped — this property has no bill-to entity (LLC) and address. Look it up in the property list pinned on the Four Corners page, fill Edit property → Invoice bill-to, then send again.");
   try {
+    // Four Corners check (9/28, his words: "make sure we don't send out bullshit"): a Four Corners invoice never goes to
+    // QuickBooks without the owning entity (LLC) and its address on the property (look it up in the property list pinned
+    // on the Four Corners page). It stops the QuickBooks send only — the invoice stays in the app and the placeholder stays whole.
+    if (/four\s*corners/i.test(String(job.customer_name || "")) && !(String(job.bill_name || "").trim() && String(job.bill_addr || "").trim()))
+      throw new Error("Four Corners invoice not sent to QuickBooks — this property has no bill-to entity (LLC) and address. The placeholder was NOT zeroed. Look it up in the property list pinned on the Four Corners page, fill Edit property → Invoice bill-to, then Send to QuickBooks.");
     const cust = await qbCustomerFor(job);
     const DocNumber = await qbNextNumber();
     const made = (await qb("POST", "invoice", {
@@ -135,11 +135,30 @@ async function pushInvoiceToQB(sql: any, invoiceId: number, job: any) {
     const back = (await qb("GET", `invoice/${made.Id}`)).Invoice;
     if (!back || Number(back.TotalAmt) !== Number(inv.amount) || back.DocNumber !== DocNumber) throw new Error("QuickBooks read-back doesn't match — check invoice #" + DocNumber + " in QuickBooks.");
     await sql`UPDATE invoices SET qb_id = ${made.Id}, number = ${DocNumber}, qb_error = '' WHERE id = ${invoiceId}`;
-    return { number: DocNumber, customer: cust.DisplayName };
+    const zeroErr = await zeroReplacedPlaceholders(sql, inv, job);
+    return { number: DocNumber, customer: cust.DisplayName, zero_error: zeroErr.join(" · ") };
   } catch (e: any) {
     await sql`UPDATE invoices SET qb_error = ${String(e?.message || e)} WHERE id = ${invoiceId}`;
     throw e;
   }
+}
+// HIS LAW (9/28/26): "the invoice CANNOT be zeroed out before the other invoice is created. 2 tickets is fine. zero tickets i go out of business."
+// So a placeholder is zeroed ONLY here — after the real invoice is in QuickBooks and read back. If QuickBooks refuses the
+// real invoice, nothing is zeroed: two tickets for a while, never none. The placeholders it replaces = this ticket's
+// placeholders still carrying money, for days up to what the real invoice covers.
+async function zeroReplacedPlaceholders(sql: any, inv: any, job: any) {
+  const all = norm(await sql`SELECT * FROM invoices WHERE job_id = ${inv.job_id}`);
+  const through = String(inv.covers_through || "").slice(0, 10);
+  const covered = all.filter((p: any) => p.kind === "placeholder" && Number(p.amount) > 0 && !p.zeroed_by && p.work_date && (!through || String(p.work_date).slice(0, 10) <= through))
+    .sort((a: any, b: any) => String(a.work_date).localeCompare(String(b.work_date)));
+  const names = all.filter((i: any) => i.kind === "placeholder").map((i: any) => ({ name: i.name }));
+  const errs: string[] = [];
+  for (const p of covered) {
+    const name = M.nextJobCostName(names); names.push({ name });
+    await sql`UPDATE invoices SET zeroed_from = amount, zeroed_by = ${inv.id}, amount = 0, name = ${name}, memo = ${p.memo || M.placeholderMemo(job, p.work_date)} WHERE id = ${p.id}`;
+    if (p.qb_id) { try { await qbZeroPlaceholder(p.qb_id, name); } catch (e: any) { errs.push(`placeholder #${p.number} not zeroed in QuickBooks: ${String(e?.message || e)}`); } }
+  }
+  return errs;
 }
 // Mark it sent → the QuickBooks invoice gets the same real date the app gives it.
 async function qbSetDate(qbId: string, date: string) {
@@ -172,9 +191,10 @@ async function pushPlaceholderToQB(sql: any, o: any, amount: number) {
 // Real invoice written → the QuickBooks placeholder it replaces goes to $0 and is renamed Job Cost N, memo kept.
 async function qbZeroPlaceholder(qbId: string, name: string) {
   const cur = (await qb("GET", `invoice/${qbId}`)).Invoice;
-  const line = (cur.Line || []).find((l: any) => l.DetailType === "SalesItemLineDetail") || {};
+  // every line's words are kept (9/28: a two-line placeholder lost its second day when only the first line was kept)
+  const words = (cur.Line || []).filter((l: any) => l.DetailType === "SalesItemLineDetail").map((l: any) => String(l.Description || "")).filter(Boolean).join("\n\n");
   await qb("POST", "invoice", { Id: qbId, SyncToken: cur.SyncToken, sparse: true, CustomerRef: cur.CustomerRef,
-    Line: [{ DetailType: "SalesItemLineDetail", Amount: 0, Description: `${name}\n\n${line.Description || ""}`, SalesItemLineDetail: { ItemRef: { value: "1" }, Qty: 1, UnitPrice: 0 } }] });
+    Line: [{ DetailType: "SalesItemLineDetail", Amount: 0, Description: `${name}\n\n${words}`, SalesItemLineDetail: { ItemRef: { value: "1" }, Qty: 1, UnitPrice: 0 } }] });
 }
 async function qbRestorePlaceholder(qbId: string, amount: number) {
   const cur = (await qb("GET", `invoice/${qbId}`)).Invoice;
@@ -1065,20 +1085,18 @@ export default async (req: Request) => {
         await client.query("BEGIN");
         const ins = await client.query(`INSERT INTO invoices (job_id, kind, name, number, amount, inv_date, covers_through, memo, scope) VALUES ($1, 'real', $2, '', $3, $4, $5, $6, $7) RETURNING id`,
           [id, w.name, Number(w.amount) || 0, w.inv_date, w.covers_through, w.memo, w.scope]);
-        // the second the real invoice is written: placeholders it replaces → $0, renamed Job Cost N, memo kept word for word
-        for (const z of w.zero) await client.query(`UPDATE invoices SET zeroed_from = amount, zeroed_by = $4, amount = 0, name = $1, memo = $2 WHERE id = $3`, [z.name, z.memo, z.id, ins.rows[0].id]);
+        // NO zeroing here (his law 9/28): the placeholders it replaces go to $0 only after this invoice is in QuickBooks — see zeroReplacedPlaceholders
         ins_id = ins.rows[0].id;
         await client.query(`UPDATE jobs SET bill_price = NULL WHERE id = $1`, [id]);   // his price was for this invoice only
         await client.query("COMMIT");
       } catch (e) { await client.query("ROLLBACK"); throw e; } finally { client.release(); }
       const newId = ins_id;
-      const zeroErr: string[] = [];
-      for (const z of w.zero) { const p = invs.find((i: any) => i.id === z.id); if (p?.qb_id) { try { await qbZeroPlaceholder(p.qb_id, z.name); } catch (e: any) { zeroErr.push(`placeholder #${p.number} not zeroed in QuickBooks: ${String(e?.message || e)}`); } } }
-      // straight into QuickBooks; if QuickBooks refuses, the invoice stays in the app with the reason and a Send to QuickBooks button
+      // straight into QuickBooks; only if it lands there do the placeholders get zeroed. If QuickBooks refuses, the invoice stays
+      // in the app with the reason and a Send to QuickBooks button — and the placeholders stay whole.
       let qbOut: any = null, qbErr = "";
       try { qbOut = await pushInvoiceToQB(sql, newId, job); } catch (e: any) { qbErr = String(e?.message || e); }
-      if (zeroErr.length) qbErr = [qbErr, ...zeroErr].filter(Boolean).join(" · ");
-      return json({ invoice_id: newId, amount: w.amount, through: w.covers_through, inv_date: w.inv_date, memo: w.memo, zeroed: w.zero.length, qb: qbOut, qb_error: qbErr, missing: billMiss }, 201);
+      if (qbOut?.zero_error) qbErr = [qbErr, qbOut.zero_error].filter(Boolean).join(" · ");
+      return json({ invoice_id: newId, amount: w.amount, through: w.covers_through, inv_date: w.inv_date, memo: w.memo, zeroed: qbOut ? w.zero.length : 0, qb: qbOut, qb_error: qbErr, missing: billMiss }, 201);
     }
 
     // ================= SUPPLY INVOICES FROM HIS EMAIL =================

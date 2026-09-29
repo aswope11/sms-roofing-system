@@ -393,11 +393,15 @@ test('LAW step 5: real invoice = ticket name, placeholder memo word for word, sc
   assert.deepEqual([noSeat.amount, noSeat.memo], [520, 'R-9/14/26']);
 });
 
-test('step 5 server: writes name/memo/scope/tomorrow, zeroes and renames the placeholder in one transaction; sent makes the date real', () => {
+test('step 5 server: writes name/memo/scope/tomorrow; placeholder zeroed ONLY after the real invoice is in QuickBooks; sent makes the date real', () => {
   const w = readFileSync('netlify/functions/work.mts', 'utf8');
   assert.ok(w.includes('M.writeRealInvoice(job, r, invs, today(), b.amount === "" || b.amount == null ? job.bill_price : b.amount)'));
   assert.ok(w.includes("INSERT INTO invoices (job_id, kind, name, number, amount, inv_date, covers_through, memo, scope)"));
-  assert.ok(w.includes('UPDATE invoices SET zeroed_from = amount, zeroed_by = $4, amount = 0, name = $1, memo = $2 WHERE id = $3'));
+  // HIS LAW 9/28: "the invoice CANNOT be zeroed out before the other invoice is created. 2 tickets is fine. zero tickets i go out of business."
+  assert.ok(w.includes('UPDATE invoices SET zeroed_from = amount, zeroed_by = ${inv.id}, amount = 0'));
+  assert.ok(!w.includes('UPDATE invoices SET zeroed_from = amount, zeroed_by = $4'), 'no zeroing inside the Write the invoice transaction');
+  const push = w.slice(w.indexOf('async function pushInvoiceToQB'), w.indexOf('// HIS LAW (9/28/26)'));
+  assert.ok(push.indexOf('const back = (await qb("GET"') < push.indexOf('zeroReplacedPlaceholders(sql, inv, job)'), 'zero only after QuickBooks read-back');
   assert.ok(w.includes('inv_date = CASE WHEN inv_date IS NULL OR inv_date > ${today()}::date THEN ${today()}::date ELSE inv_date END'));
 });
 
