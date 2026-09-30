@@ -524,6 +524,7 @@ export const LINK_TEMPLATES = [
     url: 'https://docs.google.com/document/d/1EmsK51QrUa2uIuXJFXuLQhmDk6T1bACb3tc3pZb0w8o/edit' },
   { cat: 'tpo', tag: 'PROPOSAL', name: 'PROPOSAL — MA TPO / MA ISO (the Liberty proposal sent to Wortham 9/25)',
     url: 'https://docs.google.com/document/d/1GReVKjZnktajPJ4y7oN37noBWLVKksfIs90O04wAUQM/edit' },
+  { cat: 'tpo', tag: 'TEMPLATE', name: 'TEMPLATE — MA ISO / FA TPO (blank Google Sheet)', url: 'https://docs.google.com/spreadsheets/d/1L_AsPV8-AKTG6Xn6Y8AIjiRfXwtzGNqpYnAuiV-_EHg/edit' },
 ];
 
 // TWO TEMPLATES PULLED OUT OF THE LIBERTY RETAIL CENTER BID (9/26/26). His picks: counter flashing add-on and
