@@ -238,8 +238,11 @@ export async function schedulePage(start) {
     // no search: only what's ready to work. Typing finds anything open, ready or not.
     // his rule 9/30: a ticket marked done is off the Schedule picker — it lives on Invoicing now
     const pool = open;
-    const hits = pool.filter(j => q ? [j.tag, j.address, j.city, j.tenant, j.title, j.customer_name, j.parent_title].join(' ').toLowerCase().includes(q) : bucketOf(j) === 'ready')
-      .sort((a, b) => String(a.address).localeCompare(String(b.address)) || ((order[a.tag] ?? 9) - (order[b.tag] ?? 9)));
+    const hits = pool.filter(j => q ? [j.tag, j.address, j.city, j.tenant, j.title, j.customer_name, j.parent_title].join(' ').toLowerCase().includes(q) : bucketOf(j) === 'ready');
+    // his rule 9/30: repairs on top; the rest by job type, but tickets at the same address stay together (Mulberry CO sits with Mulberry UC)
+    const grp = {}; hits.forEach(j => { if (j.tag !== 'R') grp[j.address] = Math.min(grp[j.address] ?? 9, order[j.tag] ?? 9); });
+    const gOf = j => j.tag === 'R' ? 0 : (grp[j.address] ?? 9);
+    hits.sort((a, b) => (gOf(a) - gOf(b)) || String(a.address).localeCompare(String(b.address)) || ((order[a.tag] ?? 9) - (order[b.tag] ?? 9)));
     document.getElementById('lHits').innerHTML = hits.map(j => `<div class="jhit" data-job="${j.id}">
       <span class="jhp" style="background:${typeColor(j.tag)}">${esc(j.tag)}</span>
       <span class="jhn">${esc(j.address)}${j.parent_title ? ' — ' + esc(j.parent_title) : ''}${j.title ? ' — ' + esc(j.title) : ''}${j.done_at ? ' <b class="ambertxt">(marked done)</b>' : ''}</span>
