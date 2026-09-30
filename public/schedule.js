@@ -236,10 +236,9 @@ export async function schedulePage(start) {
     const q = document.getElementById('lSearch').value.toLowerCase().trim();
     const order = { R: 0, UC: 1, CO: 2, JC: 3 };
     // no search: only what's ready to work. Typing finds anything open, ready or not.
-    // a ticket marked done still shows if men are already on it that day, so another man can be added to it
-    const workedToday = new Set(w.stops.filter(s => logFor && s.work_date === logFor.date).map(s => s.job_id));
-    const pool = [...open, ...w.jobs.filter(j => j.done_at && workedToday.has(j.id))];
-    const hits = pool.filter(j => q ? [j.tag, j.address, j.city, j.tenant, j.title, j.customer_name, j.parent_title].join(' ').toLowerCase().includes(q) : (bucketOf(j) === 'ready' || !!j.done_at))
+    // his rule 9/30: a ticket marked done is off the Schedule picker — it lives on Invoicing now
+    const pool = open;
+    const hits = pool.filter(j => q ? [j.tag, j.address, j.city, j.tenant, j.title, j.customer_name, j.parent_title].join(' ').toLowerCase().includes(q) : bucketOf(j) === 'ready')
       .sort((a, b) => ((order[a.tag] ?? 9) - (order[b.tag] ?? 9)) || String(a.address).localeCompare(String(b.address)));
     document.getElementById('lHits').innerHTML = hits.map(j => `<div class="jhit" data-job="${j.id}">
       <span class="jhp" style="background:${typeColor(j.tag)}">${esc(j.tag)}</span>
