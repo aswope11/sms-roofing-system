@@ -2,6 +2,7 @@
 // Three things copied off the old board (app-src-schedule-board): the + boxes in the cells and the card look,
 // the hover that pops up what THIS man did HERE on THIS day, and the pills under the grid that move a ticket around.
 import { esc, $app, call, doAndProve, crumbs, setTab, fail, toast } from './ui.js';
+import { subPayLedger } from './payledger.js';
 import { groupCrew, dispatchLine, shortDate, addDays, stopShares, daysFor, manDayPay, payFor, crewColor, ticketName, whyCantSplit } from './money.js';
 
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -145,7 +146,7 @@ export async function schedulePage(start) {
           <select class="small putman" data-job="${j.id}" data-date="${d}"><option value="">put a man on it</option>${allCrew.filter(c => c.active).map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
           <span class="delx" data-unplan="${j.id}" title="Take it off this day" style="cursor:pointer">✕</span>`).join('')}
           <div class="plus ${nobody(d).length ? 'has' : ''}" data-nobody="1" data-date="${d}">+</div></td>`).join('')}</tr>
-        ${crew.map((c, i) => `${i === 0 || (crew[i - 1].group === 'employee') !== (c.group === 'employee') ? `<tr class="grouphead"><th colspan="${dates.length + 1}">${c.group === 'employee' ? 'SMS employees' : 'Subs'}</th></tr>` : ''}<tr><th style="border-left:4px solid ${crewColor(c, w.crew)}">${c.group.startsWith('under-') ? '<span class="mute">↳ </span>' : ''}${esc(c.name)}${c.group !== 'employee' && !workedMen.has(c.id) ? ` <span class="delx" data-drop="${c.id}" title="Take him off this week" style="cursor:pointer">✕</span>` : ''}</th>${dates.map(d => {
+        ${crew.map((c, i) => `${i === 0 || (crew[i - 1].group === 'employee') !== (c.group === 'employee') ? `<tr class="grouphead"><th colspan="${dates.length + 1}">${c.group === 'employee' ? 'SMS employees' : 'Subs'}</th></tr>` : ''}<tr><th style="border-left:4px solid ${crewColor(c, w.crew)}">${c.group.startsWith('under-') ? '<span class="mute">↳ </span>' : ''}<span class="manledger" data-ledger="${c.boss_id || c.id}" data-lname="${c.boss_id ? '' : esc(c.name)}" title="Open his pay ledger" style="cursor:pointer;text-decoration:underline dotted">${esc(c.name)}</span>${c.group !== 'employee' && !workedMen.has(c.id) ? ` <span class="delx" data-drop="${c.id}" title="Take him off this week" style="cursor:pointer">✕</span>` : ''}</th>${dates.map(d => {
           const mine = w.stops.filter(s => s.crew_id === c.id && s.work_date === d);
           return `<td class="cell">${mine.map(s => jobsById[s.job_id] ? jobCardHTML(jobsById[s.job_id], c.id, d, s.id) : '').join('')}
             <div class="plus ${mine.length ? 'has' : ''}" data-crew="${c.id}" data-date="${d}">+</div></td>`;
@@ -155,6 +156,7 @@ export async function schedulePage(start) {
     </div>
     <div id="schedSections">${sections}</div>
     <div class="peek" id="peek"></div>
+    <div class="modalback" id="ledBack" style="display:none"><div class="card logbox" style="width:1000px"><div class="btnrow" style="justify-content:flex-end"><button type="button" class="small" id="ledClose">Close</button></div><div id="ledMount"></div></div></div>
     <div class="modalback" id="logBack" style="display:none"><div class="card logbox">
       <h2 id="logTitle"></h2>
       <div id="lPick">
@@ -386,6 +388,16 @@ export async function schedulePage(start) {
   document.getElementById('lSearch').oninput = renderHits;
   document.getElementById('logCancel').onclick = () => { logBack.style.display = 'none'; };
   logBack.onclick = e => { if (e.target === logBack) logBack.style.display = 'none'; };
+
+  // click a man's name on the board: his pay ledger pops up (a man under a sub opens the ledger he's paid on)
+  const ledBack = document.getElementById('ledBack');
+  $app().querySelectorAll('.manledger').forEach(n => n.onclick = e => {
+    e.stopPropagation(); hidePeek();
+    ledBack.style.display = 'flex';
+    subPayLedger(document.getElementById('ledMount'), Number(n.dataset.ledger), n.dataset.lname).catch(fail);
+  });
+  document.getElementById('ledClose').onclick = () => { ledBack.style.display = 'none'; };
+  ledBack.onclick = e => { if (e.target === ledBack) ledBack.style.display = 'none'; };
 
   // the × on a card in a man's cell: take HIM off THIS job on THIS day
   $app().querySelectorAll('.jobcard .kill').forEach(k => k.addEventListener('mousedown', () => hidePeek()));
