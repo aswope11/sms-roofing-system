@@ -239,7 +239,7 @@ export async function schedulePage(start) {
     // his rule 9/30: a ticket marked done is off the Schedule picker — it lives on Invoicing now
     const pool = open;
     const hits = pool.filter(j => q ? [j.tag, j.address, j.city, j.tenant, j.title, j.customer_name, j.parent_title].join(' ').toLowerCase().includes(q) : bucketOf(j) === 'ready')
-      .sort((a, b) => ((order[a.tag] ?? 9) - (order[b.tag] ?? 9)) || String(a.address).localeCompare(String(b.address)));
+      .sort((a, b) => String(a.address).localeCompare(String(b.address)) || ((order[a.tag] ?? 9) - (order[b.tag] ?? 9)));
     document.getElementById('lHits').innerHTML = hits.map(j => `<div class="jhit" data-job="${j.id}">
       <span class="jhp" style="background:${typeColor(j.tag)}">${esc(j.tag)}</span>
       <span class="jhn">${esc(j.address)}${j.parent_title ? ' — ' + esc(j.parent_title) : ''}${j.title ? ' — ' + esc(j.title) : ''}${j.done_at ? ' <b class="ambertxt">(marked done)</b>' : ''}</span>
