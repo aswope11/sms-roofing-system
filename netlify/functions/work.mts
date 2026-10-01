@@ -81,7 +81,7 @@ async function qbCustomerFor(job: any) {
     const byCity = city ? pool.filter((c: any) => c.DisplayName.toLowerCase().includes(city)) : [];
     if (byCity.length === 1) return byCity[0];
     if (byCity.length) pool = byCity;
-    for (const name of [job.parent_title, job.title]) {
+    for (const name of [job.tenant, job.parent_title, job.title]) {   // TENANT IS THE ANSWER (10/1/26): the ticket's tenant picks the QB customer first
       const n = String(name || "").trim().toLowerCase();
       if (!n) continue;
       const hit = pool.filter((c: any) => { const d = c.DisplayName.toLowerCase(); return d.endsWith(" - " + n) || d.includes(" - " + n + " -") || d.includes(" " + n); });
@@ -89,7 +89,8 @@ async function qbCustomerFor(job: any) {
       if (exact.length === 1) return exact[0];
       if (hit.length === 1) return hit[0];
     }
-    throw new Error(`QuickBooks has ${found.length} customers at ${addr}: ${found.map((c: any) => c.DisplayName).join(" / ")} — fix the names in QuickBooks, then Send to QuickBooks.`);
+    // no QB customer has this ticket's tenant yet -> fall through and make "address - city - tenant" under the company
+    if (!String(job.tenant || "").trim()) throw new Error(`QuickBooks has ${found.length} customers at ${addr}: ${found.map((c: any) => c.DisplayName).join(" / ")} — fix the names in QuickBooks, then Send to QuickBooks.`);
   }
   const name = [addr, job.city, job.tenant].map((x: any) => String(x || "").trim()).filter(Boolean).join(" - ");
   // A new property never lands loose: it goes UNDER its company (Four Corners, Wortham…) — his AR rolls up by company.
