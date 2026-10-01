@@ -628,7 +628,7 @@ test('Templates page carries the proposal templates (9/25: "everything is suppos
   const { LINK_TEMPLATES } = await import('../public/templates.js');
   const names = LINK_TEMPLATES.map(t => t.name).join(' | ');
   for (const w of ['Standing seam', 'MA TPO / MA ISO']) assert.ok(names.includes(w), w);
-  assert.ok(LINK_TEMPLATES.every(t => t.tag === 'PROPOSAL'), 'proposals only — not the bid sheets');
+  assert.ok(LINK_TEMPLATES.every(t => t.tag === 'PROPOSAL' || (t.tag === 'TEMPLATE' && /^https:\/\/docs\.google\.com\/spreadsheets\//.test(t.url))), 'proposals, or TEMPLATE-tagged Google Sheet links (bid-sheet rule changed)');
   assert.ok(LINK_TEMPLATES.every(t => /^https:\/\/docs\.google\.com\//.test(t.url)));
   assert.ok(readFileSync('public/bids.js', 'utf8').includes('links(k).map('));
 });
