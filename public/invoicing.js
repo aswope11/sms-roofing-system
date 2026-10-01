@@ -5,6 +5,8 @@ import { money, ticketName, invoicingLane, isBill, shortDate, round2 } from './m
 
 const age = (from, to) => from ? Math.max(0, Math.round((new Date(to + 'T12:00:00') - new Date(String(from).slice(0, 10) + 'T12:00:00')) / 86400000)) : null;
 
+// TENANT ON THE FRONT OF EVERY TICKET (10/1/26): tenant first, then the customer.
+const who = j => [j.tenant || j.tenant_name, j.customer_name].filter(Boolean).join(' · ');
 export async function invoicingPage() {
   setTab('invoicing'); crumbs([['Invoicing']]);
   const d = await call('/w/invoicing');
@@ -21,7 +23,7 @@ export async function invoicingPage() {
   const invRow = (t, color) => `<div class="prow" style="border-left-color:${color}">
       <a class="pmain" ${open(t.id)}>
         <div class="pt">${esc(ticketName(t))}</div>
-        <div class="ps">${esc(t.customer_name)}${t.last_work_date ? ' · ' + shortDate(t.last_work_date) : ''}${amt(t) ? ` · <b class="greentxt">${money(amt(t))}</b>` : ''}${t.cost ? ` · cost so far ${money(t.cost)}` : ''}</div>
+        <div class="ps">${esc(who(t))}${t.last_work_date ? ' · ' + shortDate(t.last_work_date) : ''}${amt(t) ? ` · <b class="greentxt">${money(amt(t))}</b>` : ''}${t.cost ? ` · cost so far ${money(t.cost)}` : ''}</div>
         ${billsOf(t).map(i => `<div class="ps">${i.kind === 'draw' ? 'Draw' : 'Invoice'} ${esc(i.number) || 'no number'} · ${money(i.amount)} · ${i.sent_at ? 'sent ' + shortDate(i.sent_at) : '<span class="ambertxt">not sent</span>'}${i.kind === 'real' ? (i.qb_id ? ' · in QuickBooks' : ' · <span class="redtxt">not in QuickBooks</span>') : ''}</div>${i.kind === 'real' && !i.qb_id && i.qb_error ? `<div class="ps redtxt">${esc(i.qb_error)}</div>` : ''}`).join('')}
       </a>
       <div class="lanebtns">
@@ -31,7 +33,7 @@ export async function invoicingPage() {
       </div>
     </div>`;
   const mini = t => `<div class="minirow">
-      <a ${open(t.id)}><div class="mt">${esc(ticketName(t))}</div><div class="ms">${esc(t.customer_name)}${t.last_work_date ? ' · ' + shortDate(t.last_work_date) : ''}</div></a>
+      <a ${open(t.id)}><div class="mt">${esc(ticketName(t))}</div><div class="ms">${esc(who(t))}${t.last_work_date ? ' · ' + shortDate(t.last_work_date) : ''}</div></a>
       <div class="lanebtns">
         <button class="lb chk ${t.scope_ok ? 'on' : ''}" data-job="${t.id}" data-which="scope" data-v="${t.scope_ok ? 0 : 1}">Scope</button>
         <button class="lb chk ${t.pics_ok ? 'on' : ''}" data-job="${t.id}" data-which="pics" data-v="${t.pics_ok ? 0 : 1}">Pictures</button>
@@ -48,7 +50,7 @@ export async function invoicingPage() {
     const stale = !!(t.aging && t.aging.stale);
     return `<div class="prow" style="border-left-color:${stale ? 'var(--bad)' : 'var(--mute)'}">
       <a class="pmain" ${open(t.id)}><div class="pt">${esc(ticketName(t))}</div>
-        <div class="ps">${esc(t.customer_name)} · <b>${money(owed)}</b> owed on ${unpaid.length} trip${unpaid.length === 1 ? '' : 's'}${t.contract ? ` · ${money(t.contract.billed)} billed of ${money(t.contract.contract)} — ${money(t.contract.left)} left` : ''}${oldest ? ` · oldest ${oldest} days` : ''}</div>
+        <div class="ps">${esc(who(t))} · <b>${money(owed)}</b> owed on ${unpaid.length} trip${unpaid.length === 1 ? '' : 's'}${t.contract ? ` · ${money(t.contract.billed)} billed of ${money(t.contract.contract)} — ${money(t.contract.left)} left` : ''}${oldest ? ` · oldest ${oldest} days` : ''}</div>
         ${stale ? `<div class="ps redtxt"><b>Unpaid ${money(owed)} · ${oldest} days — don't send a crew back until it clears</b></div>` : ''}</a>
       <div class="lanebtns">${unpaid.filter(i => !i.sent_at).map(i => `<button class="lb send sent" data-id="${i.id}" data-job="${t.id}">Mark ${esc(i.number) || 'it'} sent</button>`).join('')}</div>
     </div>`;
@@ -57,7 +59,7 @@ export async function invoicingPage() {
   html += grp('var(--ok)', 'Ready to bill', d.ready.length, d.ready.map((r, k) => `<div class="prow" style="border-left-color:var(--ok)">
       <div class="pmain">
         <a ${open(r.job.id)}><div class="pt">${esc(ticketName(r.job))}</div></a>
-        <div class="ps">${esc(r.job.customer_name)} · ${r.days.map(x => shortDate(x.date)).join(', ')}</div>
+        <div class="ps">${esc(who(r.job))} · ${r.days.map(x => shortDate(x.date)).join(', ')}</div>
         <details class="rb"><summary>${r.invoice.amount > 0 ? money(r.invoice.amount) : '<span class="redtxt">not priced</span>'} — labor ${money(r.labor)}${r.material ? ` + material ${money(r.material)}` : ''}</summary>
           ${r.days.map(x => `<div class="ps"><b>${shortDate(x.date)}</b> ${x.labor.map(l => `${esc(l.how)}${l.amount != null ? ' = ' + money(l.amount) : ''}`).join(' · ')}</div>`).join('')}
           ${r.material_cost ? `<div class="ps">material ${money(r.material_cost)}${r.job.tag === 'JC' ? '' : ' × 1.2'} = ${money(r.material)}</div>` : ''}
@@ -69,7 +71,7 @@ export async function invoicingPage() {
   // PLACEHOLDERS OWED
   html += grp('var(--bad)', 'Placeholders owed in QuickBooks', d.owed.length, d.owed.map((o, k) => `<div class="prow" style="border-left-color:var(--bad)">
       <a class="pmain" ${open(o.job.id)}><div class="pt">${shortDate(o.work_date)} · ${esc(ticketName(o.job))}</div>
-        <div class="ps">${esc(o.job.customer_name)} · ${o.suggested != null ? money(o.suggested) : '<span class="redtxt">not priced</span>'}</div></a>
+        <div class="ps">${esc(who(o.job))} · ${o.suggested != null ? money(o.suggested) : '<span class="redtxt">not priced</span>'}</div></a>
       <div class="lanebtns"><button class="lb send phqb" data-k="${k}">Send to QuickBooks${o.suggested != null ? ' ' + money(o.suggested) : ''}</button><button class="lb seat" data-k="${k}">Put the QB number on</button></div></div>`).join(''));
   // SEND IT
   html += grp('var(--bad)', 'Send it', by('send').length, by('send').map(t => invRow(t, 'var(--bad)')).join(''));
@@ -82,7 +84,7 @@ export async function invoicingPage() {
   html += grp('#ffd24d', 'Real invoice owed', by('write').length, by('write').map(t => invRow(t, '#ffd24d')).join(''));
   // TABLED
   html += grp('var(--line)', 'Tabled — not billing yet', tabled.length, tabled.map(t => `<div class="prow" style="border-left-color:var(--line)">
-      <a class="pmain" ${open(t.id)}><div class="pt">${esc(ticketName(t))}</div><div class="ps">${esc(t.customer_name)} · tabled ${shortDate(t.tabled_at)} — "${esc(t.tabled_why)}"</div></a>
+      <a class="pmain" ${open(t.id)}><div class="pt">${esc(ticketName(t))}</div><div class="ps">${esc(who(t))} · tabled ${shortDate(t.tabled_at)} — "${esc(t.tabled_why)}"</div></a>
       <div class="lanebtns"><button class="lb back" data-job="${t.id}">Bring it back</button></div></div>`).join(''));
 
   $app().innerHTML = `<div class="oldgrid oldinv"><h1>Invoicing <span class="lanen big">${onPage}</span></h1>${html || '<div class="card empty">Nothing waiting to be billed.</div>'}</div>`;
