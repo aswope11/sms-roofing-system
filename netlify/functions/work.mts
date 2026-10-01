@@ -358,6 +358,7 @@ Answer with exactly this JSON and nothing else:
  "address_in_email": "<the JOB SITE street address as written in the email, or empty — never the sender's office, a signature block or an architect's address>",
  "job_name": "<the project or building name, e.g. DATCU Little Elm or Liberty Retail Center, or empty>",
  "city": "<the job site city, or empty>",
+ "tenant": "<the tenant or business at the job site as the email names it (e.g. Pizzarella, MKOA Studio, Zensmiles) — never the property manager, the owner or the sender's company — or empty>",
  "customer_in_email": "<the company the work is for, or empty>",
  "title": "<what the work is, 60 characters max, plain words, no address>",
  "summary": "<one or two sentences: what they are asking for>",
@@ -1354,7 +1355,12 @@ export default async (req: Request) => {
             const city = String(read?.city || "").trim();
             const same = props.find((p: any) => p.customer_id === cust.id && addressKey(p.address) === addressKey(addr) && String(p.city || "").toLowerCase() === city.toLowerCase());
             prop = same || norm(await sql`INSERT INTO properties (customer_id, address, address_key, city, tenant, gc, notes)
-              VALUES (${cust.id}, ${addr}, ${addressKey(addr)}, ${city}, '', '', ${`Made from the ${x.name} email from ${from} on ${when.slice(0, 10)}.`}) RETURNING *`)[0];
+              VALUES (${cust.id}, ${addr}, ${addressKey(addr)}, ${city}, ${String(read?.tenant || "").trim()}, '', ${`Made from the ${x.name} email from ${from} on ${when.slice(0, 10)}.`}) RETURNING *`)[0];
+          }
+          // TENANT FROM THE EMAIL (10/1/26): a property on file with no tenant yet gets the one the email names.
+          if (prop && !String(prop.tenant || "").trim() && String(read?.tenant || "").trim()) {
+            await sql`UPDATE properties SET tenant = ${String(read.tenant).trim()} WHERE id = ${prop.id}`;
+            prop.tenant = String(read.tenant).trim();
           }
           if (prop) {
             const title = String(read?.title || subject || "From email").trim().slice(0, 80);
@@ -1367,7 +1373,7 @@ export default async (req: Request) => {
             // CAN'T PLACE IT — ask him about this one email. The label stays on until he answers.
             const said = String(read?.address_in_email || "").trim();
             const pending = { tag: x.tag, label: x.name, label_id: x.lid, thread: x.threadId, title: String(read?.title || subject || "").slice(0, 80),
-              summary: String(read?.summary || ""), bid_due: read?.bid_due || null, address: said, customer: String(read?.customer_in_email || "") };
+              summary: String(read?.summary || ""), bid_due: read?.bid_due || null, address: said, customer: String(read?.customer_in_email || ""), tenant: String(read?.tenant || "").trim() };
             await threads.setJSON(`pending/${x.id}`, pending);
             await threads.setJSON(`pending-thread/${x.threadId}`, { msg: x.id, more: [] });
             const who = (from.replace(/<.*>/, "").replace(/"/g, "").trim() || from);
@@ -1405,7 +1411,7 @@ export default async (req: Request) => {
           const addr = String(pend.street || pend.job_name || pend.title || "From email").trim();
           const [same] = norm(await sql`SELECT * FROM properties WHERE customer_id = ${Number(b.customer_id)} AND address_key = ${addressKey(addr)}`);
           prop = same || norm(await sql`INSERT INTO properties (customer_id, address, address_key, city, tenant, gc, notes)
-            VALUES (${Number(b.customer_id)}, ${addr}, ${addressKey(addr)}, ${String(pend.city || "")}, '', '', ${`Made from the ${pend.label} email.`}) RETURNING *`)[0];
+            VALUES (${Number(b.customer_id)}, ${addr}, ${addressKey(addr)}, ${String(pend.city || "")}, ${String(pend.tenant || "")}, '', ${`Made from the ${pend.label} email.`}) RETURNING *`)[0];
         }
         if (!prop) return refuse("Which customer? That one isn't on the book.", 404);
         const msg = await gmail(`messages/${item.message_id}?format=full`);
