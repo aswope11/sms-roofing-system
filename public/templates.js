@@ -520,13 +520,20 @@ export const OTHER_TEMPLATES = [
 // TO BE MAKING IT IN THE APP. THE PROPOSAL TEMPLATES. THE BID TEMPLATES. EVERYTHING."
 // Each card opens the Google Doc / Sheet. Copy it for a job — never edit the template itself.
 export const LINK_TEMPLATES = [
-  { cat: 'ss', tag: 'PROPOSAL', name: 'PROPOSAL — Standing seam (tear-off & new construction) — MASTER',
+  // PROPOSALS live in their own section (10/1: "put proposals in a completely different location") — never mixed in with the bid sheets.
+  { cat: 'proposals', tag: 'PROPOSAL', name: 'PROPOSAL — Standing seam (tear-off / new construction) — MASTER',
     url: 'https://docs.google.com/document/d/1EmsK51QrUa2uIuXJFXuLQhmDk6T1bACb3tc3pZb0w8o/edit' },
-  { cat: 'tpo', tag: 'PROPOSAL', name: 'PROPOSAL — MA TPO / MA ISO (the Liberty proposal sent to Wortham 9/25)',
+  { cat: 'proposals', tag: 'PROPOSAL', name: 'PROPOSAL — MA TPO / MA ISO',
     url: 'https://docs.google.com/document/d/1GReVKjZnktajPJ4y7oN37noBWLVKksfIs90O04wAUQM/edit' },
-  { cat: 'tpo', tag: 'PROPOSAL', name: 'PROPOSAL — MA Tapered ISO / MA TPO (the 1000 River Ranch proposal sent to Wortham 10/1)',
+  { cat: 'proposals', tag: 'PROPOSAL', name: 'PROPOSAL — MA Tapered ISO / MA TPO',
     url: 'https://docs.google.com/document/d/1kX-fkmsx-rFRNrQf5_WjcT3mhoAErCyQ_cOV0HINpiQ/edit' },
+  // BLANK BID SHEETS (Google Sheets) under TPO — New construction.
   { cat: 'tpo', tag: 'TEMPLATE', name: 'TEMPLATE — MA ISO / FA TPO (blank Google Sheet)', url: 'https://docs.google.com/spreadsheets/d/1L_AsPV8-AKTG6Xn6Y8AIjiRfXwtzGNqpYnAuiV-_EHg/edit' },
+  { cat: 'tpo', tag: 'TEMPLATE', name: 'TEMPLATE — MA ISO / MA TPO (blank)', url: 'https://docs.google.com/spreadsheets/d/1QXNFUmStNe1YrBQ1ISe0PJB5e1Sq8WyofrtjsFwaOlQ/edit' },
+  { cat: 'tpo', tag: 'TEMPLATE', name: 'TEMPLATE — MA Tapered ISO / MA TPO (blank)', url: 'https://docs.google.com/spreadsheets/d/1mG7I4gfGOcMPXJBvAoCuT6JQgxnQDD12LjxhtqHQzig/edit' },
+  { cat: 'tpo', tag: 'TEMPLATE', name: 'TEMPLATE — MA 1/8″ Tapered ISO / MA TPO (blank)', url: 'https://docs.google.com/spreadsheets/d/1SPe8vgzSVnlhXjDx8tm9jfi3kgIJ4gzpHCSgJLvfdh4/edit' },
+  { cat: 'tpo', tag: 'TEMPLATE', name: 'TEMPLATE — LEDGE add-on: 1/2″ redboard MA + TPO MA (blank)', url: 'https://docs.google.com/spreadsheets/d/1JT1MKngj4YiKhpHahsaHGi84Vpg6j0FcRXfNLExKKsQ/edit' },
+  { cat: 'tpo', tag: 'TEMPLATE', name: 'TEMPLATE — SKIRT FLASHING add-on (blank)', url: 'https://docs.google.com/spreadsheets/d/11YuANXkkPfj9wzyDMOsTEGa8yd5lZYZpnrQSuoJVl3U/edit' },
 ];
 
 // TWO TEMPLATES PULLED OUT OF THE LIBERTY RETAIL CENTER BID (9/26/26). His picks: counter flashing add-on and
