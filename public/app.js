@@ -189,7 +189,7 @@ async function property(id) {
     </div>
     <div class="card">
       <h2>Job files</h2>
-      ${p.jobs.length ? p.jobs.map(j => `<div class="row"><a href="#/job/${j.id}"><span class="tag">${j.tag}</span>${esc(j.title)}</a><span class="mute">${j.file_count} file${j.file_count === 1 ? '' : 's'} · ${new Date(j.created_at).toLocaleDateString()} ${delX('job', j.id)}</span></div>`).join('')
+      ${p.jobs.length ? jobTree(p.jobs).map(({ j, d }) => `<div class="row"${d ? ` style="padding-left:${d * 26}px"` : ''}><a href="#/job/${j.id}">${d ? '<span class="mute">↳ </span>' : ''}${j.tag ? `<span class="tag">${j.tag}</span>` : ''}${esc(j.title)}</a><span class="mute">${j.file_count} file${j.file_count === 1 ? '' : 's'} · ${new Date(j.created_at).toLocaleDateString()} ${delX('job', j.id)}</span></div>`).join('')
         : '<div class="empty">No job files yet.</div>'}
     </div>
     <div class="card">
@@ -198,6 +198,7 @@ async function property(id) {
       <form id="f">
         <label>Tag<select name="tag"><option value="">— not decided yet —</option>${TAGS.map(t => `<option value="${t}">${t} — ${TAG_NAMES[t]}</option>`).join('')}</select></label>
         <label>Job name<input name="title" placeholder="e.g. Main roof TPO re-roof"></label>
+        ${insideSelect(jobTree(p.jobs), null)}
         <label class="full">Notes<textarea name="notes"></textarea></label>
         <div class="actions"><button>Save job file</button></div>
         <div class="err full" id="e"></div>
@@ -222,7 +223,7 @@ async function property(id) {
     ev.preventDefault(); const btn = ev.submitter; btn.disabled = true;
     try {
       const b = { ...formData(ev.target), property_id: Number(id) };
-      const j = await saveAndProve('jobs', 'POST', b, s => `jobs/${s.id}`, ['tag', 'title', 'notes']);
+      const j = await saveAndProve('jobs', 'POST', b, s => `jobs/${s.id}`, ['tag', 'title', 'notes', 'parent_job_id']);
       location.hash = `#/job/${j.id}`;
     } catch (e) { fail(e, document.getElementById('e')); btn.disabled = false; }
   };
@@ -244,11 +245,30 @@ async function property(id) {
 }
 
 // ---------------- JOB FILE ----------------
+// JOB FILES INSIDE JOB FILES (10/1/26): a building holds tenants, a tenant holds its tickets
+// (1721 John McCain: Building 1-4 › Vet Clinic › Roof Repair). parent_job_id is the link.
+// Returns every job once, in tree order, with its depth. A loop or a missing parent just shows at the top.
+function jobTree(jobs) {
+  const ids = new Set(jobs.map(j => j.id)), kids = {}, seen = new Set(), out = [];
+  for (const j of jobs) { const p = ids.has(j.parent_job_id) && j.parent_job_id !== j.id ? j.parent_job_id : 0; (kids[p] = kids[p] || []).push(j); }
+  for (const k in kids) kids[k].sort((a, b) => String(a.title).localeCompare(String(b.title), undefined, { numeric: true }));
+  const walk = (p, d) => (kids[p] || []).forEach(j => { if (seen.has(j.id)) return; seen.add(j.id); out.push({ j, d }); walk(j.id, d + 1); });
+  walk(0, 0);
+  for (const j of jobs) if (!seen.has(j.id)) { seen.add(j.id); out.push({ j, d: 0 }); }
+  return out;
+}
+const insideSelect = (tree, cur) => `<label>Inside<select name="parent_job_id"><option value="">— right on the property —</option>${tree.map(({ j, d }) => `<option value="${j.id}" ${j.id === cur ? 'selected' : ''}>${'— '.repeat(d)}${esc(j.title)}</option>`).join('')}</select></label>`;
 const kb = n => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
 
 async function job(id) {
   const j = await api(`jobs/${id}`);
-  crumbs([['Customers', '#/'], [j.customer_name, `#/customer/${j.customer_id}`], [j.address, `#/property/${j.property_id}`], [j.title]]);
+  const sibs = (await api(`properties/${j.property_id}`).catch(() => ({ jobs: [] }))).jobs || [];
+  const byId = Object.fromEntries(sibs.map(x => [x.id, x]));
+  const up = []; for (let p = byId[j.parent_job_id]; p && !up.includes(p) && p.id !== j.id; p = byId[p.parent_job_id]) up.unshift(p);
+  const tree = jobTree(sibs), me = tree.findIndex(t => t.j.id === j.id);
+  const mine = me < 0 ? [] : [tree[me].j.id, ...tree.slice(me + 1, (i => i < 0 ? tree.length : me + 1 + i)(tree.slice(me + 1).findIndex(t => t.d <= tree[me].d))).map(t => t.j.id)];
+  const kids = tree.filter(t => t.j.parent_job_id === j.id && t.j.id !== j.id);
+  crumbs([['Customers', '#/'], [j.customer_name, `#/customer/${j.customer_id}`], [j.address, `#/property/${j.property_id}`], ...up.map(p => [p.title, `#/job/${p.id}`]), [j.title]]);
   $app.innerHTML = `
     <h1>${esc(ticketName(j))} <button class="pencil" id="editJob" title="Edit job file" aria-label="Edit job file">✎</button> ${delBtn('job', j.id)}</h1>
     <div class="card" id="editBox" hidden>
@@ -256,6 +276,7 @@ async function job(id) {
       <form id="ej">
         <label>Tag<select name="tag"><option value="" ${j.tag ? '' : 'selected'}>— not decided yet —</option>${TAGS.map(t => `<option value="${t}" ${t === j.tag ? 'selected' : ''}>${t} — ${TAG_NAMES[t]}</option>`).join('')}</select></label>
         <label>Job name<input name="title" value="${esc(j.title)}"></label>
+        ${insideSelect(tree.filter(t => !mine.includes(t.j.id)), j.parent_job_id)}
         <label class="full">Notes<textarea name="notes">${esc(j.notes)}</textarea></label>
         <div class="actions"><button class="ghost">Save changes</button></div>
         <div class="err full" id="ee"></div>
@@ -263,6 +284,7 @@ async function job(id) {
     </div>
     <p class="sub">${esc(j.address)}${j.city ? ', ' + esc(j.city) : ''} · ${esc(j.customer_name)}${j.tenant ? ' · Tenant: ' + esc(j.tenant) : ''}</p>
     ${isWork(j.tag) ? `<div class="btnrow"><a class="jcpill" href="#/jobcost/${j.id}">Job cost sheet ›</a></div>` : ''}
+    ${kids.length ? `<div class="card"><h2>Inside ${esc(j.title)}</h2>${kids.map(({ j: k }) => `<div class="row"><a href="#/job/${k.id}">${k.tag ? `<span class="tag">${k.tag}</span>` : ''}${esc(k.title)}</a></div>`).join('')}</div>` : ''}
     <div id="ticketMount"></div>
     <div class="card">
       <h2>File cabinet</h2>
@@ -294,7 +316,7 @@ async function job(id) {
   document.getElementById('editJob').onclick = () => { const b = document.getElementById('editBox'); b.hidden = !b.hidden; };
   document.getElementById('ej').onsubmit = async ev => {
     ev.preventDefault(); const btn = ev.submitter; btn.disabled = true;
-    try { await saveAndProve(`jobs/${id}`, 'PUT', { ...formData(ev.target), property_id: j.property_id }, () => `jobs/${id}`, ['tag', 'title', 'notes']); route(); }
+    try { await saveAndProve(`jobs/${id}`, 'PUT', { ...formData(ev.target), property_id: j.property_id }, () => `jobs/${id}`, ['tag', 'title', 'notes', 'parent_job_id']); route(); }
     catch (e) { fail(e, document.getElementById('ee')); btn.disabled = false; }
   };
 }
