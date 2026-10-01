@@ -685,6 +685,18 @@ export default async (req: Request) => {
           ON CONFLICT (work_date, crew_id, job_id) DO UPDATE SET work_date = EXCLUDED.work_date RETURNING *`;
         return json(norm(row), 201);
       }
+      // MOVE A PILL (10/1/26): drag a man's job card to another man / another day — the same stop row moves,
+      // so its scope split and % stay with it. Nothing is deleted and re-made.
+      if (m === "PUT" && id) {
+        const b = await body();
+        if (!b.work_date || !b.crew_id) return refuse("A move needs a man and a day.");
+        const [cur] = await sql`SELECT * FROM stops WHERE id = ${id}`;
+        if (!cur) return refuse("That entry isn't on the board anymore.", 404);
+        const [clash] = await sql`SELECT id FROM stops WHERE work_date = ${b.work_date} AND crew_id = ${Number(b.crew_id)} AND job_id = ${cur.job_id} AND id <> ${id}`;
+        if (clash) return refuse("He already has that job on that day.");
+        const [row] = await sql`UPDATE stops SET work_date = ${b.work_date}, crew_id = ${Number(b.crew_id)} WHERE id = ${id} RETURNING *`;
+        return json(norm(row));
+      }
       if (m === "DELETE" && id) {
         await sql`DELETE FROM stops WHERE id = ${id}`;
         const [left] = await sql`SELECT id FROM stops WHERE id = ${id}`;
