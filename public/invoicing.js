@@ -12,6 +12,8 @@ export async function invoicingPage() {
   const d = await call('/w/invoicing');
   const live = d.tickets.filter(t => !t.tabled_at);
   const tabled = d.tickets.filter(t => t.tabled_at);
+  // ONE PLACE PER TICKET (10/1/26): a ticket already in a lane up top doesn't show again under "Billed a trip at a time".
+  d.draws = d.draws.filter(t => !live.some(x => x.id === t.id));
   const laneOf = t => { const l = invoicingLane(t, t.invoices); if (l !== 'checks') return l; return !t.scope_ok && !t.pics_ok ? 'both' : !t.scope_ok ? 'scope' : 'pics'; };
   const by = k => live.filter(t => laneOf(t) === k);
   // the tab count and every list agree: each ticket counted once, tabled included, nothing counted that isn't drawn
