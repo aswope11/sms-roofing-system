@@ -75,6 +75,8 @@ async function qbCustomerFor(job: any) {
   const found = (await qbQuery(`SELECT Id, DisplayName FROM Customer WHERE DisplayName LIKE '${qEsc(addr)}%' AND Active = true`)).Customer || [];
   if (found.length === 1) return found[0];
   if (found.length > 1) {
+    // WHOLE PROPERTY (10/1/26): no tenant on the ticket → the customer named exactly the address
+    if (!String(job.tenant || "").trim()) { const whole = found.filter((c: any) => c.DisplayName.trim().toLowerCase() === addr.toLowerCase()); if (whole.length === 1) return whole[0]; }
     // several customers at one address (e.g. Building 1-4): pick the one named for this job's building — the CO's parent job, or the job itself
     let pool = found;
     const city = String(job.city || "").trim().toLowerCase();
