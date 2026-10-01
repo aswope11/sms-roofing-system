@@ -108,14 +108,18 @@ export default async (req: Request, context: Context) => {
       const miss = missingOnJob(b);               // a note that rides back, never a refusal
       const tag = TAGS.includes(b.tag) ? b.tag : "";       // no tag yet is a blank, not a stop sign
       const title = String(b.title || "").trim();
+      // a job file can sit INSIDE another job file on the same property (Building › tenant › ticket, 10/1/26). Blank = right on the property.
+      const hasPid = "parent_job_id" in b;
+      const pid = b.parent_job_id && Number(b.parent_job_id) !== id ? Number(b.parent_job_id) : null;
       if (m === "POST") {
-        const [j] = await sql`INSERT INTO jobs (property_id, tag, title, notes)
-          VALUES (${b.property_id || null}, ${tag}, ${title}, ${b.notes || ""}) RETURNING *`;
+        const [j] = await sql`INSERT INTO jobs (property_id, tag, title, notes, parent_job_id)
+          VALUES (${b.property_id || null}, ${tag}, ${title}, ${b.notes || ""}, ${pid}) RETURNING *`;
         return note(j, miss);
       }
       if (m === "PUT" && id) {
         const [j] = await sql`UPDATE jobs SET tag=${tag}, title=${title}, notes=${b.notes || ""},
-          property_id=COALESCE(${b.property_id ? Number(b.property_id) : null}, property_id)
+          property_id=COALESCE(${b.property_id ? Number(b.property_id) : null}, property_id),
+          parent_job_id=CASE WHEN ${hasPid}::boolean THEN ${pid}::int ELSE parent_job_id END
           WHERE id=${id} RETURNING *`;
         return note(j, miss);
       }
