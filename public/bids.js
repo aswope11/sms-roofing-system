@@ -118,7 +118,7 @@ export async function templatesPage() {
   $app().innerHTML = `<div class="tplpage">
     <button class="jpback" id="tplBack">‹ Bids</button>
     <h1>Templates</h1>
-    ${BID_CATS.map(([k, label]) => { const list = byCat[k] || []; const isShut = !!shut[k]; const n = list.length + links(k).length; return `<div class="tcat">
+    ${[['proposals', 'PROPOSALS'], ...BID_CATS].map(([k, label]) => { const list = byCat[k] || []; const isShut = !!shut[k]; const n = list.length + links(k).length; return `<div class="tcat">
       <div class="tcathead" data-cat="${k}"><span>${esc(label)}</span>${n ? `<span class="tcatn">${n}</span>` : ''}<span class="spacer"></span><span class="tcatchev">${isShut ? '▸' : '▾'}</span></div>
       ${isShut ? '' : list.map(t => `<div class="tcard">
         <span class="ttag">TEMPLATE</span><b class="tname">${esc(t.name)}</b><span class="spacer"></span>
