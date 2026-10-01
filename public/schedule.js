@@ -1,7 +1,7 @@
 // THE SCHEDULE GRID — men down the left, days across the top. Do not redesign it.
 // Three things copied off the old board (app-src-schedule-board): the + boxes in the cells and the card look,
 // the hover that pops up what THIS man did HERE on THIS day, and the pills under the grid that move a ticket around.
-import { esc, $app, call, doAndProve, crumbs, setTab, fail, toast } from './ui.js';
+import { esc, $app, call, doAndProve, crumbs, setTab, fail, toast, askDelete } from './ui.js';
 import { subPayLedger } from './payledger.js';
 import { groupCrew, dispatchLine, shortDate, addDays, stopShares, daysFor, manDayPay, payFor, crewColor, ticketName, whyCantSplit } from './money.js';
 
@@ -400,6 +400,17 @@ export async function schedulePage(start) {
 
   // the × on a card in a man's cell: take HIM off THIS job on THIS day
   $app().querySelectorAll('.jobcard .kill').forEach(k => k.addEventListener('mousedown', () => hidePeek()));
+  // DELETE A MAN'S ENTRY (10/1/26): the × deletes it, the card comes off right away, and the board redraws the
+  // SAME week it was on — no page refresh. Same ask-first and read-back-proof as every other delete.
+  window._smsSchedReload = reload;
+  if (!window._smsStopDel) {
+    window._smsStopDel = true;
+    window.addEventListener('click', async e => {
+      const k = e.target.closest('.kill[data-del="stop"]'); if (!k) return;
+      e.preventDefault(); e.stopPropagation();
+      try { if (await askDelete('stop', k.dataset.id)) { k.closest('.jobcard')?.remove(); await window._smsSchedReload(); } } catch (err) { fail(err); }
+    }, true);
+  }
   $app().querySelectorAll('.jobcard').forEach(c => c.onclick = e => { if (e.target.closest('.kill,.stbar')) return; hidePeek(); location.hash = `#/job/${c.dataset.peek}`; });
   $app().querySelectorAll('select.putman').forEach(sel => sel.onchange = () => { if (sel.value) run(() => addStop(sel.value, sel.dataset.job, sel.dataset.date)); });
 
