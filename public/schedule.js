@@ -429,6 +429,7 @@ export async function schedulePage(start) {
   });
   // DRAG A PILL (10/1/26): grab a man's job card and drop it in another man's cell or another day.
   // The same entry moves — its scope split and % go with it. Nothing is deleted and re-made.
+  // Drop it above or below another card in the same day to change the order — the order is saved.
   let dragStop = 0;
   $app().querySelectorAll('.jobcard[data-stop]').forEach(c => {
     c.ondragstart = e => { dragStop = Number(c.dataset.stop); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', c.dataset.stop); hidePeek(); };
@@ -442,9 +443,20 @@ export async function schedulePage(start) {
       const id = dragStop; dragStop = 0;
       const crew_id = Number(td.dataset.dropcrew), work_date = td.dataset.dropdate;
       const s = w.stops.find(x => x.id === id);
-      if (!s || (s.crew_id === crew_id && s.work_date === work_date)) return;
-      run(() => doAndProve(`/w/stops/${id}`, { method: 'PUT', body: { crew_id, work_date } }, weekUrl,
-        back => back.stops.some(x => x.id === id && x.crew_id === crew_id && x.work_date === work_date), 'Moved — read back and it matches'));
+      if (!s) return;
+      const same = s.crew_id === crew_id && s.work_date === work_date;
+      // where it landed: above the first card whose middle is below the pointer, else last
+      const cards = [...td.querySelectorAll('.jobcard[data-stop]')].filter(c => Number(c.dataset.stop) !== id);
+      let at = cards.findIndex(c => { const r = c.getBoundingClientRect(); return e.clientY < r.top + r.height / 2; });
+      if (at < 0) at = cards.length;
+      const ids = cards.map(c => Number(c.dataset.stop)); ids.splice(at, 0, id);
+      run(async () => {
+        if (!same) await doAndProve(`/w/stops/${id}`, { method: 'PUT', body: { crew_id, work_date } }, weekUrl,
+          back => back.stops.some(x => x.id === id && x.crew_id === crew_id && x.work_date === work_date), 'Moved — read back and it matches');
+        await doAndProve('/w/stop-order', { method: 'PUT', body: { ids } }, weekUrl,
+          back => back.stops.filter(x => x.crew_id === crew_id && x.work_date === work_date && ids.includes(x.id)).map(x => x.id).join() === ids.join(),
+          same ? 'Order saved — read back and it matches' : 'Moved — read back and it matches');
+      });
     };
   });
   $app().querySelectorAll('[data-open]').forEach(r => r.onclick = e => { if (e.target.closest('.stbar,.tmove')) return; hidePeek(); location.hash = `#/job/${r.dataset.open}`; });
