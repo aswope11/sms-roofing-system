@@ -448,7 +448,7 @@ export default async (req: Request) => {
   const loadJob = async (jid: number) => (await sql`${JOB_COLS(sql)} WHERE j.id = ${jid}`)[0];
   const shareRowsFor = async (dates: string[]) => {
     if (!dates.length) return { stops: [], crewDays: [] };
-    const stops = await sql`SELECT * FROM stops WHERE work_date = ANY(${dates}::date[])`;
+    const stops = await sql`SELECT * FROM stops WHERE work_date = ANY(${dates}::date[]) ORDER BY seq NULLS LAST, id`;   // seq = his order inside a day (drag, 10/1/26)
     const crewDays = await sql`SELECT * FROM crew_days WHERE work_date = ANY(${dates}::date[])`;
     return norm({ stops, crewDays });
   };
@@ -674,6 +674,13 @@ export default async (req: Request) => {
     }
 
     // ================= STOPS =================
+    // ORDER INSIDE ONE DAY (10/1/26): he drags a card up or down in a man's day; the cell's stops come in top to bottom.
+    if (kind === "stop-order" && m === "PUT") {
+      const b = await body();
+      const ids = (b.ids || []).map(Number).filter(Boolean);
+      for (let i = 0; i < ids.length; i++) await sql`UPDATE stops SET seq = ${i} WHERE id = ${ids[i]}`;
+      return json({ ids });
+    }
     if (kind === "stops") {
       if (m === "POST") {
         const b = await body();
