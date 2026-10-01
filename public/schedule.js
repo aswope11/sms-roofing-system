@@ -62,7 +62,7 @@ export async function schedulePage(start) {
   const stale = j => j.aging && j.aging.stale;
   const unpaidLine = j => stale(j) ? `<div class="js unpaidline">unpaid $${Math.round(j.aging.owed).toLocaleString()} · ${j.aging.days} days</div>` : '';
   const jobCardHTML = (j, row, day, stopId) => `<div class="jobcard${stale(j) ? ' stale' : ''}" style="border-left-color:${stale(j) ? 'var(--bad)' : typeColor(j.tag)}"
-      data-peek="${j.id}" data-row="${row || ''}" data-day="${day || ''}">
+      data-peek="${j.id}" data-row="${row || ''}" data-day="${day || ''}"${stopId ? ` data-stop="${stopId}" draggable="true"` : ''}>
       ${stopId ? `<span class="kill" data-del="stop" data-id="${stopId}" title="Delete this entry">×</span>` : ''}
       ${j.customer_name ? `<div class="js jcust">${esc(j.customer_name)}</div>` : ''}
       <div class="jt">${pfx(j)}${esc(j.address)}</div>
@@ -148,7 +148,7 @@ export async function schedulePage(start) {
           <div class="plus ${nobody(d).length ? 'has' : ''}" data-nobody="1" data-date="${d}">+</div></td>`).join('')}</tr>
         ${crew.map((c, i) => `${i === 0 || (crew[i - 1].group === 'employee') !== (c.group === 'employee') ? `<tr class="grouphead"><th colspan="${dates.length + 1}">${c.group === 'employee' ? 'SMS employees' : 'Subs'}</th></tr>` : ''}<tr><th style="border-left:4px solid ${crewColor(c, w.crew)}">${c.group.startsWith('under-') ? '<span class="mute">↳ </span>' : ''}<span class="manledger" data-ledger="${c.boss_id || c.id}" data-lname="${c.boss_id ? '' : esc(c.name)}" title="Open his pay ledger" style="cursor:pointer;text-decoration:underline dotted">${esc(c.name)}</span>${c.group !== 'employee' && !workedMen.has(c.id) ? ` <span class="delx" data-drop="${c.id}" title="Take him off this week" style="cursor:pointer">✕</span>` : ''}</th>${dates.map(d => {
           const mine = w.stops.filter(s => s.crew_id === c.id && s.work_date === d);
-          return `<td class="cell">${mine.map(s => jobsById[s.job_id] ? jobCardHTML(jobsById[s.job_id], c.id, d, s.id) : '').join('')}
+          return `<td class="cell" data-dropcrew="${c.id}" data-dropdate="${d}">${mine.map(s => jobsById[s.job_id] ? jobCardHTML(jobsById[s.job_id], c.id, d, s.id) : '').join('')}
             <div class="plus ${mine.length ? 'has' : ''}" data-crew="${c.id}" data-date="${d}">+</div></td>`;
         }).join('')}</tr>`).join('') || `<tr><td colspan="${dates.length + 1}" class="empty">No crew yet — add men on the <a href="#/crew">Crew</a> tab.</td></tr>`}
       </table>
@@ -426,6 +426,26 @@ export async function schedulePage(start) {
       const got = back.jobs.filter(x => ids.includes(x.id)).sort((a, c) => (a.sched_rank ?? 9999) - (c.sched_rank ?? 9999)).map(x => x.id);
       if (got.join(',') !== ids.join(',')) throw new Error('The order did not stick — the read-back shows a different order.');
     });
+  });
+  // DRAG A PILL (10/1/26): grab a man's job card and drop it in another man's cell or another day.
+  // The same entry moves — its scope split and % go with it. Nothing is deleted and re-made.
+  let dragStop = 0;
+  $app().querySelectorAll('.jobcard[data-stop]').forEach(c => {
+    c.ondragstart = e => { dragStop = Number(c.dataset.stop); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', c.dataset.stop); hidePeek(); };
+    c.ondragend = () => { dragStop = 0; $app().querySelectorAll('td[data-dropcrew]').forEach(t => t.style.outline = ''); };
+  });
+  $app().querySelectorAll('td[data-dropcrew]').forEach(td => {
+    td.ondragover = e => { if (!dragStop) return; e.preventDefault(); td.style.outline = '2px dashed #ff7a3d'; };
+    td.ondragleave = e => { if (!td.contains(e.relatedTarget)) td.style.outline = ''; };
+    td.ondrop = e => {
+      e.preventDefault(); td.style.outline = '';
+      const id = dragStop; dragStop = 0;
+      const crew_id = Number(td.dataset.dropcrew), work_date = td.dataset.dropdate;
+      const s = w.stops.find(x => x.id === id);
+      if (!s || (s.crew_id === crew_id && s.work_date === work_date)) return;
+      run(() => doAndProve(`/w/stops/${id}`, { method: 'PUT', body: { crew_id, work_date } }, weekUrl,
+        back => back.stops.some(x => x.id === id && x.crew_id === crew_id && x.work_date === work_date), 'Moved — read back and it matches'));
+    };
   });
   $app().querySelectorAll('[data-open]').forEach(r => r.onclick = e => { if (e.target.closest('.stbar,.tmove')) return; hidePeek(); location.hash = `#/job/${r.dataset.open}`; });
   $app().querySelectorAll('h3[data-fold]').forEach(h => h.onclick = () => {
