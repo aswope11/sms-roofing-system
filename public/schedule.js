@@ -77,7 +77,7 @@ export async function schedulePage(start) {
   const jobCmp = (a, b) => ((b.tag === 'R' ? 1 : 0) - (a.tag === 'R' ? 1 : 0)) || (rank(a) - rank(b))
     || String(a.scheduled_date || '9999').localeCompare(String(b.scheduled_date || '9999')) || String(a.address || '').localeCompare(String(b.address || ''));
   const bucketOf = j => ['ready', 'hold', 'trades', 'contract'].includes(j.stage) ? j.stage : 'ready';
-  const pRow = j => `<div class="prow${stale(j) ? ' stale' : ''}" style="border-left-color:${stale(j) ? 'var(--bad)' : typeColor(j.tag)}" data-peek="${j.id}" data-open="${j.id}">
+  const pRow = j => `<div class="prow${stale(j) ? ' stale' : ''}" style="border-left-color:${stale(j) ? 'var(--bad)' : typeColor(j.tag)};cursor:grab" data-peek="${j.id}" data-open="${j.id}" data-dragjob="${j.id}" draggable="true">
       <div class="pmain">
         <div class="pt">${pfx(j)}${esc(j.address)}${j.city ? `<span class="pcity">${esc(j.city)}</span>` : ''}</div>
         ${j.tenant ? `<div class="ps jwho">${esc(j.tenant)}</div>` : ''}
@@ -86,7 +86,6 @@ export async function schedulePage(start) {
         ${stale(j) ? `<div class="ps unpaidline">unpaid $${Math.round(j.aging.owed).toLocaleString()} · ${j.aging.days} days — don't send a crew back until it clears</div>` : ''}
         ${stageBarHTML(j)}
       </div>
-      <span class="tmove"><button type="button" class="tup" data-bump="${j.id}" data-dir="-1">▲</button><button type="button" class="tup" data-bump="${j.id}" data-dir="1">▼</button></span>
       <span class="pgo">›</span>
     </div>`;
   const rowHTML = j => j.tag === 'R' ? `<div class="smsrep">${pRow(j)}</div>` : pRow(j);
@@ -412,20 +411,36 @@ export async function schedulePage(start) {
     run(() => doAndProve(`/w/job/${j.id}/stage`, { method: 'PUT', body: { stage: k } }, jobUrl(j.id), back => back.job.stage === k,
       `${j.tag} - ${j.address} → ${STAGE_LABEL[k]}`));
   });
-  $app().querySelectorAll('.tup[data-bump]').forEach(b => b.onclick = e => {
-    e.stopPropagation();
-    const me = jobsById[b.dataset.bump], dir = Number(b.dataset.dir);
-    const mine = open.filter(x => x.tag !== 'R' && bucketOf(x) === bucketOf(me)).sort(jobCmp);
-    const at = mine.findIndex(x => x.id === me.id), to = at + dir;
-    if (at < 0 || to < 0 || to >= mine.length) return;
-    mine.splice(to, 0, mine.splice(at, 1)[0]);
-    const ids = mine.map(x => x.id);
-    run(async () => {
-      await call('/w/sched-order', { method: 'PUT', body: { ids } });
-      const back = await call(weekUrl);
-      const got = back.jobs.filter(x => ids.includes(x.id)).sort((a, c) => (a.sched_rank ?? 9999) - (c.sched_rank ?? 9999)).map(x => x.id);
-      if (got.join(',') !== ids.join(',')) throw new Error('The order did not stick — the read-back shows a different order.');
-    });
+  // DRAG A TICKET PILL (10/1/26): grab a pill under the grid and drop it on another pill in the same list — it lands in that spot.
+  // Replaces the ▲▼ arrows. Repairs still sit on top (9/21/26 rule).
+  let dragJob = 0;
+  const clearMarks = () => $app().querySelectorAll('.prow[data-dragjob]').forEach(r => { r.style.boxShadow = ''; });
+  $app().querySelectorAll('.prow[data-dragjob]').forEach(r => {
+    r.ondragstart = e => { dragJob = Number(r.dataset.dragjob); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', 'job' + dragJob); hidePeek(); r.style.opacity = '.4'; };
+    r.ondragend = () => { dragJob = 0; r.style.opacity = ''; clearMarks(); };
+    r.ondragover = e => {
+      if (!dragJob || dragJob === Number(r.dataset.dragjob)) return;
+      if (bucketOf(jobsById[dragJob]) !== bucketOf(jobsById[r.dataset.dragjob])) return;
+      e.preventDefault(); clearMarks();
+      const below = e.clientY > r.getBoundingClientRect().top + r.offsetHeight / 2;
+      r.style.boxShadow = below ? '0 3px 0 #ff7a3d' : '0 -3px 0 #ff7a3d';
+    };
+    r.ondragleave = e => { if (!r.contains(e.relatedTarget)) r.style.boxShadow = ''; };
+    r.ondrop = e => {
+      e.preventDefault(); clearMarks();
+      const me = jobsById[dragJob], target = jobsById[r.dataset.dragjob]; dragJob = 0;
+      if (!me || !target || me.id === target.id || bucketOf(me) !== bucketOf(target)) return;
+      const below = e.clientY > r.getBoundingClientRect().top + r.offsetHeight / 2;
+      const mine = open.filter(x => bucketOf(x) === bucketOf(me)).sort(jobCmp).filter(x => x.id !== me.id);
+      mine.splice(mine.findIndex(x => x.id === target.id) + (below ? 1 : 0), 0, me);
+      const ids = mine.map(x => x.id);
+      run(async () => {
+        await call('/w/sched-order', { method: 'PUT', body: { ids } });
+        const back = await call(weekUrl);
+        const got = back.jobs.filter(x => ids.includes(x.id)).sort((a, c) => (a.sched_rank ?? 9999) - (c.sched_rank ?? 9999)).map(x => x.id);
+        if (got.join(',') !== ids.join(',')) throw new Error('The order did not stick — the read-back shows a different order.');
+      });
+    };
   });
   // DRAG A PILL (10/1/26): grab a man's job card and drop it in another man's cell or another day.
   // The same entry moves — its scope split and % go with it. Nothing is deleted and re-made.
