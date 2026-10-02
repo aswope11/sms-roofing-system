@@ -110,9 +110,12 @@ const TPL_SHUT_KEY = 'sms_tpl_shut_v1';
 const tplShut = () => { try { return JSON.parse(localStorage.getItem(TPL_SHUT_KEY) || '{}'); } catch (e) { return {}; } };
 export async function templatesPage() {
   setTab('bids'); crumbs([['Bids', '#/bids'], ['Templates']]);
-  const byCat = { ss: SS_TEMPLATES };
+  // 10/1/26: every bid sheet template is a Google Sheet now (LINK_TEMPLATES, "Open ↗"). The old xlsx download
+  // cards are off the page so there is one kind of card; their files stay in /sheets for the byte-lock tests.
+  const SHOW_XLSX = false;
+  const byCat = SHOW_XLSX ? { ss: SS_TEMPLATES } : {};
   // Same sorting as the old bid app: a TPO template marked tear off goes under TPO — Tear off.
-  for (const t of [...OTHER_TEMPLATES, ...PULLOUT_TEMPLATES]) { const k = t.cat === 'tpo' && t.construction === 'tearoff' ? 'tpo-tearoff' : t.cat; (byCat[k] = byCat[k] || []).push(t); }
+  if (SHOW_XLSX) for (const t of [...OTHER_TEMPLATES, ...PULLOUT_TEMPLATES]) { const k = t.cat === 'tpo' && t.construction === 'tearoff' ? 'tpo-tearoff' : t.cat; (byCat[k] = byCat[k] || []).push(t); }
   const links = k => LINK_TEMPLATES.filter(t => t.cat === k);
   const shut = tplShut();
   $app().innerHTML = `<div class="tplpage">
