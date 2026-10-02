@@ -358,9 +358,9 @@ test('LAW: ready to bill fills itself — green day + scope written + checked; d
   assert.equal(r.material, 120);       // × 1.2
   assert.equal(r.total, 670);
   assert.equal(r.through, '2026-09-15');
-  assert.equal(M.readyToBill({ ...job, scope_ok: false }, shares, mats, []), null);          // not checked — not ready
+  assert.notEqual(M.readyToBill({ ...job, scope_ok: false }, shares, mats, []), null);          // not checked — still ready (scope never holds it, 10/2/26)
   assert.equal(M.readyToBill({ ...job, done_at: null }, shares, mats, []), null);            // reopened — back on the schedule, not ready
-  assert.equal(M.readyToBill({ ...job, scope: '  ' }, shares, mats, []), null);             // not written — not ready
+  assert.notEqual(M.readyToBill({ ...job, scope: '  ' }, shares, mats, []), null);             // not written — still ready (scope never holds it, 10/2/26)
   assert.equal(M.readyToBill({ ...job, tag: 'JC' }, shares, mats, []), null);               // JC bills by draws
   assert.equal(M.readyToBill(job, shares, mats, [{ kind: 'real', covers_through: '2026-09-15' }]), null);   // billed — gone
   const later = M.readyToBill(job, [...shares, { job_id: 7, work_date: '2026-09-18', kind: 'employee', man: 'Tony', shows_as: 'Tony', stops: 1, days: 0.5, cost: 115 }], mats, [{ kind: 'real', covers_through: '2026-09-15' }]);
