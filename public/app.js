@@ -385,3 +385,15 @@ document.getElementById('search').oninput = e => {
 };
 window.addEventListener('hashchange', route);
 route();
+// Saved emails (.eml) open in Gmail, not the computer's mail program (Outlook).
+document.addEventListener('click', async e => {
+  const a = e.target.closest('a[href^="/api/files/"]');
+  if (!a || !/\.eml$/i.test(a.textContent.trim())) return;
+  e.preventDefault();
+  const w = window.open('about:blank', '_blank');
+  try {
+    const head = (await (await fetch(a.getAttribute('href'))).text()).split(/\r?\n\r?\n/)[0];
+    const m = head.match(/^Message-ID:\s*<?([^>\r\n]+)>?/im);
+    w.location = m ? 'https://mail.google.com/mail/?authuser=adam@smsroofingdfw.com#search/rfc822msgid%3A' + encodeURIComponent(m[1].trim()) : a.href;
+  } catch { w.location = a.href; }
+});
