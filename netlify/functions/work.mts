@@ -1066,7 +1066,7 @@ export default async (req: Request) => {
         .filter((j: any) => M.inInvoicing(j, j.invoices) || (j.tabled_at && !j.no_charge));
       // Placeholders owed: every stop on a GREEN day on an R / CO / UC ticket with no priced seat for that day. JC never.
       const { owed, greens, shares, jobIds, owedJobs } = await owedList();
-      // Ready to bill — fills itself (green day + scope written + checked), dollars from the rules
+      // Ready to bill — fills itself (green day not billed yet; scope and pictures never hold it, 10/2/26), dollars from the rules
       const allMat = jobIds.length ? norm(await sql`SELECT l.job_id, l.line_total, s.inv_date FROM supply_lines l JOIN supply_invoices s ON s.id = l.invoice_id WHERE l.job_id = ANY(${jobIds}::int[])`) : [];
       const readyInvs = jobIds.length ? norm(await sql`SELECT * FROM invoices WHERE job_id = ANY(${jobIds}::int[])`) : [];
       const ready = owedJobs.map((j: any) => { const mine = readyInvs.filter((i: any) => i.job_id === j.id); const r = M.readyToBill(j, shares, allMat, mine); return r ? { ...r, job: j, invoice: M.writeRealInvoice(j, r, mine, today(), j.bill_price) } : null; }).filter(Boolean);
@@ -1112,7 +1112,7 @@ export default async (req: Request) => {
       const mat = norm(await sql`SELECT l.job_id, l.line_total, s.inv_date FROM supply_lines l JOIN supply_invoices s ON s.id = l.invoice_id WHERE l.job_id = ${id}`);
       const invs = norm(await sql`SELECT * FROM invoices WHERE job_id = ${id}`);
       const r = M.readyToBill(job, shares, mat, invs);
-      if (!r) return refuse("That ticket isn't ready to bill — it needs a green day not billed yet, and the scope written and checked.");
+      if (!r) return refuse("That ticket isn't ready to bill — it needs a green day not billed yet.");
       const w = M.writeRealInvoice(job, r, invs, today(), b.amount === "" || b.amount == null ? job.bill_price : b.amount);
       // IT WRITES EITHER WAY. No price yet and no scope typed yet are notes on the invoice, not a wall.
       const billMiss = [...(w.amount > 0 ? [] : ["the dollar amount"]), ...(w.scope.trim() ? [] : ["the scope of work — it goes on the invoice word for word"])];
