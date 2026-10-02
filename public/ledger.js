@@ -22,8 +22,8 @@ export async function renderTicket(jobId, mount) {
       <div class="btnrow"><button class="small ghost" id="saveScope">Save the scope words</button></div>
       <p class="help">Saving words here never ticks the box below. Only you tick it.</p>
       <div class="btnrow" style="margin-top:10px">
-        <label>Invoice price <input id="billPrice" type="number" step="0.01" min="0" style="width:130px" value="${j.bill_price != null ? esc(j.bill_price) : ''}" placeholder="${phTotal > 0 ? phTotal : ''}"></label>
-        <label class="checkline"><input type="checkbox" id="billSame" ${phTotal > 0 && j.bill_price != null && Number(j.bill_price) === phTotal ? 'checked' : ''} ${phTotal > 0 ? '' : 'disabled'}> Same as the placeholder${phTotal > 0 ? ` (${money(phTotal)})` : ' (no placeholder yet)'}</label>
+        <label>Invoice price <input id="billPrice" type="number" step="0.01" min="0" style="width:130px" value="${j.bill_price != null ? esc(j.bill_price) : (phTotal > 0 ? phTotal : '')}" placeholder="${phTotal > 0 ? phTotal : ''}"></label>
+        <label class="checkline"><input type="checkbox" id="billSame" ${phTotal > 0 && (j.bill_price == null || Number(j.bill_price) === phTotal) ? 'checked' : ''} ${phTotal > 0 ? '' : 'disabled'}> Same as the placeholder${phTotal > 0 ? ` (${money(phTotal)})` : ' (no placeholder yet)'}</label>
         <button class="small ghost" id="saveBillPrice">Save the price</button>
       </div>
       <div class="btnrow">
