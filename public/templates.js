@@ -527,6 +527,8 @@ export const LINK_TEMPLATES = [
     url: 'https://docs.google.com/document/d/1GReVKjZnktajPJ4y7oN37noBWLVKksfIs90O04wAUQM/edit' },
   { cat: 'proposals', tag: 'PROPOSAL', name: 'PROPOSAL — MA Tapered ISO / MA TPO',
     url: 'https://docs.google.com/document/d/1kX-fkmsx-rFRNrQf5_WjcT3mhoAErCyQ_cOV0HINpiQ/edit' },
+  { cat: 'proposals', tag: 'PROPOSAL', name: 'PROPOSAL — MA ISO / MA TPO — TEAR-OFF',
+    url: 'https://docs.google.com/document/d/1lRuZXfzpU1-Vmwl1rC6rLHAFjR86BhD1Cy-0h4sY9_o/edit' },
   // BID SHEET TEMPLATES (10/1/26) — every one is a Google Sheet in Drive folder "SMS BID TEMPLATES (current)".
   // All TPO sheets brought up to the newest layout; standing seam converted with nothing changed.
   { cat: 'tpo-tearoff', tag: 'TEMPLATE', name: '01 TPO MA ISO + MA TPO — TEAR-OFF', url: 'https://docs.google.com/spreadsheets/d/1hfng0DcWKrknFT7ZHHwHfAckoYohgQiaNT98udaHM7E/edit' },
