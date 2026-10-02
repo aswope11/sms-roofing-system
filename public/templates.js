@@ -527,13 +527,25 @@ export const LINK_TEMPLATES = [
     url: 'https://docs.google.com/document/d/1GReVKjZnktajPJ4y7oN37noBWLVKksfIs90O04wAUQM/edit' },
   { cat: 'proposals', tag: 'PROPOSAL', name: 'PROPOSAL — MA Tapered ISO / MA TPO',
     url: 'https://docs.google.com/document/d/1kX-fkmsx-rFRNrQf5_WjcT3mhoAErCyQ_cOV0HINpiQ/edit' },
-  // BLANK BID SHEETS (Google Sheets) under TPO — New construction.
-  { cat: 'tpo', tag: 'TEMPLATE', name: 'TEMPLATE — MA ISO / FA TPO (blank Google Sheet)', url: 'https://docs.google.com/spreadsheets/d/1L_AsPV8-AKTG6Xn6Y8AIjiRfXwtzGNqpYnAuiV-_EHg/edit' },
-  { cat: 'tpo', tag: 'TEMPLATE', name: 'TEMPLATE — MA ISO / MA TPO (blank)', url: 'https://docs.google.com/spreadsheets/d/1QXNFUmStNe1YrBQ1ISe0PJB5e1Sq8WyofrtjsFwaOlQ/edit' },
-  { cat: 'tpo', tag: 'TEMPLATE', name: 'TEMPLATE — MA Tapered ISO / MA TPO (blank)', url: 'https://docs.google.com/spreadsheets/d/1mG7I4gfGOcMPXJBvAoCuT6JQgxnQDD12LjxhtqHQzig/edit' },
-  { cat: 'tpo', tag: 'TEMPLATE', name: 'TEMPLATE — MA 1/8″ Tapered ISO / MA TPO (blank)', url: 'https://docs.google.com/spreadsheets/d/1SPe8vgzSVnlhXjDx8tm9jfi3kgIJ4gzpHCSgJLvfdh4/edit' },
-  { cat: 'tpo', tag: 'TEMPLATE', name: 'TEMPLATE — LEDGE add-on: 1/2″ redboard MA + TPO MA (blank)', url: 'https://docs.google.com/spreadsheets/d/1JT1MKngj4YiKhpHahsaHGi84Vpg6j0FcRXfNLExKKsQ/edit' },
-  { cat: 'tpo', tag: 'TEMPLATE', name: 'TEMPLATE — SKIRT FLASHING add-on (blank)', url: 'https://docs.google.com/spreadsheets/d/11YuANXkkPfj9wzyDMOsTEGa8yd5lZYZpnrQSuoJVl3U/edit' },
+  // BID SHEET TEMPLATES (10/1/26) — every one is a Google Sheet in Drive folder "SMS BID TEMPLATES (current)".
+  // All TPO sheets brought up to the newest layout; standing seam converted with nothing changed.
+  { cat: 'tpo-tearoff', tag: 'TEMPLATE', name: '01 TPO MA ISO + MA TPO — TEAR-OFF', url: 'https://docs.google.com/spreadsheets/d/1hfng0DcWKrknFT7ZHHwHfAckoYohgQiaNT98udaHM7E/edit' },
+  { cat: 'tpo-tearoff', tag: 'TEMPLATE', name: '02 TPO MA ISO + RHINOBOND TPO — TEAR-OFF', url: 'https://docs.google.com/spreadsheets/d/1yG3MH3a5p8gC0zjc_HdxHGOhExwyGcMTnTm4FwBFYBI/edit' },
+  { cat: 'tpo', tag: 'TEMPLATE', name: '03 TPO MA ISO + MA TPO — NEW CONSTRUCTION', url: 'https://docs.google.com/spreadsheets/d/1qXO1l8Eq5Xcy632ONb0MTr7ATbnTm7Ot05KWK6hmTWQ/edit' },
+  { cat: 'tpo', tag: 'TEMPLATE', name: '04 TPO MA ISO + FA TPO — NEW CONSTRUCTION', url: 'https://docs.google.com/spreadsheets/d/13kG34v9YHQNthDXXTevl4DW2LzvTWAY9QHp7HNVVuq4/edit' },
+  { cat: 'tpo', tag: 'TEMPLATE', name: '05 TPO MA 1/4″ TAPERED ISO + MA TPO — NEW CONSTRUCTION', url: 'https://docs.google.com/spreadsheets/d/1_9bZxUFz8gNh5nm_JqubKImKJlQT2EmfZ9Vp3j7ouxM/edit' },
+  { cat: 'tpo', tag: 'TEMPLATE', name: '06 TPO MA 1/8″ TAPERED ISO + MA TPO — NEW CONSTRUCTION', url: 'https://docs.google.com/spreadsheets/d/1InSgtVLUE-syNwlPLIB2kUYQQ3EVRtjwuY8Ty2SAcqQ/edit' },
+  { cat: 'tpo', tag: 'TEMPLATE', name: '07 TPO MA ISO + MA TPO — KICKERS — NEW CONSTRUCTION', url: 'https://docs.google.com/spreadsheets/d/1tix_g4HjjxPlv0G-pwYduVM7Jn9XJ-C3qTw-4hCl-ds/edit' },
+  { cat: 'tpo', tag: 'TEMPLATE', name: '08 ADD-ON — LEDGE', url: 'https://docs.google.com/spreadsheets/d/1GkYPikUMVwSUS0zfNI59PvAcZ1oni7WRWL8AqtFaj2M/edit' },
+  { cat: 'tpo', tag: 'TEMPLATE', name: '09 ADD-ON — SKIRT FLASHING', url: 'https://docs.google.com/spreadsheets/d/16mdUPr9aCm0WROhnBT91nyOxANk42Va2NqL6w2oz3Wk/edit' },
+  { cat: 'tpo', tag: 'TEMPLATE', name: '10 ADD-ON — COUNTER FLASHING', url: 'https://docs.google.com/spreadsheets/d/1or0oEB-0szleVURPyqhxit8hEPCZ3pj8KdnnQfCvW8E/edit' },
+  { cat: 'tpo', tag: 'TEMPLATE', name: '11 ADD-ON — DENSDECK VE', url: 'https://docs.google.com/spreadsheets/d/156n6vZQUx0UllHVdGTcipUSMJCTjwuLAx2Gm6qTCd1w/edit' },
+  { cat: 'trades', tag: 'TEMPLATE', name: '12 ADD-ON — COPING + CLEAT + ICE & WATER', url: 'https://docs.google.com/spreadsheets/d/1HD52odl1tEKhkNQhKIXvZOEcBeJ0uQJsj05jhNvKs8k/edit' },
+  { cat: 'trades', tag: 'TEMPLATE', name: '13 FASCIA', url: 'https://docs.google.com/spreadsheets/d/1XSFcqy7Ek9fgybma8Gt5oaOMHi_Gz0TkSp0v1eY1nnY/edit' },
+  { cat: 'trades', tag: 'TEMPLATE', name: '14 GUTTERS & DOWNSPOUTS', url: 'https://docs.google.com/spreadsheets/d/1n5AMgYlUquFaSvsoVgHCRFrxkjmoX7EWzP3I3XGSNPQ/edit' },
+  { cat: 'trades', tag: 'TEMPLATE', name: '15 NAIL BASE', url: 'https://docs.google.com/spreadsheets/d/1WZYeJN_r09Uhi0Kc2hEAJ-wqtq3pzjBLya1KOB3ehIQ/edit' },
+  { cat: 'ss', tag: 'TEMPLATE', name: '16 STANDING SEAM — CEE-LOK', url: 'https://docs.google.com/spreadsheets/d/1SlsWlgP4B4CpJYyKXn6Npe4a2zi5ck3MttEnpd2UpdI/edit' },
+  { cat: 'ss', tag: 'TEMPLATE', name: '17 STANDING SEAM — ZEE-LOCK', url: 'https://docs.google.com/spreadsheets/d/1H33cb4Gj8XG1qi9WmmenYAI9vw9k-hVkrZz6agYrxMI/edit' },
 ];
 
 // TWO TEMPLATES PULLED OUT OF THE LIBERTY RETAIL CENTER BID (9/26/26). His picks: counter flashing add-on and
