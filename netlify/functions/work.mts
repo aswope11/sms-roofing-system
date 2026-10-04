@@ -1105,6 +1105,13 @@ export default async function handler(req: Request) {
     }
 
     // ================= INVOICING PAGE =================
+    // INVOICE PDF (10/4/26): the QuickBooks PDF of one invoice (by its QuickBooks id), so it can go into an email draft he sends himself.
+    if (kind === "qb-pdf" && id && m === "GET") {
+      const t = await qbToken();
+      const res = await fetch(`${QB_API}/${t.realm_id}/invoice/${id}/pdf?minorversion=75`, { headers: { authorization: `Bearer ${t.access_token}`, accept: "application/pdf" } });
+      if (!res.ok) return refuse("QuickBooks would not give the PDF (" + res.status + ").");
+      return new Response(await res.arrayBuffer(), { headers: { "content-type": "application/pdf" } });
+    }
     // INVOICING TICKET ORDER (10/4/26, his rule): the order he drags tickets into is saved on the server, so every computer (his laptop, Ashley) sees the same order.
     if (kind === "inv-order") {
       const store = getStore({ name: "settings", consistency: "strong" });
