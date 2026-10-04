@@ -959,12 +959,20 @@ export default async function handler(req: Request) {
       }
       if (m === "PUT" && action === "check") {
         // His tick. The only place either box is ever set.
-        // NO 'REAL INVOICE OWED' STOP (10/4/26, his rule): the invoice should already exist from work complete. If a done ticket gets both boxes
-        // ticked and still has no real invoice, the app writes it now (same bill path: QuickBooks first, then the placeholder goes to $0).
+        // ANY TICK ON A DONE TICKET FIRES QUICKBOOKS (10/4/26, his rule): a done ticket must ALWAYS have its invoice in QuickBooks.
+        // Any box he ticks on a done ticket with no real invoice writes it now (same bill path: QuickBooks first, then the placeholder goes to $0).
+        // Ticking the scope box also puts the scope words on the unsent QuickBooks invoice, word for word.
         const afterCheck = async (row: any) => {
-          if (row && row.done_at && row.scope_ok && row.pics_ok && !['UC', 'JC'].includes(row.tag)) {
+          if (row && row.done_at && !['UC', 'JC'].includes(row.tag)) {
             const has = norm(await sql`SELECT id FROM invoices WHERE job_id = ${id} AND kind = 'real'`);
             if (!has.length) { try { await handler(new Request(new URL('/w/bill/' + id, url), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })); } catch (e: any) { /* stays visible on Invoicing */ } }
+          }
+          if (row && b.which === 'scope' && row.scope_ok && String(row.scope || '').trim()) {
+            const open = norm(await sql`SELECT * FROM invoices WHERE job_id = ${id} AND kind = 'real' AND sent_at IS NULL`);
+            for (const inv of open) {
+              await sql`UPDATE invoices SET scope = ${String(row.scope)} WHERE id = ${inv.id}`;
+              if (inv.qb_id) { try { await qbSetScope(inv.qb_id, String(row.scope)); } catch (e: any) { /* the scope still saved in the app */ } }
+            }
           }
           return row;
         };
