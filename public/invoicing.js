@@ -13,7 +13,8 @@ export async function invoicingPage() {
   const live = d.tickets.filter(t => !t.tabled_at);
   const tabled = d.tickets.filter(t => t.tabled_at);
   // NO OLD READY-TO-BILL SECTION (10/4/26): a worked ticket not drawn anywhere else goes in the bottom columns by its scope/pictures checks
-  d.ready.filter(r => !live.some(x => x.id === r.job.id) && !r.job.tabled_at).forEach(r => live.push({ ...r.job, invoices: [] }));
+  // 10/4/26: only FINISHED tickets come here. A UC still being worked stays on the Schedule (contract jobs bill by draws).
+  d.ready.filter(r => r.job.done_at && !live.some(x => x.id === r.job.id) && !r.job.tabled_at).forEach(r => live.push({ ...r.job, invoices: [] }));
   // ONE PLACE PER TICKET (10/1/26): a ticket already in a lane up top doesn't show again under "Billed a trip at a time".
   d.draws = d.draws.filter(t => !live.some(x => x.id === t.id));
   const laneOf = t => { const l = invoicingLane(t, t.invoices); if (l !== 'checks') return l; return !t.scope_ok && !t.pics_ok ? 'both' : !t.scope_ok ? 'scope' : 'pics'; };
