@@ -1097,6 +1097,18 @@ export default async function handler(req: Request) {
     }
 
     // ================= INVOICING PAGE =================
+    // INVOICING TICKET ORDER (10/4/26, his rule): the order he drags tickets into is saved on the server, so every computer (his laptop, Ashley) sees the same order.
+    if (kind === "inv-order") {
+      const store = getStore({ name: "settings", consistency: "strong" });
+      const cur: any = (await store.get("inv-order", { type: "json" })) || {};
+      if (m === "GET") return json(cur);
+      if (m === "PUT") {
+        const b = await body();
+        if (b && b.section) cur[String(b.section)] = (Array.isArray(b.order) ? b.order : []).map((x: any) => String(x));
+        await store.setJSON("inv-order", cur);
+        return json(cur);
+      }
+    }
     if (kind === "invoicing" && m === "GET") {
       // Step 5 rule: an unsent real invoice written from Ready to bill stays future-dated (tomorrow) so it never hits AR early.
       await sql`UPDATE invoices SET inv_date = ${M.addDays(today(), 1)}::date WHERE kind = 'real' AND sent_at IS NULL AND covers_through IS NOT NULL AND inv_date <= ${today()}::date`;
