@@ -369,7 +369,7 @@ test('LAW: ready to bill fills itself — green day + scope written + checked; d
 
 test('Invoicing has Ready to bill with one button; AR is one pile per customer with Mark it paid on the row', () => {
   const inv = readFileSync('public/invoicing.js', 'utf8');
-  for (const t of ["'Ready to bill'", "'Placeholders owed in QuickBooks'", "'Needs both'", "'Needs the scope'", "'Needs pictures'", "'Billed a trip at a time — still working'", "'Tabled — not billing yet'"]) assert.ok(inv.includes(t), t);
+  for (const t of ["'Ready to bill'", "'Placeholders owed in QuickBooks'", "'Needs both'", "'Needs the scope'", "'Needs pictures'", "'Tabled — not billing yet'"]) assert.ok(inv.includes(t), t);
   assert.ok(!inv.includes("'Send it'") && inv.indexOf("'Placeholders owed in QuickBooks'") < inv.indexOf("'Ready to bill'"));   // 10/4/26: Send it IS Ready to bill; the old section is gone
   const ar = readFileSync('public/ar.js', 'utf8');
   assert.ok(ar.includes('Mark it paid') && ar.includes('PAST 30 DAYS — call them') && ar.includes('localeCompare(b)'));
@@ -430,7 +430,7 @@ test('LAW step 6: DONE MEANS MONEY — done + unpaid + (no amount | no real numb
 
 test('step 6 pages: trips at the top of Invoicing, Tabled — not billing yet, AR has DONE — NOT GETTING PAID YET with Fix it / No charge, hover job file, red card at 21 days', () => {
   const inv = readFileSync('public/invoicing.js', 'utf8');
-  assert.ok(inv.indexOf("'Billed a trip at a time — still working'") < inv.indexOf("'Ready to bill'") && inv.includes("'Tabled — not billing yet'"));
+  assert.ok(!inv.includes("'Billed a trip at a time — still working'") && inv.includes("'Tabled — not billing yet'"));   // 10/4/26: no trip-at-a-time section, a sent invoice lives on AR
   const ar = readFileSync('public/ar.js', 'utf8');
   for (const t of ['DONE — NOT GETTING PAID YET', 'Fix it', 'No charge', 'data-hover', 'Mark it paid']) assert.ok(ar.includes(t), t);
   const sch = readFileSync('public/schedule.js', 'utf8');
