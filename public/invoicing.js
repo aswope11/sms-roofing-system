@@ -65,14 +65,14 @@ export async function invoicingPage() {
         <div class="ps">${esc(who(o.job))} · ${o.suggested != null ? money(o.suggested) : '<span class="redtxt">not priced</span>'}</div></a>
       <div class="lanebtns"><button class="lb send phqb" data-k="${k}">Send to QuickBooks${o.suggested != null ? ' ' + money(o.suggested) : ''}</button><button class="lb seat" data-k="${k}">Put the QB number on</button></div></div>`).join(''));
   // READY TO BILL (10/4/26): invoice written, scope AND pictures checked — all that's left is emailing the customer
-  html += grp('var(--ok)', 'Ready to bill', by('send').length, by('send').map(t => invRow(t, 'var(--bad)')).join(''));
+  // 10/4/26: no 'Real invoice owed' section. The app writes the invoice itself (work complete / both boxes ticked); if one ever didn't land, it shows here.
+  const readyList = [...by('send'), ...by('write')];
+  html += grp('var(--ok)', 'Ready to bill', readyList.length, readyList.map(t => invRow(t, 'var(--bad)')).join(''));
   // THREE LITTLE GRIDS
   const WAIT = [{ k: 'both', l: 'Needs both', w: 'scope AND pictures', c: '#ffd24d' }, { k: 'scope', l: 'Needs the scope', w: 'Adam', c: 'var(--brand)' }, { k: 'pics', l: 'Needs pictures', w: 'Ashley', c: 'var(--mute)' }];
   if (WAIT.some(L => by(L.k).length)) html += `<div class="lanegrid">${WAIT.map(L => `<div class="lanecol" style="--lane:${L.c}">
       <div class="lch"><span class="lanen">${by(L.k).length}</span><b>${L.l}</b><small>${L.w}</small></div>
       <div class="lcb">${by(L.k).map(mini).join('') || '<div class="lcempty">clear</div>'}</div></div>`).join('')}</div>`;
-  // WRITE IT
-  html += grp('#ffd24d', 'Real invoice owed', by('write').length, by('write').map(t => invRow(t, '#ffd24d')).join(''));
   // TABLED
   html += grp('var(--line)', 'Tabled — not billing yet', tabled.length, tabled.map(t => `<div class="prow" style="border-left-color:var(--line)">
       <a class="pmain" ${open(t.id)}><div class="pt">${esc(ticketName(t))}</div><div class="ps">${esc(who(t))} · tabled ${shortDate(t.tabled_at)} — "${esc(t.tabled_why)}"</div></a>
