@@ -369,8 +369,8 @@ test('LAW: ready to bill fills itself — green day + scope written + checked; d
 
 test('Invoicing has Ready to bill with one button; AR is one pile per customer with Mark it paid on the row', () => {
   const inv = readFileSync('public/invoicing.js', 'utf8');
-  for (const t of ["'Ready to bill'", 'Write the invoice', "'Placeholders owed in QuickBooks'", "'Send it'", "'Needs both'", "'Needs the scope'", "'Needs pictures'", "'Real invoice owed'", "'Billed a trip at a time — still working'", "'Tabled — not billing yet'"]) assert.ok(inv.includes(t), t);
-  assert.ok(inv.indexOf("'Ready to bill'") < inv.indexOf("'Placeholders owed in QuickBooks'"));
+  for (const t of ["'Ready to bill'", "'Placeholders owed in QuickBooks'", "'Needs both'", "'Needs the scope'", "'Needs pictures'", "'Real invoice owed'", "'Billed a trip at a time — still working'", "'Tabled — not billing yet'"]) assert.ok(inv.includes(t), t);
+  assert.ok(!inv.includes("'Send it'") && inv.indexOf("'Placeholders owed in QuickBooks'") < inv.indexOf("'Ready to bill'"));   // 10/4/26: Send it IS Ready to bill; the old section is gone
   const ar = readFileSync('public/ar.js', 'utf8');
   assert.ok(ar.includes('Mark it paid') && ar.includes('PAST 30 DAYS — call them') && ar.includes('localeCompare(b)'));
   const w = readFileSync('netlify/functions/work.mts', 'utf8');
