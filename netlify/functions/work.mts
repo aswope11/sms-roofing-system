@@ -164,6 +164,14 @@ async function zeroReplacedPlaceholders(sql: any, inv: any, job: any) {
   return errs;
 }
 // Mark it sent → the QuickBooks invoice gets the same real date the app gives it.
+// SCOPE TO QUICKBOOKS (10/4/26): put the scope on the invoice line in QuickBooks, word for word. Amount untouched.
+async function qbSetScope(qbId: string, scope: string) {
+  const cur = (await qb('GET', `invoice/${qbId}`)).Invoice;
+  const lines = (cur.Line || []).filter((l: any) => l.DetailType === 'SalesItemLineDetail');
+  if (!lines.length) return;
+  lines[0] = { ...lines[0], Description: scope };
+  await qb('POST', 'invoice', { Id: qbId, SyncToken: cur.SyncToken, sparse: true, Line: lines });
+}
 async function qbSetDate(qbId: string, date: string) {
   const cur = (await qb("GET", `invoice/${qbId}`)).Invoice;
   await qb("POST", "invoice", { Id: qbId, SyncToken: cur.SyncToken, sparse: true, TxnDate: date, DueDate: date });
@@ -440,7 +448,7 @@ function readInvoiceText(text: string) {
   return { number, inv_date, due_date, amount, po, lines };
 }
 
-export default async (req: Request) => {
+export default async function handler(req: Request) {
   const db = getDatabase();
   const sql = db.sql;
   const url = new URL(req.url);
@@ -932,7 +940,15 @@ export default async (req: Request) => {
       if (m === "PUT" && action === "scope") {
         // Writing words in the scope field never ticks the scope box.
         const [r] = await sql`UPDATE jobs SET scope = ${String(b.scope || "")} WHERE id = ${id} RETURNING *`;
-        return json(norm(r));
+        // SCOPE TO QUICKBOOKS (10/4/26, his rule): whenever the scope is typed in, it goes on the unsent real invoice word for word, here and in QuickBooks.
+        const scopeWords = String(b.scope || '');
+        const openInvs = norm(await sql`SELECT * FROM invoices WHERE job_id = ${id} AND kind = 'real' AND sent_at IS NULL`);
+        let qb_error = '';
+        for (const inv of openInvs) {
+          await sql`UPDATE invoices SET scope = ${scopeWords} WHERE id = ${inv.id}`;
+          if (inv.qb_id) { try { await qbSetScope(inv.qb_id, scopeWords); } catch (e: any) { qb_error = String(e?.message || e); } }
+        }
+        return json({ ...norm(r), qb_error });
       }
       if (m === "PUT" && action === "check") {
         // His tick. The only place either box is ever set.
@@ -950,7 +966,16 @@ export default async (req: Request) => {
       if (m === "POST" && action === "done") {
         if (!M.isWork(job.tag)) return refuse("A bid is not work — it can't be done.");
         const [r] = await sql`UPDATE jobs SET done_at = ${today()} WHERE id = ${id} RETURNING *`;
-        return json(norm(r));
+        // WORK COMPLETE (10/4/26, his order): copy the placeholder into a real QuickBooks invoice at the SAME price, save it, THEN zero the placeholder.
+        // Same path as the bill button (write it, QuickBooks, then zero the placeholder only after it lands). Contract jobs (UC/JC) bill by draws, so they are skipped.
+        let billed: any = null;
+        if (!['UC', 'JC'].includes(job.tag)) {
+          try {
+            const res = await handler(new Request(new URL('/w/bill/' + id, url), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }));
+            billed = await res.json();
+          } catch (e: any) { billed = { error: String(e?.message || e) }; }
+        }
+        return json({ ...norm(r), billed });
       }
       if (m === "POST" && action === "reopen") {
         // Reopen = back to the schedule, off Invoicing. Any real invoice not sent yet is undone here AND in QuickBooks,
