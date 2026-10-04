@@ -952,14 +952,23 @@ export default async function handler(req: Request) {
       }
       if (m === "PUT" && action === "check") {
         // His tick. The only place either box is ever set.
+        // NO 'REAL INVOICE OWED' STOP (10/4/26, his rule): the invoice should already exist from work complete. If a done ticket gets both boxes
+        // ticked and still has no real invoice, the app writes it now (same bill path: QuickBooks first, then the placeholder goes to $0).
+        const afterCheck = async (row: any) => {
+          if (row && row.done_at && row.scope_ok && row.pics_ok && !['UC', 'JC'].includes(row.tag)) {
+            const has = norm(await sql`SELECT id FROM invoices WHERE job_id = ${id} AND kind = 'real'`);
+            if (!has.length) { try { await handler(new Request(new URL('/w/bill/' + id, url), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })); } catch (e: any) { /* stays visible on Invoicing */ } }
+          }
+          return row;
+        };
         if (b.which === "scope") {
           const scope_ok = !!b.value;
           const [r] = await sql`UPDATE jobs SET scope_ok = ${scope_ok}, scope_ok_at = ${scope_ok ? new Date().toISOString() : null} WHERE id = ${id} RETURNING *`;
-          return json(norm(r));
+          return json(await afterCheck(norm(r)));
         }
         if (b.which === "pics") {
           const [r] = await sql`UPDATE jobs SET pics_ok = ${!!b.value}, pics_ok_at = ${b.value ? new Date().toISOString() : null} WHERE id = ${id} RETURNING *`;
-          return json(norm(r));
+          return json(await afterCheck(norm(r)));
         }
         return refuse("Unknown check.");
       }
