@@ -33,7 +33,7 @@ function norm(v: any): any {
 const today = () => new Date(Date.now() - 5 * 3600 * 1000).toISOString().slice(0, 10); // Central time
 
 const JOB_COLS = (sql: any) => sql`
-  SELECT j.*, p.address, p.city, p.tenant, p.gc, p.customer_id, p.contract_amount, p.bill_name, p.bill_addr, p.ship_addr, c.name AS customer_name, pj.title AS parent_title, pj.tag AS parent_tag
+  SELECT j.*, p.address, p.city, COALESCE(NULLIF(j.tenant_name, ''), p.tenant) AS tenant, p.gc, p.customer_id, p.contract_amount, p.bill_name, p.bill_addr, p.ship_addr, c.name AS customer_name, pj.title AS parent_title, pj.tag AS parent_tag
   FROM jobs j JOIN properties p ON p.id = j.property_id JOIN customers c ON c.id = p.customer_id LEFT JOIN jobs pj ON pj.id = j.parent_job_id`;
 
 // ================= QUICKBOOKS =================
@@ -1395,16 +1395,13 @@ export default async function handler(req: Request) {
               VALUES (${cust.id}, ${addr}, ${addressKey(addr)}, ${city}, ${String(read?.tenant || "").trim()}, '', ${`Made from the ${x.name} email from ${from} on ${when.slice(0, 10)}.`}) RETURNING *`)[0];
           }
           // TENANT FROM THE EMAIL (10/1/26): a property on file with no tenant yet gets the one the email names.
-          if (prop && !String(prop.tenant || "").trim() && String(read?.tenant || "").trim()) {
-            await sql`UPDATE properties SET tenant = ${String(read.tenant).trim()} WHERE id = ${prop.id}`;
-            prop.tenant = String(read.tenant).trim();
-          }
+          // 10/4/26: the email's tenant goes on the TICKET, not the property — one property can hold several tenants (6101 Windhaven).
           if (prop) {
             const title = String(read?.title || subject || "From email").trim().slice(0, 80);
             const notes = [`Came in on the ${x.name} label · ${from} · ${when.slice(0, 10)}`, `Subject: ${subject}`, read?.summary ? `\n${read.summary}` : ""].join("\n").trim();
             const due = x.tag === "BID" && /^\d{4}-\d{2}-\d{2}$/.test(String(read?.bid_due || "")) ? read.bid_due : null;
-            [job] = norm(await sql`INSERT INTO jobs (property_id, tag, title, notes, stage, bid_due)
-              VALUES (${prop.id}, ${x.tag}, ${title}, ${notes}, 'ready', ${due}) RETURNING *`);
+            [job] = norm(await sql`INSERT INTO jobs (property_id, tag, title, notes, stage, bid_due, tenant_name)
+              VALUES (${prop.id}, ${x.tag}, ${title}, ${notes}, 'ready', ${due}, ${String(read?.tenant || "").trim()}) RETURNING *`);
             job = norm(await loadJob(job.id));
           } else {
             // CAN'T PLACE IT — ask him about this one email. The label stays on until he answers.
