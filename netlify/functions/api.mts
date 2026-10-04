@@ -96,7 +96,7 @@ export default async (req: Request, context: Context) => {
     // ---------- JOBS ----------
     if (kind === "jobs") {
       if (m === "GET" && id) {
-        const [j] = await sql`SELECT j.*, p.address, p.city, p.tenant, p.gc, p.customer_id, c.name AS customer_name,
+        const [j] = await sql`SELECT j.*, p.address, p.city, COALESCE(NULLIF(j.tenant_name, ''), p.tenant) AS tenant, p.gc, p.customer_id, c.name AS customer_name,
           (SELECT pj.title FROM jobs pj WHERE pj.id=j.parent_job_id) AS parent_title
           FROM jobs j JOIN properties p ON p.id=j.property_id JOIN customers c ON c.id=p.customer_id WHERE j.id=${id}`;
         if (!j) return json({ error: "Not found" }, 404);
@@ -117,7 +117,10 @@ export default async (req: Request, context: Context) => {
         return note(j, miss);
       }
       if (m === "PUT" && id) {
+        // TENANT ON THE TICKET (10/4/26): one property can hold several tenants (6101 Windhaven: whole-property inspection, Carries Pilates, Bellezza).
+        // A ticket's own tenant wins over the property's; sending tenant_name sets it, leaving it out keeps it.
         const [j] = await sql`UPDATE jobs SET tag=${tag}, title=${title}, notes=${b.notes || ""},
+          tenant_name=CASE WHEN ${"tenant_name" in b}::boolean THEN ${String(b.tenant_name || "").trim()} ELSE tenant_name END,
           property_id=COALESCE(${b.property_id ? Number(b.property_id) : null}, property_id),
           parent_job_id=CASE WHEN ${hasPid}::boolean THEN ${pid}::int ELSE parent_job_id END
           WHERE id=${id} RETURNING *`;
