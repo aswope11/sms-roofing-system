@@ -20,7 +20,7 @@ export async function invoicingPage() {
   const laneOf = t => { const l = invoicingLane(t, t.invoices); if (l !== 'checks') return l; return !t.scope_ok && !t.pics_ok ? 'both' : !t.scope_ok ? 'scope' : 'pics'; };
   const by = k => live.filter(t => laneOf(t) === k);
   // the tab count and every list agree: each ticket counted once, tabled included, nothing counted that isn't drawn
-  const onPage = new Set([...d.owed.map(o => o.job.id), ...live.map(t => t.id), ...d.draws.map(t => t.id), ...tabled.map(t => t.id)]).size;
+  const onPage = new Set([...d.owed.map(o => o.job.id), ...live.map(t => t.id), ...tabled.map(t => t.id)]).size;
   const billsOf = t => t.invoices.filter(isBill);
   const amt = t => round2(billsOf(t).reduce((a, i) => a + Number(i.amount), 0));
   const open = id => `href="#/job/${id}"`;
@@ -46,20 +46,7 @@ export async function invoicingPage() {
   const grp = (color, title, n, body, sub = '') => n ? `<div class="billgrp" style="--lane:${color}"><div class="bgh"><b>${title}</b> <span class="lanen">${n}</span>${sub ? `<span class="spacer"></span><small>${sub}</small>` : ''}</div>${body}</div>` : '';
 
   let html = '';
-  // Step 6: trips billed on live tickets sit at the very top, above every finished bucket
-  // BILLED A TRIP AT A TIME — STILL WORKING
-  html += grp('var(--mute)', 'Billed a trip at a time — still working', d.draws.length, d.draws.map(t => {
-    const unpaid = billsOf(t).filter(i => !i.paid_at);
-    const owed = t.aging ? t.aging.owed : 0;
-    const oldest = t.aging ? t.aging.days : 0;
-    const stale = !!(t.aging && t.aging.stale);
-    return `<div class="prow" style="border-left-color:${stale ? 'var(--bad)' : 'var(--mute)'}">
-      <a class="pmain" ${open(t.id)}><div class="pt">${esc(ticketName(t))}</div>
-        <div class="ps">${esc(who(t))} · <b>${money(owed)}</b> owed on ${unpaid.length} trip${unpaid.length === 1 ? '' : 's'}${t.contract ? ` · ${money(t.contract.billed)} billed of ${money(t.contract.contract)} — ${money(t.contract.left)} left` : ''}${oldest ? ` · oldest ${oldest} days` : ''}</div>
-        ${stale ? `<div class="ps redtxt"><b>Unpaid ${money(owed)} · ${oldest} days — don't send a crew back until it clears</b></div>` : ''}</a>
-      <div class="lanebtns">${unpaid.filter(i => !i.sent_at).map(i => `<button class="lb send sent" data-id="${i.id}" data-job="${t.id}">Mark ${esc(i.number) || 'it'} sent</button>`).join('')}</div>
-    </div>`;
-  }).join(''));
+  // 10/4/26, his rule: no 'Billed a trip at a time' section. A sent invoice lives on AR, not on Invoicing.
   // PLACEHOLDERS OWED
   html += grp('var(--bad)', 'Placeholders owed in QuickBooks', d.owed.length, d.owed.map((o, k) => `<div class="prow" style="border-left-color:var(--bad)">
       <a class="pmain" ${open(o.job.id)}><div class="pt">${shortDate(o.work_date)} · ${esc(ticketName(o.job))}</div>
