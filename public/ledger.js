@@ -19,7 +19,7 @@ export async function renderTicket(jobId, mount) {
       <h2>Ticket</h2>
       <label class="full" style="margin-top:12px">
         <textarea id="scope" style="min-height:110px" placeholder="Scope of work">${esc(j.scope)}</textarea></label>
-      <div class="btnrow"><button class="small ghost" id="saveScope">Save the scope words</button></div>
+      <p class="help" id="scopeSaved"></p>
       <p class="help">Saving words here never ticks the box below. Only you tick it.</p>
       <div class="btnrow" style="margin-top:10px">
         <label>Invoice price <input id="billPrice" type="number" step="0.01" min="0" style="width:130px" value="${j.bill_price != null ? esc(j.bill_price) : (phTotal > 0 ? phTotal : '')}" placeholder="${phTotal > 0 ? phTotal : ''}"></label>
@@ -42,7 +42,17 @@ export async function renderTicket(jobId, mount) {
   const run = async (fn) => { try { await fn(); again(); } catch (e) { fail(e); } };
   const act = (path, body, check, msg) => doAndProve(path, { method: path.endsWith('scope') || path.endsWith('plan') || path.endsWith('check') || path.endsWith('bill-price') ? 'PUT' : 'POST', body }, readUrl, check, msg);
 
-  q('#saveScope').onclick = () => run(() => act(`/w/job/${jobId}/scope`, { scope: q('#scope').value }, b => b.job.scope === q('#scope').value && b.job.scope_ok === j.scope_ok));
+  // SCOPE AUTO-SAVES (10/4/26, his rule): no button. It saves itself a second after he stops typing and when he clicks away.
+  // No page redraw on these saves, so typing is never interrupted. The scope also lands on the unsent QuickBooks invoice (server side).
+  let scopeT = 0, scopeLast = j.scope || '';
+  const saveScope = async () => {
+    clearTimeout(scopeT); const v = q('#scope').value; if (v === scopeLast) return;
+    q('#scopeSaved').textContent = 'Saving…';
+    try { await act(`/w/job/${jobId}/scope`, { scope: v }, b => b.job.scope === v && b.job.scope_ok === j.scope_ok, 'Scope saved'); scopeLast = v; j.scope = v; q('#scopeSaved').textContent = 'Saved'; }
+    catch (e) { q('#scopeSaved').textContent = ''; fail(e); }
+  };
+  q('#scope').oninput = () => { q('#scopeSaved').textContent = ''; clearTimeout(scopeT); scopeT = setTimeout(saveScope, 1200); };
+  q('#scope').onblur = saveScope;
   q('#billSame').onchange = () => { if (q('#billSame').checked) q('#billPrice').value = phTotal; };
   q('#saveBillPrice').onclick = () => {
     const v = q('#billPrice').value.trim();
