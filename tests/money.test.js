@@ -45,11 +45,11 @@ test("LAW: Puma's name is the only name — Moscar shows as Puma outside Daily P
   assert.equal(sh[0].man, 'Moscar');
 });
 
-test('LAW: employee billing $50/hr — 8 hr day, 4 each on 2, 9-hr day on 3 and 4 stops, 5+ not priced', () => {
-  assert.deepEqual([1, 2, 3, 4, 5].map(M.billHoursPerStop), [8, 4, 3, 2.25, null]);
+test('LAW: employee billing $50/hr — 8 hr day, 4 each on 2, 9-hr day on 3+ stops (5+ added 10/4/26)', () => {
+  assert.deepEqual([1, 2, 3, 4, 5, 6].map(M.billHoursPerStop), [8, 4, 3, 2.25, 1.8, 1.5]);
   assert.equal(M.billLabor({ kind: 'employee', stops: 1, days: 1, man: 'Charlie' }).amount, 400);
   assert.equal(M.billLabor({ kind: 'employee', stops: 4, days: 1, man: 'Charlie' }).amount, 112.5);
-  assert.equal(M.billLabor({ kind: 'employee', stops: 5, days: 1, man: 'Charlie' }).amount, null);
+  assert.equal(M.billLabor({ kind: 'employee', stops: 5, days: 1, man: 'Charlie' }).amount, 90);
 });
 
 test('LAW: sub billed at cost × 1.5 ($350 → $525)', () => {
