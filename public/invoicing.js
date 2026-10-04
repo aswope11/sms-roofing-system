@@ -80,20 +80,21 @@ export async function invoicingPage() {
 
   $app().innerHTML = `<div class="oldgrid oldinv"><h1>Invoicing <span class="lanen big">${onPage}</span></h1>${html || '<div class="card empty">Nothing waiting to be billed.</div>'}</div>`;
 
-  // MOVE TICKETS UP AND DOWN (10/4/26, his ask): drag any ticket inside its own section; the order is remembered on this computer.
+  // MOVE TICKETS UP AND DOWN (10/4/26, his ask): drag any ticket inside its own section; the order is saved on the server so every computer sees it.
+  let invOrder = {}; try { invOrder = await call('/w/inv-order'); } catch (e) {}
   const rowJob = el => { const a = el.matches('a[href^="#/job/"]') ? el : el.querySelector('a[href^="#/job/"]'); const m = a && a.getAttribute('href').match(/#\/job\/(\d+)/); return m ? m[1] : null; };
   const boxName = box => (box.closest('.billgrp')?.querySelector('.bgh b') || box.closest('.lanecol')?.querySelector('.lch b'))?.textContent || '';
   [...$app().querySelectorAll('.billgrp'), ...$app().querySelectorAll('.lanecol .lcb')].forEach(box => {
     const rows = () => [...box.children].filter(el => (el.classList.contains('prow') || el.classList.contains('minirow')) && rowJob(el));
     const key = 'invOrder:' + boxName(box);
-    let saved = []; try { saved = JSON.parse(localStorage.getItem(key) || '[]'); } catch (e) {}
+    const saved = (invOrder && invOrder[key]) || [];
     const at = el => { const i = saved.indexOf(rowJob(el)); return i < 0 ? 1e9 : i; };
     if (saved.length) rows().sort((a, b) => at(a) - at(b)).forEach(el => box.appendChild(el));
     let dragging = null;
     rows().forEach(el => {
       el.draggable = true; el.style.cursor = 'grab';
       el.addEventListener('dragstart', e => { dragging = el; el.style.opacity = '.5'; e.dataTransfer.effectAllowed = 'move'; });
-      el.addEventListener('dragend', () => { el.style.opacity = ''; dragging = null; try { localStorage.setItem(key, JSON.stringify(rows().map(rowJob))); } catch (e) {} });
+      el.addEventListener('dragend', () => { el.style.opacity = ''; dragging = null; call('/w/inv-order', { method: 'PUT', body: { section: key, order: rows().map(rowJob) } }).then(() => toast('Order saved')).catch(fail); });
       el.addEventListener('dragover', e => { if (!dragging || dragging === el || dragging.parentNode !== box) return; e.preventDefault(); const r = el.getBoundingClientRect(); box.insertBefore(dragging, (e.clientY - r.top) > r.height / 2 ? el.nextSibling : el); });
     });
   });
