@@ -12,12 +12,14 @@ export async function invoicingPage() {
   const d = await call('/w/invoicing');
   const live = d.tickets.filter(t => !t.tabled_at);
   const tabled = d.tickets.filter(t => t.tabled_at);
+  // NO OLD READY-TO-BILL SECTION (10/4/26): a worked ticket not drawn anywhere else goes in the bottom columns by its scope/pictures checks
+  d.ready.filter(r => !live.some(x => x.id === r.job.id) && !r.job.tabled_at).forEach(r => live.push({ ...r.job, invoices: [] }));
   // ONE PLACE PER TICKET (10/1/26): a ticket already in a lane up top doesn't show again under "Billed a trip at a time".
   d.draws = d.draws.filter(t => !live.some(x => x.id === t.id));
   const laneOf = t => { const l = invoicingLane(t, t.invoices); if (l !== 'checks') return l; return !t.scope_ok && !t.pics_ok ? 'both' : !t.scope_ok ? 'scope' : 'pics'; };
   const by = k => live.filter(t => laneOf(t) === k);
   // the tab count and every list agree: each ticket counted once, tabled included, nothing counted that isn't drawn
-  const onPage = new Set([...d.ready.map(r => r.job.id), ...d.owed.map(o => o.job.id), ...live.map(t => t.id), ...d.draws.map(t => t.id), ...tabled.map(t => t.id)]).size;
+  const onPage = new Set([...d.owed.map(o => o.job.id), ...live.map(t => t.id), ...d.draws.map(t => t.id), ...tabled.map(t => t.id)]).size;
   const billsOf = t => t.invoices.filter(isBill);
   const amt = t => round2(billsOf(t).reduce((a, i) => a + Number(i.amount), 0));
   const open = id => `href="#/job/${id}"`;
@@ -57,26 +59,13 @@ export async function invoicingPage() {
       <div class="lanebtns">${unpaid.filter(i => !i.sent_at).map(i => `<button class="lb send sent" data-id="${i.id}" data-job="${t.id}">Mark ${esc(i.number) || 'it'} sent</button>`).join('')}</div>
     </div>`;
   }).join(''));
-  // READY TO BILL — fills itself; nothing is billed until he presses the button
-  html += grp('var(--ok)', 'Ready to bill', d.ready.length, d.ready.map((r, k) => `<div class="prow" style="border-left-color:var(--ok)">
-      <div class="pmain">
-        <a ${open(r.job.id)}><div class="pt">${esc(ticketName(r.job))}</div></a>
-        <div class="ps">${esc(who(r.job))} · ${r.days.map(x => shortDate(x.date)).join(', ')}</div>
-        <details class="rb"><summary>${r.invoice.amount > 0 ? money(r.invoice.amount) : '<span class="redtxt">not priced</span>'} — labor ${money(r.labor)}${r.material ? ` + material ${money(r.material)}` : ''}</summary>
-          ${r.days.map(x => `<div class="ps"><b>${shortDate(x.date)}</b> ${x.labor.map(l => `${esc(l.how)}${l.amount != null ? ' = ' + money(l.amount) : ''}`).join(' · ')}</div>`).join('')}
-          ${r.material_cost ? `<div class="ps">material ${money(r.material_cost)}${r.job.tag === 'JC' ? '' : ' × 1.2'} = ${money(r.material)}</div>` : ''}
-          <div class="ps">${esc(r.job.scope)}</div>
-        </details>
-      </div>
-      <div class="lanebtns"><button class="lb send bill" data-k="${k}">Write the invoice${r.invoice.amount > 0 ? ' ' + money(r.invoice.amount) : ''}</button></div>
-    </div>`).join(''));
   // PLACEHOLDERS OWED
   html += grp('var(--bad)', 'Placeholders owed in QuickBooks', d.owed.length, d.owed.map((o, k) => `<div class="prow" style="border-left-color:var(--bad)">
       <a class="pmain" ${open(o.job.id)}><div class="pt">${shortDate(o.work_date)} · ${esc(ticketName(o.job))}</div>
         <div class="ps">${esc(who(o.job))} · ${o.suggested != null ? money(o.suggested) : '<span class="redtxt">not priced</span>'}</div></a>
       <div class="lanebtns"><button class="lb send phqb" data-k="${k}">Send to QuickBooks${o.suggested != null ? ' ' + money(o.suggested) : ''}</button><button class="lb seat" data-k="${k}">Put the QB number on</button></div></div>`).join(''));
-  // SEND IT
-  html += grp('var(--bad)', 'Send it', by('send').length, by('send').map(t => invRow(t, 'var(--bad)')).join(''));
+  // READY TO BILL (10/4/26): invoice written, scope AND pictures checked — all that's left is emailing the customer
+  html += grp('var(--ok)', 'Ready to bill', by('send').length, by('send').map(t => invRow(t, 'var(--bad)')).join(''));
   // THREE LITTLE GRIDS
   const WAIT = [{ k: 'both', l: 'Needs both', w: 'scope AND pictures', c: '#ffd24d' }, { k: 'scope', l: 'Needs the scope', w: 'Adam', c: 'var(--brand)' }, { k: 'pics', l: 'Needs pictures', w: 'Ashley', c: 'var(--mute)' }];
   if (WAIT.some(L => by(L.k).length)) html += `<div class="lanegrid">${WAIT.map(L => `<div class="lanecol" style="--lane:${L.c}">
