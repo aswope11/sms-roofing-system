@@ -403,7 +403,7 @@ export function pricedBack(material, sms, subs) {
 export function readyToBill(job, greenShares, materialLines, invoices) {
   if (!canPlaceholder(job.tag) || job.no_charge || job.tabled_at) return null;
   if (!job.done_at && !isContractJob(job.tag)) return null;   // reopened = back on the schedule, not ready to bill (a UC bills a trip at a time)
-  const covered = invoices.filter(i => i.kind === 'real').map(i => i.covers_through || i.inv_date).filter(Boolean).sort();
+  const covered = invoices.filter(i => i.kind === 'real' || i.kind === 'draw').map(i => i.covers_through || i.inv_date).filter(Boolean).sort();
   const prev = covered.length ? covered[covered.length - 1] : null;
   const dates = [...new Set(greenShares.filter(s => s.job_id === job.id && (!prev || s.work_date > prev)).map(s => s.work_date))].sort();
   if (!dates.length) return null;
