@@ -128,7 +128,14 @@ async function pushInvoiceToQB(sql: any, invoiceId: number, job: any) {
     // on the Four Corners page). It stops the QuickBooks send only — the invoice stays in the app and the placeholder stays whole.
     if (/four\s*corners/i.test(String(job.customer_name || "")) && !(String(job.bill_name || "").trim() && String(job.bill_addr || "").trim()))
       throw new Error("Four Corners invoice not sent to QuickBooks — this property has no bill-to entity (LLC) and address. The placeholder was NOT zeroed. Look it up in the property list pinned on the Four Corners page, fill Edit property → Invoice bill-to, then Send to QuickBooks.");
-    const cust = await qbCustomerFor(job);
+    // SAME CUSTOMER AS ITS PLACEHOLDER (10/4/26): the real invoice goes to the QuickBooks customer its placeholder is already on.
+    // A name lookup could miss a spelling (6101 Windhaven Pkwy vs Parkway) and make a duplicate customer; the placeholder never lies.
+    let cust: any = null;
+    const [phRow] = norm(await sql`SELECT qb_id FROM invoices WHERE job_id = ${inv.job_id} AND kind = 'placeholder' AND COALESCE(qb_id, '') <> '' ORDER BY id DESC LIMIT 1`);
+    if (phRow?.qb_id) {
+      try { const phInv = (await qb('GET', `invoice/${phRow.qb_id}`)).Invoice; if (phInv?.CustomerRef?.value) cust = { Id: phInv.CustomerRef.value, DisplayName: phInv.CustomerRef.name || '' }; } catch (e: any) { /* fall back to the lookup */ }
+    }
+    if (!cust) cust = await qbCustomerFor(job);
     const DocNumber = await qbNextNumber();
     const made = (await qb("POST", "invoice", {
       CustomerRef: { value: cust.Id }, DocNumber, TxnDate: inv.inv_date, DueDate: inv.inv_date, PrivateNote: inv.memo, ...billTo(job),
