@@ -21,11 +21,6 @@ export async function renderTicket(jobId, mount) {
         <textarea id="scope" style="min-height:110px" placeholder="Scope of work">${esc(j.scope)}</textarea></label>
       <p class="help" id="scopeSaved"></p>
       <p class="help">Saving words here never ticks the box below. Only you tick it.</p>
-      <div class="btnrow" style="margin-top:10px">
-        <label>Invoice price <input id="billPrice" type="number" step="0.01" min="0" style="width:130px" value="${j.bill_price != null ? esc(j.bill_price) : (phTotal > 0 ? phTotal : '')}" placeholder="${phTotal > 0 ? phTotal : ''}"></label>
-        <label class="checkline"><input type="checkbox" id="billSame" ${phTotal > 0 && (j.bill_price == null || Number(j.bill_price) === phTotal) ? 'checked' : ''} ${phTotal > 0 ? '' : 'disabled'}> Same as the placeholder${phTotal > 0 ? ` (${money(phTotal)})` : ' (no placeholder yet)'}</label>
-        <button class="small ghost" id="saveBillPrice">Save the price</button>
-      </div>
       <div class="btnrow">
         <label class="checkline"><input type="checkbox" id="scopeOk" ${j.scope_ok ? 'checked' : ''}> Scope of work checked${j.scope_ok_at ? ` <span class="mute">${new Date(j.scope_ok_at).toLocaleString()}</span>` : ''}</label>
         <label class="checkline"><input type="checkbox" id="picsOk" ${j.pics_ok ? 'checked' : ''}> CompanyCam pictures checked${j.pics_ok_at ? ` <span class="mute">${new Date(j.pics_ok_at).toLocaleString()}</span>` : ''}</label>
@@ -53,12 +48,7 @@ export async function renderTicket(jobId, mount) {
   };
   q('#scope').oninput = () => { q('#scopeSaved').textContent = ''; clearTimeout(scopeT); scopeT = setTimeout(saveScope, 1200); };
   q('#scope').onblur = saveScope;
-  q('#billSame').onchange = () => { if (q('#billSame').checked) q('#billPrice').value = phTotal; };
-  q('#saveBillPrice').onclick = () => {
-    const v = q('#billPrice').value.trim();
-    run(() => act(`/w/job/${jobId}/bill-price`, { price: v }, b => v === '' ? b.job.bill_price == null : Number(b.job.bill_price) === round2(Number(v)),
-      v === '' ? 'Price cleared — Write the invoice uses the placeholder (read back and it matches)' : `Invoice price ${money(Number(v))} saved (read back and it matches)`));
-  };
+  // 10/4/26: no invoice price box. The invoice is always the placeholder's price, and the placeholder goes to $0.
   q('#scopeOk').onchange = () => run(() => act(`/w/job/${jobId}/check`, { which: 'scope', value: q('#scopeOk').checked }, b => b.job.scope_ok === q('#scopeOk').checked));
   q('#picsOk').onchange = () => run(() => act(`/w/job/${jobId}/check`, { which: 'pics', value: q('#picsOk').checked }, b => b.job.pics_ok === q('#picsOk').checked));
   q('#nocharge').onchange = () => run(() => act(`/w/job/${jobId}/no-charge`, { value: q('#nocharge').checked }, b => b.job.no_charge === q('#nocharge').checked));
