@@ -174,13 +174,14 @@ export function subLedgerRows(shares) {
 export const zelleText = z => `${shortDate(z.work_date)} - ${z.memo} - ${money(z.amount).replace('.00', '')}`;
 
 // ---------- BILLING (what the customer is charged) ----------
-// SMS employees: $50 a man-hour. 1 stop = 8 hrs, 2 = 4 each, 3 = 9-hr day ÷ 3, 4 = 9 ÷ 4. 5 or more: never stated — not priced.
+// SMS employees: $50 a man-hour. 1 stop = 8 hrs, 2 = 4 each, 3 = 9-hr day ÷ 3, 4 = 9 ÷ 4. 5 or more = 9 ÷ stops (10/4/26).
 export const EMPLOYEE_RATE = 50;
 export function billHoursPerStop(stops) {
   if (stops === 1) return 8;
   if (stops === 2) return 4;
   if (stops === 3) return 3;
   if (stops === 4) return 2.25;
+  if (stops >= 5) return 9 / stops;   // 5+ stops: same 9-hr day ÷ stops (his answer 10/4/26)
   return null;
 }
 // A sub (and every man under a sub) is billed at his cost × 1.5.
