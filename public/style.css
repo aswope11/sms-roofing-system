@@ -608,3 +608,11 @@ details.bidspill>summary::-webkit-details-marker{display:none}
 details.newcust>summary{cursor:pointer;list-style:none}
 details.newcust>summary::-webkit-details-marker{display:none}
 details.newcust[open]>summary{margin-bottom:10px}
+
+/* TALK TO THE APP (10/4/26) — 🎤 in the top bar, panel over the page */
+#talkBtn{margin-left:auto;white-space:nowrap}
+#talkPanel{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:20;overflow:auto;padding:16px}
+.talkcard{max-width:640px;margin:0 auto}
+.talkhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+#talkPanel textarea{width:100%;box-sizing:border-box;min-height:110px;font-size:17px}
+.talkplan{display:flex;flex-direction:column;gap:10px;margin-top:10px}

@@ -12,6 +12,7 @@ import { subsPage } from './subs.js';
 import { renderTicket } from './ledger.js';
 import { jobCostPage } from './jobcost.js';
 import { shopPage } from './shop.js';
+import { talkButton } from './talk.js';
 import { ticketName, isWork } from './money.js';
 
 const $app = document.getElementById('app');
@@ -385,6 +386,7 @@ document.getElementById('search').oninput = e => {
 };
 window.addEventListener('hashchange', route);
 route();
+talkButton();
 // Saved emails (.eml) open in Gmail, not the computer's mail program (Outlook).
 document.addEventListener('click', async e => {
   const a = e.target.closest('a[href^="/api/files/"]');

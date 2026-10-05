@@ -389,6 +389,48 @@ Answer with exactly this JSON and nothing else:
   const txt = (data.content || []).map((c: any) => c.text || "").join("");
   try { return JSON.parse(txt.slice(txt.indexOf("{"), txt.lastIndexOf("}") + 1)); } catch (e) { return null; }
 }
+// TALK TO THE APP (10/4/26, his ask: "set the app up with verbal ... and the ability to decipher what I'm doing").
+// He talks; Claude picks the ticket from the open ones on file and writes the scope his way. NOTHING is saved here —
+// the screen shows him what it will do and only his Yes runs the app's own save / check / done buttons.
+async function claudeTalk(said: string, draft: string, tickets: any[], pinned: number | null) {
+  const key = Netlify.env.get("ANTHROPIC_API_KEY");
+  if (!key) throw new Error("The app has no Claude key set (ANTHROPIC_API_KEY).");
+  const base = (Netlify.env.get("ANTHROPIC_BASE_URL") || "https://api.anthropic.com").replace(/\/$/, "");
+  const list = tickets.map((t: any) => `${t.id} | ${t.tag} - ${t.title || ""} | ${t.address}, ${t.city || ""} | tenant: ${t.tenant || ""} | ${t.customer_name}${t.done_at ? " | already marked done" : ""}`).join("\n");
+  const prompt = `A commercial roofing contractor is talking to his job app from the field (voice, so expect "um", restarts and self-corrections).
+Work out which ticket he means and write the scope of work for it.
+
+OPEN TICKETS (id | type - title | address | tenant | customer):
+${list}
+${pinned ? `He is looking at ticket ${pinned} right now — use it unless he clearly names another.` : ""}
+${draft ? `SCOPE ALREADY WRITTEN (he is now correcting it — change ONLY what he asks, keep everything else word for word):\n${draft}\n` : ""}
+WHAT HE SAID:
+${said.slice(0, 8000)}
+
+Rules for the scope words:
+- His words, cleaned up: drop "um/uh", false starts and anything he takes back ("I'll take that part out", "no, remove that"). Fix obvious voice-typing mistakes. Never add work he did not say.
+- Layout exactly:
+Scope of work:
+• one line per item of work
+(blank line)
+Roof Assessment:
+one plain paragraph, never bullets — only if he gave an assessment.
+- A sentence he says goes in the Roof Assessment (or "make it the last line") goes there.
+
+Answer with exactly this JSON and nothing else:
+{"job_id": <id from the list, or null if you cannot tell — never guess>,
+ "scope": "<the full scope text, laid out as above>",
+ "check_scope": <true if he says the scope is entered/checked/done, else false>,
+ "mark_done": <true if he says the work is done/complete, else false>,
+ "question": "<if job_id is null: one short line asking which job, else empty>"}`;
+  const res = await fetch(`${base}/v1/messages`, { method: "POST",
+    headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+    body: JSON.stringify({ model: "claude-haiku-4-5", max_tokens: 1500, messages: [{ role: "user", content: prompt }] }) });
+  const data: any = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error("Claude said: " + (data?.error?.message || res.status));
+  const txt = (data.content || []).map((c: any) => c.text || "").join("");
+  try { return JSON.parse(txt.slice(txt.indexOf("{"), txt.lastIndexOf("}") + 1)); } catch (e) { throw new Error("Couldn't read that — say it again."); }
+}
 // WHO IT IS FOR — worked out from who sent it (9/21/26: "They should be able to figure that out").
 // The sender's company email domain is matched to a customer: a customer's own email, or mail from that
 // same domain already filed on that customer's jobs. Then the company name. Exactly one hit, or nothing.
@@ -464,6 +506,21 @@ export default async function handler(req: Request) {
   const m = req.method;
   const body = async () => { try { return await req.json(); } catch { return {}; } };
 
+  // TALK (10/4/26): reads what he said, returns what it WOULD do. Writes nothing.
+  if (kind === "talk" && m === "POST") {
+    const b = await body();
+    const said = String(b.text || "").trim();
+    if (!said) return refuse("Say something first.");
+    const tickets = norm(await sql`${JOB_COLS(sql)} WHERE j.tag = ANY(${["R", "CO", "UC", "JC"]}::text[]) AND j.tabled_at IS NULL
+      AND (j.done_at IS NULL OR j.done_at >= ${M.addDays(today(), -14)}) ORDER BY j.id DESC`);
+    try {
+      const r = await claudeTalk(said, String(b.draft || ""), tickets, b.job_id ? Number(b.job_id) : null);
+      const t = tickets.find((x: any) => x.id === Number(r.job_id)) || null;
+      return json({ job_id: t ? t.id : null, ticket: t ? `${t.tag} - ${t.title || ""} · ${t.address}${t.city ? ", " + t.city : ""} (${t.customer_name})` : "",
+        already_done: !!(t && t.done_at), scope: String(r.scope || ""), check_scope: !!r.check_scope, mark_done: !!r.mark_done,
+        question: t ? "" : String(r.question || "Which job? Say the address.") });
+    } catch (e: any) { return refuse(String(e?.message || e)); }
+  }
   const loadJob = async (jid: number) => (await sql`${JOB_COLS(sql)} WHERE j.id = ${jid}`)[0];
   const shareRowsFor = async (dates: string[]) => {
     if (!dates.length) return { stops: [], crewDays: [] };
