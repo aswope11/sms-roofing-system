@@ -191,7 +191,7 @@ async function property(id) {
     </div>
     <div class="card">
       <h2>Job files</h2>
-      ${p.jobs.length ? jobTree(p.jobs).map(({ j, d }) => `<div class="row"${d ? ` style="padding-left:${d * 26}px"` : ''}><a href="#/job/${j.id}">${d ? '<span class="mute">↳ </span>' : ''}${j.tag ? `<span class="tag">${j.tag}</span>` : ''}${esc(j.title)}</a><span class="mute">${j.file_count} file${j.file_count === 1 ? '' : 's'} · ${new Date(j.created_at).toLocaleDateString()} ${delX('job', j.id)}</span></div>`).join('')
+      ${p.jobs.length ? jobFilesByTenant(p)
         : '<div class="empty">No job files yet.</div>'}
     </div>
     <div class="card">
@@ -244,6 +244,29 @@ async function property(id) {
     try { await saveAndProve(`properties/${id}`, 'PUT', { ...formData(ev.target), customer_id: p.customer_id }, () => `properties/${id}`, ['address', 'city', 'tenant', 'gc', 'notes', 'bill_name', 'bill_addr', 'ship_addr']); route(); }
     catch (e) { fail(e, document.getElementById('ee')); btn.disabled = false; }
   };
+}
+
+// TENANTS UNDER THE PROPERTY (10/5/26): property › tenant › ticket (6101 Windhaven › Bellezza Spa › Roof leak repair).
+// The property's job files list shows one line per tenant. A tenant with one ticket opens that ticket;
+// a tenant with more opens to show them. A ticket with no tenant (here or on a parent ticket) is "Whole property".
+function jobFilesByTenant(p) {
+  const row = ({ j, d }) => `<div class="row"${d ? ` style="padding-left:${d * 26}px"` : ''}><a href="#/job/${j.id}">${d ? '<span class="mute">↳ </span>' : ''}${j.tag ? `<span class="tag">${j.tag}</span>` : ''}${esc(j.title)}</a><span class="mute">${j.file_count} file${j.file_count === 1 ? '' : 's'} · ${new Date(j.created_at).toLocaleDateString()} ${delX('job', j.id)}</span></div>`;
+  const byId = new Map(p.jobs.map(j => [j.id, j]));
+  const tenantOf = (j, seen = new Set()) => {
+    const own = String(j.tenant_name || '').trim();
+    if (own) return own;
+    const par = byId.get(j.parent_job_id);
+    if (par && !seen.has(par.id)) { seen.add(j.id); return tenantOf(par, seen); }
+    return String(p.tenant || '').trim();
+  };
+  const groups = new Map();
+  for (const j of p.jobs) { const t = tenantOf(j) || 'Whole property'; (groups.get(t) || groups.set(t, []).get(t)).push(j); }
+  const names = [...groups.keys()].sort((a, b) => (a === 'Whole property') - (b === 'Whole property') || a.localeCompare(b));
+  return names.map(t => {
+    const js = groups.get(t);
+    if (js.length === 1) { const j = js[0]; return `<div class="row"><a href="#/job/${j.id}">${esc(t)}</a><span class="mute">${j.tag ? `<span class="tag">${j.tag}</span>` : ''}${esc(j.title)}</span></div>`; }
+    return `<details><summary class="row" style="cursor:pointer"><a>${esc(t)}</a><span class="mute">${js.length} tickets</span></summary><div style="padding-left:26px">${jobTree(js).map(row).join('')}</div></details>`;
+  }).join('');
 }
 
 // ---------------- JOB FILE ----------------
