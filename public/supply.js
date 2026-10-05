@@ -165,7 +165,12 @@ export async function supplyHousePage(name) {
   // A bill with no due date can't be first in line, so it sits at the end.
   const days = [...new Set(openInvs.map(i => dayOf(i, invs)))].sort((a, b) => (a || '9999').localeCompare(b || '9999'));
   const dayTotal = day => round2(openInvs.filter(i => dayOf(i, invs) === day).reduce((a, i) => a + balance(i), 0));
-  const pays = d.payments.filter(p => p.house === name);
+  // WHICH JOB IS THIS FOR (10/4/26, his ask): every open bill has a job box right on its row.
+// Pick the job and the whole invoice goes on that job's cost. No pick = it is not on a job yet.
+const tix = await call('/w/tickets').catch(() => []);
+const jobOptsRow = () => `<option value="">Which job? \u2014 pick it</option><option value="SHOP">THE SHOP \u2014 keep it in inventory</option>`
++ tix.map(j => `<option value="${j.id}">${esc(j.tag || '')} \u2014 ${esc(j.address || '')}${j.title ? ' \u2014 ' + esc(j.title) : ''}</option>`).join('');
+const pays = d.payments.filter(p => p.house === name);
   const byNewest = (a, b) => String(b.inv_date || '').localeCompare(String(a.inv_date || '')) || b.id - a.id;
   const byOldest = (a, b) => String(a.inv_date || '9999').localeCompare(String(b.inv_date || '9999')) || a.id - b.id;
 
@@ -183,7 +188,8 @@ export async function supplyHousePage(name) {
         ${k ? '' : '<option value="" selected>Set by hand</option>'}
         ${TERMS.map(t => `<option value="${t.k}"${t.k === k ? ' selected' : ''}>${esc(t.l)}</option>`).join('')}
       </select>`; })() : ''}
-      ${st.k === 'hold' ? `<span class="paypill pay-hold">${esc(st.l)}</span>` : ''}
+      ${live && !cred ? `<select class="jobsel" data-id="${i.id}" title="Which job is this for? Pick it and the whole invoice goes on that job's cost.">${jobOptsRow()}</select>` : ''}
+${st.k === 'hold' ? `<span class="paypill pay-hold">${esc(st.l)}</span>` : ''}
       ${isPaid(i) ? `<span class="paypill pay-paid">${i.paid_at ? 'Paid ' + shortDateYY(i.paid_at) : 'Paid — no date on it'}</span>` : ''}
       <button class="ghost small paidtog" data-id="${i.id}" data-paid="${isPaid(i) ? 1 : 0}">${isPaid(i) ? 'Open it again' : 'Mark paid'}</button>
       ${delX('supply', i.id)}
@@ -303,7 +309,31 @@ export async function supplyHousePage(name) {
       supplyHousePage(name);
     } catch (e) { fail(e); }
   });
-  // SWITCH THE TERMS RIGHT ON THE BILL. The due date moves with them, it is read back off the
+  // WHICH JOB: one pick puts every line of the invoice on that job (or the shop), proved by a separate read.
+$app().querySelectorAll('.jobsel').forEach(s => {
+s.onclick = ev => ev.stopPropagation();
+call(`/w/supply/${s.dataset.id}`).then(inv => {
+const ids = [...new Set((inv.lines || []).map(l => l.shop ? 'SHOP' : String(l.job_id || '')))];
+if (ids.length === 1 && ids[0]) s.value = ids[0]; else s.style.borderColor = 'var(--bad)';
+}).catch(() => {});
+s.onchange = async ev => {
+ev.stopPropagation();
+const v = s.value; if (!v) return;
+try {
+const inv = await call(`/w/supply/${s.dataset.id}`);
+const shop = v === 'SHOP', job_id = shop ? null : Number(v);
+const src = inv.lines && inv.lines.length ? inv.lines : [{ description: 'Whole invoice', qty: 1, unit: '', unit_price: inv.amount, line_total: inv.amount }];
+const lines = src.map(l => ({ sku: l.sku || '', description: l.description || '', qty: l.qty ?? '', unit: l.unit || '', unit_price: l.unit_price ?? '', line_total: l.line_total ?? '', shop, job_id }));
+await call(`/w/supply/${inv.id}`, { method: 'PUT', body: { house: inv.house, number: inv.number, inv_date: inv.inv_date || '', due_date: inv.due_date || '', ship_date: inv.ship_date || '', po: inv.po || '', amount: String(inv.amount), books_as: inv.books_as, notes: inv.notes || '', lines } });
+const back = await call(`/w/supply/${inv.id}`);
+if (!back.lines.length || !back.lines.every(l => shop ? l.shop : Number(l.job_id) === job_id)) throw new Error('That did not stick \u2014 the read-back does not show it on that job. Nothing was assumed.');
+toast(`${inv.number || 'That invoice'} is on ${s.options[s.selectedIndex].text} \u2014 read back and it matches`);
+supplyHousePage(name);
+} catch (e) { fail(e); }
+};
+});
+
+// SWITCH THE TERMS RIGHT ON THE BILL. The due date moves with them, it is read back off the
   // server before anything is said, and the ledger re-sorts so the oldest one owed is on top again.
   $app().querySelectorAll('.trmsel').forEach(s => {
     s.onclick = ev => ev.stopPropagation();
