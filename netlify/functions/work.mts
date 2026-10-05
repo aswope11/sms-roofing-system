@@ -1048,7 +1048,7 @@ export default async function handler(req: Request) {
         // Any box he ticks on a done ticket with no real invoice writes it now (same bill path: QuickBooks first, then the placeholder goes to $0).
         // Ticking the scope box also puts the scope words on the unsent QuickBooks invoice, word for word.
         const afterCheck = async (row: any) => {
-          if (row && row.done_at && !['UC', 'JC'].includes(row.tag)) {
+          if (row && row.done_at && !['JC'].includes(row.tag)) {
             const has = norm(await sql`SELECT id FROM invoices WHERE job_id = ${id} AND kind = 'real'`);
             if (!has.length) { try { await handler(new Request(new URL('/w/bill/' + id, url), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })); } catch (e: any) { /* stays visible on Invoicing */ } }
           }
@@ -1078,7 +1078,7 @@ export default async function handler(req: Request) {
         // WORK COMPLETE (10/4/26, his order): copy the placeholder into a real QuickBooks invoice at the SAME price, save it, THEN zero the placeholder.
         // Same path as the bill button (write it, QuickBooks, then zero the placeholder only after it lands). Contract jobs (UC/JC) bill by draws, so they are skipped.
         let billed: any = null;
-        if (!['UC', 'JC'].includes(job.tag)) {
+        if (!['JC'].includes(job.tag)) {
           try {
             const res = await handler(new Request(new URL('/w/bill/' + id, url), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }));
             billed = await res.json();
