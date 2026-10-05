@@ -21,7 +21,7 @@ export async function subPayLedger(mount, bossId, title) {
   let total = 0, owe = 0;
   const body = rows.map((r, i) => {
     const a = actualOf(r); total += r.total; const j = jobs[r.job_id]; const paid = isPaid(r); if (!paid) owe += r.total;   // GREEN NUMBERS NEVER CHANGE (10/5): green = the men's days. Actual paid is only what gets marked PAID.
-    const label = j ? `${esc(j.tag)} - ${esc(j.address)}${j.title && j.title !== j.address ? `<small>${esc(j.title)}</small>` : ''}` : 'deleted ticket';
+    const label = j ? `${esc(j.tag)} - ${esc(j.address)}${j.tenant ? ` · ${esc(j.tenant)}` : ''}${j.title && j.title !== j.address ? `<small>${esc(j.title)}</small>` : ''}` : 'deleted ticket';
     return `<div class="spl-row ${paid ? 'paid' : ''}" data-i="${i}">
       <div class="spl-main"><span class="spl-d">${shortDate(r.work_date)}</span>
         <span class="spl-j">${label}</span>
