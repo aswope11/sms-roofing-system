@@ -291,7 +291,8 @@ function tenantDrops(p) {
   const groups = new Map([['', []]]);
   for (const j of p.jobs) { const t = tenantOf(j); (groups.get(t) || groups.set(t, []).get(t)).push(j); }
   const names = ['', ...[...groups.keys()].filter(Boolean).sort((a, b) => a.localeCompare(b))];
-  const ticket = j => `<div class="row"><a href="#/job/${j.id}">${j.tag ? `<span class="tag">${j.tag}</span>` : ''}${esc(j.title)}</a><span class="mute">${new Date(j.created_at).toLocaleDateString()}</span></div>`;
+  // Ticket line = tag, then the date as its name, then " - " and the job name (e.g. "R 10/2/2026 - Roof leak repair"). No date off to the right.
+  const ticket = j => `<div class="row"><a href="#/job/${j.id}">${j.tag ? `<span class="tag">${j.tag}</span>` : ''}${new Date(j.created_at).toLocaleDateString()}${j.title ? ' - ' + esc(j.title) : ''}</a></div>`;
   return names.map(t => {
     const js = groups.get(t);
     return `<details><summary class="row" style="cursor:pointer"><span>${t ? esc(t) : 'Overall property'}</span><span class="mute">${js.length} ticket${js.length === 1 ? '' : 's'}</span></summary><div style="padding-left:26px">${js.length ? js.map(ticket).join('') : '<div class="empty">No tickets yet.</div>'}</div></details>`;
