@@ -1905,7 +1905,17 @@ export default async function handler(req: Request) {
         // AR is sent invoices only (his rule 9/17). A done ticket still on Invoicing or Tabled is NOT shown here — only one that is on no other screen.
         if (M.inInvoicing(j, mineInvs) || j.tabled_at) return null;
         const why = M.doneNotPaid(j, dInvs); return why ? { ...j, why, invoices: dInvs.filter((i: any) => i.job_id === j.id) } : null; }).filter(Boolean);
-      return json({ rows: open.map((r: any) => ({ ...r, balance: M.round2(Number(r.amount)), cost: cost[r.job_id] || 0 })), stuck, today: today() });
+      // AR MATCHES QUICKBOOKS (10/5): every invoice's total and balance come straight from QuickBooks — what the customer was sent. Paid in QB = off AR.
+      const qbInv: Record<string, any> = {};
+      try {
+        const ids = [...new Set(open.map((r: any) => r.qb_id).filter(Boolean))] as string[];
+        for (let k = 0; k < ids.length; k += 100) {
+          const got: any = await qbQuery(`SELECT Id, TotalAmt, Balance FROM Invoice WHERE Id IN (${ids.slice(k, k + 100).map((x) => "'" + x + "'").join(",")}) MAXRESULTS 1000`);
+          for (const q of (got.Invoice || [])) qbInv[String(q.Id)] = q;
+        }
+      } catch (e) { /* QuickBooks down — show what the app has */ }
+      const shown = open.map((r: any) => { const q = qbInv[String(r.qb_id)]; return q ? { ...r, amount: M.round2(Number(q.TotalAmt)), balance: M.round2(Number(q.Balance)), qb_checked: true } : { ...r, balance: M.round2(Number(r.amount)) }; }).filter((r: any) => !(r.qb_checked && r.balance <= 0));
+      return json({ rows: shown.map((r: any) => ({ ...r, cost: cost[r.job_id] || 0 })), stuck, today: today() });
     }
 
     // ================= TICKET PICKER =================
