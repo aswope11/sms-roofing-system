@@ -1203,7 +1203,9 @@ export default async function handler(req: Request) {
       if (m === "GET") return json((await store.get("todo", { type: "json" })) || []);
       if (m === "PUT") {
         const b = await body();
-        const items = (Array.isArray(b && b.items) ? b.items : []).filter((x: any) => x && String(x.text || "").trim()).map((x: any) => ({ id: String(x.id || ""), text: String(x.text).trim(), done: !!x.done }));
+        const items = (Array.isArray(b && b.items) ? b.items : []).filter((x: any) => x && String(x.text || "").trim()).map((x: any) => ({ id: String(x.id || ""), text: String(x.text).trim(), done: !!x.done,
+          // JOB WITH TASKS (10/5/26): a to-do can hold its own tasks, each with a check box
+          subs: (Array.isArray(x.subs) ? x.subs : []).filter((s: any) => s && String(s.text || "").trim()).map((s: any) => ({ id: String(s.id || ""), text: String(s.text).trim(), done: !!s.done })) }));
         await store.setJSON("todo", items);
         return json(items);
       }
