@@ -1192,6 +1192,17 @@ export default async function handler(req: Request) {
       if (!res.ok) return refuse("QuickBooks would not give the PDF (" + res.status + ").");
       return new Response(await res.arrayBuffer(), { headers: { "content-type": "application/pdf" } });
     }
+    // TO-DO LIST (10/5/26, his ask): the to-do list next to Talk in the top bar. Saved on the server so every computer sees the same list.
+    if (kind === "todo") {
+      const store = getStore({ name: "settings", consistency: "strong" });
+      if (m === "GET") return json((await store.get("todo", { type: "json" })) || []);
+      if (m === "PUT") {
+        const b = await body();
+        const items = (Array.isArray(b && b.items) ? b.items : []).filter((x: any) => x && String(x.text || "").trim()).map((x: any) => ({ id: String(x.id || ""), text: String(x.text).trim(), done: !!x.done }));
+        await store.setJSON("todo", items);
+        return json(items);
+      }
+    }
     // INVOICING TICKET ORDER (10/4/26, his rule): the order he drags tickets into is saved on the server, so every computer (his laptop, Ashley) sees the same order.
     if (kind === "inv-order") {
       const store = getStore({ name: "settings", consistency: "strong" });
