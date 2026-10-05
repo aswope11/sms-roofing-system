@@ -1002,6 +1002,11 @@ export default async function handler(req: Request) {
         const [r] = await sql`UPDATE jobs SET scheduled_date = ${b.scheduled_date || null} WHERE id = ${id} RETURNING *`;
         return json(norm(r));
       }
+      // PRIORITY PILL (10/5/26, his ask): tap Priority on a ticket under the Schedule grid and it sits on top of its list. Tap again and it goes back in line. Nothing else changes.
+      if (m === "PUT" && action === "priority") {
+        const [r] = await sql`UPDATE jobs SET priority = ${!!b.priority} WHERE id = ${id} RETURNING *`;
+        return json(norm(r));
+      }
       if (m === "PUT" && action === "stage") {
         if (!["ready", "hold", "trades", "contract"].includes(b.stage)) return refuse("Unknown stage.");
         const [r] = await sql`UPDATE jobs SET stage = ${b.stage} WHERE id = ${id} RETURNING *`;
