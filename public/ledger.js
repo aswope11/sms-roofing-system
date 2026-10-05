@@ -27,6 +27,12 @@ export async function renderTicket(jobId, mount) {
         <label class="checkline"><input type="checkbox" id="scopeOk" ${j.scope_ok ? 'checked' : ''}> Scope of work checked${j.scope_ok_at ? ` <span class="mute">${new Date(j.scope_ok_at).toLocaleString()}</span>` : ''}</label>
         <label class="checkline"><input type="checkbox" id="picsOk" ${j.pics_ok ? 'checked' : ''}> CompanyCam pictures checked${j.pics_ok_at ? ` <span class="mute">${new Date(j.pics_ok_at).toLocaleString()}</span>` : ''}</label>
       </div>
+      ${(() => { // 10/4/26: every SENT invoice on this ticket, with its total, so the ticket shows what was billed
+        const sent = L.invoices.filter(i => i.kind !== 'placeholder' && i.sent_at);
+        if (!sent.length) return '';
+        const tot = round2(sent.reduce((a, i) => a + Number(i.amount), 0));
+        return `<div style="margin-top:12px"><h3 style="margin:0 0 6px">Invoices sent</h3>${sent.map(i => `<div>Invoice ${esc(i.number)} · ${money(i.amount)} · sent ${shortDate(i.sent_at)}${i.paid_at ? ' · paid' : ''}</div>`).join('')}<div style="margin-top:6px"><b>Total sent: ${money(tot)}</b></div></div>`;
+      })()}
       <div class="btnrow" style="margin-top:14px">
         ${!j.done_at ? '<button id="done">Work is done</button>' : '<button class="ghost" id="reopen">Reopen — put it back on the schedule</button>'}
         ${j.done_at && !j.tabled_at ? '<button class="ghost" id="table">Table it — not billing yet</button>' : ''}
