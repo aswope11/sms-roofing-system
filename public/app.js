@@ -91,7 +91,7 @@ async function customer(id) {
       <h2>Properties</h2>
       ${(() => {
         // Bids only (no real job yet) sit in the "Bids" pill at the bottom; the moment a job is made there it moves up.
-        const propRow = p => `<div class="row"><a href="#/property/${p.id}">${esc(p.address)}${p.city ? ', ' + esc(p.city) : ''}</a><span class="mute">${p.bill_name ? esc(p.bill_name) + ' · ' : ''}${p.tenant ? esc(p.tenant) + ' · ' : ''}${p.job_count} job file${p.job_count === 1 ? '' : 's'} ${delX('property', p.id)}</span></div>`;
+        const propRow = p => `<details class="propdd" data-pid="${p.id}"><summary class="row" style="cursor:pointer"><span style="font-weight:600">${esc(p.address)}${p.city ? ', ' + esc(p.city) : ''}</span><span class="mute">${p.bill_name ? esc(p.bill_name) + ' · ' : ''}${p.tenant ? esc(p.tenant) + ' · ' : ''}${p.job_count} job file${p.job_count === 1 ? '' : 's'} ${delX('property', p.id)}</span></summary><div class="propbody" style="padding-left:26px"><div class="mute">Loading…</div></div></details>`;
         const bidOnly = c.properties.filter(p => p.job_count > 0 && p.work_count === 0);
         const rest = c.properties.filter(p => !bidOnly.includes(p));
         if (!c.properties.length) return '<div class="empty">No properties yet.</div>';
@@ -127,6 +127,14 @@ async function customer(id) {
         <div class="err full" id="ee"></div>
       </form>
     </div>`;
+  // DROPDOWNS ON THE CUSTOMER PAGE (10/5/26): click a property → it opens right here (no property page):
+  // Overall property, then every tenant. Click one → its tickets drop down. Click a ticket → the ticket.
+  document.querySelectorAll('details.propdd').forEach(dd => dd.addEventListener('toggle', async () => {
+    if (!dd.open || dd.dataset.loaded) return;
+    dd.dataset.loaded = '1';
+    try { dd.querySelector('.propbody').innerHTML = tenantDrops(await api(`properties/${dd.dataset.pid}`)); }
+    catch (e) { dd.dataset.loaded = ''; dd.querySelector('.propbody').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+  }));
   document.getElementById('f').onsubmit = async ev => {
     ev.preventDefault(); const btn = ev.submitter; btn.disabled = true; const errEl = document.getElementById('e');
     try {
@@ -266,6 +274,27 @@ function jobFilesByTenant(p) {
     const js = groups.get(t);
     if (js.length === 1) { const j = js[0]; return `<div class="row"><a href="#/job/${j.id}">${esc(t)}</a><span class="mute">${j.tag ? `<span class="tag">${j.tag}</span>` : ''}${esc(j.title)}</span></div>`; }
     return `<details><summary class="row" style="cursor:pointer"><a>${esc(t)}</a><span class="mute">${js.length} tickets</span></summary><div style="padding-left:26px">${jobTree(js).map(row).join('')}</div></details>`;
+  }).join('');
+}
+
+// One dropdown for the whole property ("Overall property" — work with no tenant on the ticket), then one per tenant.
+// A ticket's own tenant wins; a ticket inside another ticket takes that ticket's tenant; then the property's tenant.
+function tenantDrops(p) {
+  const byId = new Map(p.jobs.map(j => [j.id, j]));
+  const tenantOf = (j, seen = new Set()) => {
+    const own = String(j.tenant_name || '').trim();
+    if (own) return own;
+    const par = byId.get(j.parent_job_id);
+    if (par && !seen.has(par.id)) { seen.add(j.id); return tenantOf(par, seen); }
+    return String(p.tenant || '').trim();
+  };
+  const groups = new Map([['', []]]);
+  for (const j of p.jobs) { const t = tenantOf(j); (groups.get(t) || groups.set(t, []).get(t)).push(j); }
+  const names = ['', ...[...groups.keys()].filter(Boolean).sort((a, b) => a.localeCompare(b))];
+  const ticket = j => `<div class="row"><a href="#/job/${j.id}">${j.tag ? `<span class="tag">${j.tag}</span>` : ''}${esc(j.title)}</a><span class="mute">${new Date(j.created_at).toLocaleDateString()}</span></div>`;
+  return names.map(t => {
+    const js = groups.get(t);
+    return `<details><summary class="row" style="cursor:pointer"><span>${t ? esc(t) : 'Overall property'}</span><span class="mute">${js.length} ticket${js.length === 1 ? '' : 's'}</span></summary><div style="padding-left:26px">${js.length ? js.map(ticket).join('') : '<div class="empty">No tickets yet.</div>'}</div></details>`;
   }).join('');
 }
 
