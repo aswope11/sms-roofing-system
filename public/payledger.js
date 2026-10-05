@@ -20,20 +20,20 @@ export async function subPayLedger(mount, bossId, title) {
   const amt = r => actualOf(r) ?? r.total;
   let total = 0, owe = 0;
   const body = rows.map((r, i) => {
-    const a = actualOf(r); total += amt(r); const j = jobs[r.job_id]; const paid = isPaid(r); if (!paid) owe += amt(r);
+    const a = actualOf(r); total += r.total; const j = jobs[r.job_id]; const paid = isPaid(r); if (!paid) owe += r.total;   // GREEN NUMBERS NEVER CHANGE (10/5): green = the men's days. Actual paid is only what gets marked PAID.
     const label = j ? `${esc(j.tag)} - ${esc(j.address)}${j.title && j.title !== j.address ? `<small>${esc(j.title)}</small>` : ''}` : 'deleted ticket';
     return `<div class="spl-row ${paid ? 'paid' : ''}" data-i="${i}">
       <div class="spl-main"><span class="spl-d">${shortDate(r.work_date)}</span>
         <span class="spl-j">${label}</span>
         <button class="spl-copy" data-memo="${esc(splZelleMemo(r.work_date, j))}">Copy</button>
-        <button class="spl-a" data-i="${i}">${paid ? '✓ PAID — ' + splM(amt(r)) : splM(amt(r))}</button>
+        <button class="spl-a" data-i="${i}">${paid ? '✓ PAID — ' + splM(amt(r)) : splM(r.total)}</button>
         <label class="spl-act">Actual paid <input type="number" step="0.01" min="0" data-i="${i}" value="${a != null ? a.toFixed(2) : ''}" placeholder="${Number(r.total).toFixed(2)}" title="What you actually sent for this job this day. Changes this page and the job page, not the customer bill. Clear it to go back to the men's days."></label></div>
       <div class="spl-men">${r.men.map(x => `<span>${esc(x.name)} ${splM(x.amt)}</span>`).join('')}${a != null ? `<span>days add up to ${splM(r.total)} · actual paid ${splM(a)}</span>` : ''}${paid ? `<span>paid ${splM(amt(r))}</span>` : ''}</div>
     </div>`;
   }).join('');
   mount.innerHTML = `<div class="spl">
     <h4>Pay ledger — ${esc(title || d.pay_to)}</h4>
-    <p class="spl-note">One line per job per day = one Zelle to ${esc(title || d.pay_to)}. Got a quote or sent a different number? Type it in <b>Actual paid</b> — it changes this page and the job page (job cost). The customer bill stays on the day rates. <b>Copy</b> puts the Zelle memo on your clipboard. Tap the <b>dollar amount</b> once you've sent it — it turns to PAID. Tap the line to see whose day is in it.</p>
+    <p class="spl-note">One line per job per day = one Zelle to ${esc(title || d.pay_to)}. Got a quote or sent a different number? Type it in <b>Actual paid</b> — that is the number that gets marked PAID and goes on the job page (job cost). The green number never changes. The customer bill stays on the day rates. <b>Copy</b> puts the Zelle memo on your clipboard. Tap the <b>dollar amount</b> once you've sent it — it turns to PAID. Tap the line to see whose day is in it.</p>
     <div class="spl-wk">
       <button data-w="-1">‹</button>
       <b>${st.all ? 'All dates' : fmtRange(st.wk)}</b>
