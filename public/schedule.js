@@ -55,7 +55,7 @@ export async function schedulePage(start) {
     const chip = x => `<button type="button" class="stchip ${st === x.k ? 'on' : ''}${x.k === 'contract' ? ' toBids' : ''}" data-stage="${x.k}" data-job="${j.id}"
       ${x.k === 'contract' ? 'title="Awarded — this ticket sits in the Awarded lane at the bottom of the Schedule tab"' : ''}>${esc(x.l)}</button>`;
     return `<div class="stbar">${
-      STAGE_GROUPS.map(g => `<span class="stgrp">${g.l ? `<span class="stgl">${esc(g.l)}</span>` : ''}${g.ks.map(k => chip(STAGES.find(x => x.k === k))).join('')}</span>`).join('')}</div>`;
+      STAGE_GROUPS.map(g => `<span class="stgrp">${g.l ? `<span class="stgl">${esc(g.l)}</span>` : ''}${g.ks.map(k => chip(STAGES.find(x => x.k === k))).join('')}</span>`).join('')}<span class="stgrp"><button type="button" class="stchip ${j.priority ? 'on' : ''}" data-prio="${j.id}" title="Puts this ticket on top of its list. Tap again to take it off.">Priority</button></span></div>`;
   };
   // ---------- (1) THE CARD: old jobCardHTML ----------
   // Step 6: oldest unpaid trip 21+ days → the card goes red
@@ -73,8 +73,8 @@ export async function schedulePage(start) {
 
   // ---------- (3) THE ROWS UNDER THE GRID: old pRow / jobCmp / renderSchedSections ----------
   const rank = j => j.sched_rank == null ? 9999 : j.sched_rank;
-  // Repairs jump the line because they're repairs — no button, no reason (9/21/26).
-  const jobCmp = (a, b) => ((b.tag === 'R' ? 1 : 0) - (a.tag === 'R' ? 1 : 0)) || (rank(a) - rank(b))
+  // PRIORITY PILL (10/5/26, his ask): repairs no longer jump the line on their own — only a ticket he taps Priority on sits on top.
+  const jobCmp = (a, b) => ((b.priority ? 1 : 0) - (a.priority ? 1 : 0)) || (rank(a) - rank(b))
     || String(a.scheduled_date || '9999').localeCompare(String(b.scheduled_date || '9999')) || String(a.address || '').localeCompare(String(b.address || ''));
   const bucketOf = j => ['ready', 'hold', 'trades', 'contract'].includes(j.stage) ? j.stage : 'ready';
   const pRow = j => `<div class="prow${stale(j) ? ' stale' : ''}" style="border-left-color:${stale(j) ? 'var(--bad)' : typeColor(j.tag)};cursor:grab" data-peek="${j.id}" data-open="${j.id}" data-dragjob="${j.id}" draggable="true">
@@ -422,8 +422,15 @@ export async function schedulePage(start) {
     run(() => doAndProve(`/w/job/${j.id}/stage`, { method: 'PUT', body: { stage: k } }, jobUrl(j.id), back => back.job.stage === k,
       `${j.tag} - ${j.address} → ${STAGE_LABEL[k]}`));
   });
+  // PRIORITY PILL (10/5/26): tap = this ticket goes on top of its list; tap again = back in line. Nothing else changes.
+  $app().querySelectorAll('.stchip[data-prio]').forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const j = jobsById[b.dataset.prio], v = !j.priority;
+    run(() => doAndProve(`/w/job/${j.id}/priority`, { method: 'PUT', body: { priority: v } }, jobUrl(j.id), back => !!back.job.priority === v,
+      `${j.tag} - ${j.address} → ${v ? 'Priority' : 'not Priority'}`));
+  });
   // DRAG A TICKET PILL (10/1/26): grab a pill under the grid and drop it on another pill in the same list — it lands in that spot.
-  // Replaces the ▲▼ arrows. Repairs still sit on top (9/21/26 rule).
+  // Replaces the ▲▼ arrows. Priority tickets still sit on top (10/5/26).
   let dragJob = 0;
   const clearMarks = () => $app().querySelectorAll('.prow[data-dragjob]').forEach(r => { r.style.boxShadow = ''; });
   $app().querySelectorAll('.prow[data-dragjob]').forEach(r => {
