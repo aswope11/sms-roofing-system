@@ -36,8 +36,8 @@ export async function supplyPage() {
   const named = (d.houses || []).map(h => h.name);
   const houses = [...named, ...[...new Set(invs.map(i => i.house))].filter(h => h && !named.includes(h)).sort((a, b) => a.localeCompare(b))];
   const openInvs = invs.filter(open);
-  // MOST RECENT FIRST — the newest money is the money he is working on.
-  const days = [...new Set(openInvs.map(i => dayOf(i, invs)))].sort((a, b) => (b || '0000').localeCompare(a || '0000'));
+  // OLDEST TO NEWEST — reads left to right like a calendar; no due date goes last.
+  const days = [...new Set(openInvs.map(i => dayOf(i, invs)))].sort((a, b) => (a || '9999').localeCompare(b || '9999'));
   const cell = (h, day) => round2(openInvs.filter(i => i.house === h && dayOf(i, invs) === day).reduce((a, i) => a + balance(i), 0));
   const owed = h => round2(openInvs.filter(i => i.house === h).reduce((a, i) => a + balance(i), 0));
   const grand = round2(openInvs.reduce((a, i) => a + balance(i), 0));
