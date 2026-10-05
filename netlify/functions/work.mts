@@ -116,6 +116,11 @@ function billTo(job: any) {
   const shipLines = [String(job.tenant || "").trim(), ...shipAddr.split(/\n/).map(s => s.trim())];
   return { BillAddr: lines(billLines), ShipAddr: lines(shipLines) };
 }
+// WHERE THE SCOPE GOES (10/4/26, his rule): Standridge and Four Corners ALWAYS get the scope in the Note to customer
+// (bottom left): "Date: <day worked>", then Scope of work, then Roof Assessment. Everybody else: his switch on the ticket.
+// In the note, line 1 is left for the crew/hours ("2 men @ 4 hours") — the scope never touches it.
+const scopeInNote = (job: any) => /standridge|four\s*corners/i.test(String(job.customer_name || "")) || !!job.scope_note;
+const scopeNote = (scope: string, date?: string) => (date ? `Date: ${mdyy(date)}\n\n` : "") + String(scope || "");
 async function pushInvoiceToQB(sql: any, invoiceId: number, job: any) {
   const [inv] = norm(await sql`SELECT * FROM invoices WHERE id = ${invoiceId}`);
   if (!inv) throw new Error("That invoice doesn't exist.");
@@ -139,7 +144,8 @@ async function pushInvoiceToQB(sql: any, invoiceId: number, job: any) {
     const DocNumber = await qbNextNumber();
     const made = (await qb("POST", "invoice", {
       CustomerRef: { value: cust.Id }, DocNumber, TxnDate: inv.inv_date, DueDate: inv.inv_date, PrivateNote: inv.memo, ...billTo(job),
-      Line: [{ DetailType: "SalesItemLineDetail", Amount: Number(inv.amount), Description: inv.scope,
+      ...(scopeInNote(job) ? { CustomerMemo: { value: scopeNote(inv.scope, inv.covers_through) } } : {}),
+      Line: [{ DetailType: "SalesItemLineDetail", Amount: Number(inv.amount), Description: scopeInNote(job) ? "" : inv.scope,
         SalesItemLineDetail: { ItemRef: { value: "1" }, Qty: 1, UnitPrice: Number(inv.amount) } }],
     })).Invoice;
     const back = (await qb("GET", `invoice/${made.Id}`)).Invoice;
@@ -172,8 +178,15 @@ async function zeroReplacedPlaceholders(sql: any, inv: any, job: any) {
 }
 // Mark it sent → the QuickBooks invoice gets the same real date the app gives it.
 // SCOPE TO QUICKBOOKS (10/4/26): put the scope on the invoice line in QuickBooks, word for word. Amount untouched.
-async function qbSetScope(qbId: string, scope: string) {
+async function qbSetScope(qbId: string, scope: string, inNote = false, date?: string) {
   const cur = (await qb('GET', `invoice/${qbId}`)).Invoice;
+  if (inNote) {   // the note only; line 1 stays his (crew/hours). If line 1 still holds these exact scope words from before, clear them.
+    const ls = (cur.Line || []).filter((l: any) => l.DetailType === 'SalesItemLineDetail');
+    const clear = ls.length && String(ls[0].Description || '').trim() === String(scope || '').trim();
+    if (clear) ls[0] = { ...ls[0], Description: '' };
+    await qb('POST', 'invoice', { Id: qbId, SyncToken: cur.SyncToken, sparse: true, CustomerMemo: { value: scopeNote(scope, date) }, ...(clear ? { Line: ls } : {}) });
+    return;
+  }
   const lines = (cur.Line || []).filter((l: any) => l.DetailType === 'SalesItemLineDetail');
   if (!lines.length) return;
   lines[0] = { ...lines[0], Description: scope };
@@ -1001,6 +1014,16 @@ export default async function handler(req: Request) {
         const [r] = await sql`UPDATE jobs SET bill_price = ${v} WHERE id = ${id} RETURNING *`;
         return json(norm(r));
       }
+      if (m === "PUT" && action === "scope-note") {
+        // His switch (10/4/26): scope in the Note to customer instead of line 1. Moves it on any unsent invoice already in QuickBooks.
+        const [r] = await sql`UPDATE jobs SET scope_note = ${!!b.value} WHERE id = ${id} RETURNING *`;
+        const after = { ...job, scope_note: !!b.value };
+        let qb_error = '';
+        if (String(r.scope || '').trim()) for (const inv of norm(await sql`SELECT * FROM invoices WHERE job_id = ${id} AND kind = 'real' AND sent_at IS NULL AND COALESCE(qb_id, '') <> ''`)) {
+          try { await qbSetScope(inv.qb_id, String(r.scope), scopeInNote(after), inv.covers_through); } catch (e: any) { qb_error = String(e?.message || e); }
+        }
+        return json({ ...norm(r), qb_error });
+      }
       if (m === "PUT" && action === "scope") {
         // Writing words in the scope field never ticks the scope box.
         const [r] = await sql`UPDATE jobs SET scope = ${String(b.scope || "")} WHERE id = ${id} RETURNING *`;
@@ -1010,7 +1033,7 @@ export default async function handler(req: Request) {
         let qb_error = '';
         for (const inv of openInvs) {
           await sql`UPDATE invoices SET scope = ${scopeWords} WHERE id = ${inv.id}`;
-          if (inv.qb_id) { try { await qbSetScope(inv.qb_id, scopeWords); } catch (e: any) { qb_error = String(e?.message || e); } }
+          if (inv.qb_id) { try { await qbSetScope(inv.qb_id, scopeWords, scopeInNote(job), inv.covers_through); } catch (e: any) { qb_error = String(e?.message || e); } }
         }
         return json({ ...norm(r), qb_error });
       }
@@ -1028,7 +1051,7 @@ export default async function handler(req: Request) {
             const open = norm(await sql`SELECT * FROM invoices WHERE job_id = ${id} AND kind = 'real' AND sent_at IS NULL`);
             for (const inv of open) {
               await sql`UPDATE invoices SET scope = ${String(row.scope)} WHERE id = ${inv.id}`;
-              if (inv.qb_id) { try { await qbSetScope(inv.qb_id, String(row.scope)); } catch (e: any) { /* the scope still saved in the app */ } }
+              if (inv.qb_id) { try { await qbSetScope(inv.qb_id, String(row.scope), scopeInNote(job), inv.covers_through); } catch (e: any) { /* the scope still saved in the app */ } }
             }
           }
           return row;

@@ -23,6 +23,8 @@ export async function renderTicket(jobId, mount) {
         <textarea id="scope" style="min-height:110px" placeholder="Scope of work">${esc(j.scope)}</textarea></label>
       <p class="help" id="scopeSaved"></p>
       <p class="help">Saving words here never ticks the box below. Only you tick it.</p>
+      ${/standridge|four\s*corners/i.test(j.customer_name || '') ? '<p class="help">Scope goes in the QuickBooks Note to customer (bottom left) with the date — Standridge / Four Corners rule.</p>'
+        : `<label class="checkline"><input type="checkbox" id="scopeNote" ${j.scope_note ? 'checked' : ''}> Put the scope in the QuickBooks Note to customer (bottom left), not line 1</label>`}
       <div class="btnrow">
         <label class="checkline"><input type="checkbox" id="scopeOk" ${j.scope_ok ? 'checked' : ''}> Scope of work checked${j.scope_ok_at ? ` <span class="mute">${new Date(j.scope_ok_at).toLocaleString()}</span>` : ''}</label>
         <label class="checkline"><input type="checkbox" id="picsOk" ${j.pics_ok ? 'checked' : ''}> CompanyCam pictures checked${j.pics_ok_at ? ` <span class="mute">${new Date(j.pics_ok_at).toLocaleString()}</span>` : ''}</label>
@@ -43,7 +45,7 @@ export async function renderTicket(jobId, mount) {
 
   const q = s => mount.querySelector(s);
   const run = async (fn) => { try { await fn(); again(); } catch (e) { fail(e); } };
-  const act = (path, body, check, msg) => doAndProve(path, { method: path.endsWith('scope') || path.endsWith('plan') || path.endsWith('check') || path.endsWith('bill-price') ? 'PUT' : 'POST', body }, readUrl, check, msg);
+  const act = (path, body, check, msg) => doAndProve(path, { method: path.endsWith('scope') || path.endsWith('scope-note') || path.endsWith('plan') || path.endsWith('check') || path.endsWith('bill-price') ? 'PUT' : 'POST', body }, readUrl, check, msg);
 
   // SCOPE AUTO-SAVES (10/4/26, his rule): no button. Saves a second after he stops typing, when he clicks away, and before any redraw.
   // One save at a time, always the newest words, so a slow early save can never land after a later one (fix 10/4: 8155 Custer kept only "Scope of ").
@@ -59,6 +61,7 @@ export async function renderTicket(jobId, mount) {
   q('#scope').onblur = () => { saveScope(); };
   // 10/4/26: no invoice price box. The invoice is always the placeholder's price, and the placeholder goes to $0.
   q('#scopeOk').onchange = () => run(() => act(`/w/job/${jobId}/check`, { which: 'scope', value: q('#scopeOk').checked }, b => b.job.scope_ok === q('#scopeOk').checked));
+  if (q('#scopeNote')) q('#scopeNote').onchange = () => run(() => act(`/w/job/${jobId}/scope-note`, { value: q('#scopeNote').checked }, b => b.job.scope_note === q('#scopeNote').checked));
   q('#picsOk').onchange = () => run(() => act(`/w/job/${jobId}/check`, { which: 'pics', value: q('#picsOk').checked }, b => b.job.pics_ok === q('#picsOk').checked));
   q('#nocharge').onchange = () => run(() => act(`/w/job/${jobId}/no-charge`, { value: q('#nocharge').checked }, b => b.job.no_charge === q('#nocharge').checked));
   if (q('#done')) q('#done').onclick = () => { if (confirm(`Are you sure you're done with ${ticketName(j)}?\n\nIt moves to Invoicing.`)) run(() => act(`/w/job/${jobId}/done`, {}, b => !!b.job.done_at)); };
