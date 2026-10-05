@@ -90,8 +90,8 @@ export default async (req: Request) => {
     if (type === "job") {
       const [j] = await q(`SELECT j.*, p.address, p.city FROM jobs j JOIN properties p ON p.id = j.property_id WHERE j.id = $1`, [Number(idRaw)]); if (!j) return null;
       const part = await jobsPart([j.id]);
-      return { what: "job file", label: M.ticketName(j), back: `#/property/${j.property_id}`, attached: part.attached,
-        blocked: part.blocked.map(b => b.replace(/^.* — /, "")), table_job: part.blocked.length ? j.id : undefined, run: part.run };
+      return { what: "job file", label: M.ticketName(j), back: `#/property/${j.property_id}`, attached: [...part.blocked.map(b => b.replace(/^.* — /, "") + " — stays in QuickBooks; this only takes it out of the app"), ...part.attached],
+        blocked: [], run: part.run };   // 10/5/26: he can delete any ticket — money on it is listed, not a block
     }
     // ---------- CREW ----------
     if (type === "crew") {
