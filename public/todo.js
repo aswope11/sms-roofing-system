@@ -1,6 +1,7 @@
 // TO-DO LIST (10/5/26, his ask): "attach a to do list at the top ... next to the talk button".
 // The ☑ button sits beside 🎤 Talk on every page. The list is saved on the server, so every computer sees the same list.
 // Every save is read back in a separate request before it says saved.
+// Its own data-tdd / data-tdx names, so the app's page-wide delete click (data-del) never grabs these.
 import { esc, call, doAndProve, toast, fail } from './ui.js';
 
 let items = [];
@@ -59,15 +60,15 @@ function draw() {
   const rows = [...items.filter(x => !x.done), ...items.filter(x => x.done)];
   list.innerHTML = rows.length ? rows.map(x => `
     <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)">
-      <input type="checkbox" data-done="${esc(x.id)}" ${x.done ? 'checked' : ''} style="width:20px;height:20px">
+      <input type="checkbox" data-tdd="${esc(x.id)}" ${x.done ? 'checked' : ''} style="width:20px;height:20px">
       <span style="flex:1;font-size:17px;${x.done ? 'text-decoration:line-through;opacity:.55' : ''}">${esc(x.text)}</span>
-      <button class="ghost" data-del="${esc(x.id)}" title="Remove">✕</button>
+      <button class="ghost" data-tdx="${esc(x.id)}" title="Remove">✕</button>
     </div>`).join('') : '<p class="mute">Nothing on the list.</p>';
-  list.querySelectorAll('[data-done]').forEach(el => el.onchange = () => {
-    const it = items.find(x => x.id === el.dataset.done); if (it) { it.done = el.checked; save(); }
+  list.querySelectorAll('[data-tdd]').forEach(el => el.onchange = () => {
+    const it = items.find(x => x.id === el.dataset.tdd); if (it) { it.done = el.checked; save(); }
   });
-  list.querySelectorAll('[data-del]').forEach(el => el.onclick = () => {
-    items = items.filter(x => x.id !== el.dataset.del); save();
+  list.querySelectorAll('[data-tdx]').forEach(el => el.onclick = () => {
+    items = items.filter(x => x.id !== el.dataset.tdx); save();
   });
   label();
 }
