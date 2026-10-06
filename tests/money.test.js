@@ -555,15 +555,16 @@ test('LAW: the app reads only the five SMS labels on its own — no whole-inbox 
   assert.ok(!work.includes('newer_than:14d -in:chats'), 'the whole-inbox sweep is back');
   assert.ok(sched.includes('schedule: "*/15 * * * *"'), 'the label check is not on a 15-minute schedule');
   assert.ok(!/messages\/send|drafts|\/send"/.test(work), 'the app can send mail');
-  // Claude is only asked after the "nothing in the labels" return
-  assert.ok(work.indexOf('if (!todo.length) return') < work.indexOf('await claudeRead('), 'Claude is called before the empty-label check');
-  assert.ok(work.includes('if (!prop && cust && read)'), 'without an AI read, a known sender must not create a fake property from the email subject');
+  assert.ok(!work.includes('ANTHROPIC_API_KEY'), 'Anthropic runtime dependency is back');
+  assert.ok(!work.includes('api.anthropic.com'), 'Anthropic network call is back');
+  assert.ok(work.includes('reader = "rules-only"'), 'email filing is not in deterministic stabilization mode');
+  assert.ok(work.includes('if (!prop && cust && read)'), 'without a trusted AI read, a known sender must not create a fake property from the email subject');
 });
 
 test('STABILIZATION: Talk has a safe no-AI fallback and never saves by itself', () => {
   const work = readFileSync('netlify/functions/work.mts', 'utf8');
   assert.ok(work.includes('function localTalk('), 'Talk has no local fallback');
-  assert.ok(work.includes('if (!key) return localTalk('), 'missing AI key still breaks Talk');
+  assert.ok(work.includes('return localTalk(said, draft, tickets, pinned);'), 'Talk is not using the safe local path');
   assert.ok(work.includes('const r = await appTalk('), 'Talk route is not using the safe wrapper');
 });
 
