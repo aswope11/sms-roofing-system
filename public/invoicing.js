@@ -115,7 +115,17 @@ export async function invoicingPage() {
   $app().querySelectorAll('.sent').forEach(b => b.onclick = () => {
     if (!confirm('Mark it sent? Only after you have actually emailed it. This moves it to AR.')) return;
     const id = Number(b.dataset.id), job = Number(b.dataset.job); b.disabled = true;
-    run(() => doAndProve(`/w/invoices/${id}/sent`, { method: 'POST', body: { value: true } }, `/w/job/${job}`, bk => !!bk.invoices.find(i => i.id === id).sent_at));
+    // MARK SENT = FILE WHAT WAS SENT (10/4/26): the app finds the sent email by the invoice # and files it + every attachment in the job file.
+    // Not found → NOT marked sent, he is told right away, and "I know, it's ok" still moves it to AR.
+    const proveSent = bk => !!bk.invoices.find(i => i.id === id).sent_at;
+    run(async () => {
+      try { await doAndProve(`/w/invoices/${id}/sent`, { method: 'POST', body: { value: true } }, `/w/job/${job}`, proveSent, 'Sent — the email and its attachments are filed in the job file. Moved to AR'); }
+      catch (e) {
+        if (!/^No sent email/.test(e.message)) throw e;
+        if (!confirm(e.message + "\n\nOK = I know, it's ok — mark it sent anyway and move it to AR.\nCancel = leave it here.")) { b.disabled = false; return; }
+        await doAndProve(`/w/invoices/${id}/sent`, { method: 'POST', body: { value: true, anyway: true } }, `/w/job/${job}`, proveSent, 'Marked sent without the email — moved to AR');
+      }
+    });
   });
   $app().querySelectorAll('.toqb').forEach(b => b.onclick = () => {
     const id = Number(b.dataset.id), job = Number(b.dataset.job); b.disabled = true;
