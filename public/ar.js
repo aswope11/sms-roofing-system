@@ -102,7 +102,7 @@ export async function arPage() {
     row.onmouseenter = e => { const id = row.dataset.hover; hv = id; clearTimeout(ht); ht = setTimeout(async () => {
       try {
         const [L, f] = await Promise.all([call(`/w/job/${id}`), call(`/api/jobs/${id}`).catch(() => ({ files: [] }))]);
-        if (hv !== id) return;
+        if (hv !== id || !row.isConnected) return;
         const j = L.job, cost = round2(L.shares.reduce((a, x) => a + x.cost, 0) + L.material.reduce((a, l) => a + Number(l.line_total), 0));
         tip.innerHTML = `<h4>${esc(ticketName(j))}</h4><div class="pm">${esc(j.customer_name)}${j.tenant ? ' · ' + esc(j.tenant) : ''} · ${esc(L.places.join(' + '))}</div>
           ${j.scope ? `<div class="pv">${esc(j.scope)}</div>` : ''}
@@ -117,6 +117,8 @@ export async function arPage() {
     }, 500); };
     row.onmouseleave = () => { hv = null; clearTimeout(ht); tip.classList.remove('on'); };
   });
+  // Bubble never sticks: gone the moment the mouse is off an AR row, on any click/scroll, or on any other page
+  if (!window.__arpeekWired) { window.__arpeekWired = true; const hide = () => document.querySelectorAll('.arpeek').forEach(x => x.classList.remove('on')); ['click', 'scroll', 'wheel'].forEach(ev => addEventListener(ev, hide, true)); addEventListener('mousemove', e => { if (!(e.target.closest && e.target.closest('[data-hover]'))) hide(); }, true); }
   $app().querySelectorAll('.paid').forEach(b => b.onclick = async () => {
     const list = String(b.dataset.ids).split(',').map(Number).map(id => rows.find(x => x.id === id)).filter(Boolean);
     if (!list.length || !confirm(`Paid: ${ticketName(list[0])} — ${money(list.reduce((a, r) => a + Number(r.amount), 0))}?\n\nIt comes off AR.`)) return;
