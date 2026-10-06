@@ -310,14 +310,95 @@ ${st.k === 'hold' ? `<span class="paypill pay-hold">${esc(st.l)}</span>` : ''}
     } catch (e) { fail(e); }
   });
   // WHICH JOB: one pick puts every line of the invoice on that job (or the shop), proved by a separate read.
-// TYPE THE JOB (10/6/26, his ask): a box beside every "Which job?" picker. Type any part of the address or job name and the list narrows to matches; Enter picks it when one is left.
-$app().querySelectorAll('.jobsel').forEach(s => {
-  const box = document.createElement('input'); box.type = 'search'; box.placeholder = 'Type the job…'; box.className = 'jobtype'; box.style.cssText = 'width:160px;margin-right:6px';
-  s.before(box);
-  const all = [...s.options];
-  box.oninput = () => { const q = box.value.trim().toLowerCase(); all.forEach(o => { o.hidden = !!q && !!o.value && !o.text.toLowerCase().includes(q); }); };
-  box.onkeydown = e => { if (e.key !== 'Enter') return; e.preventDefault(); const hit = all.filter(o => o.value && !o.hidden); if (hit.length === 1) { s.value = hit[0].value; s.dispatchEvent(new Event('change')); box.value = ''; box.oninput(); } else if (hit.length) { s.focus(); try { s.showPicker(); } catch (x) {} } };
-});
+// TYPE THE ADDRESS (10/6/26, his ask): the "Which job?" picker is replaced by a box. Type the address and pick the real job it links to,
+// or pick "+ Create a new job" (or type an address with no job and hit Enter) to make the job right there - the property too if the address
+// is new - and the whole invoice goes on it. The old picker stays hidden underneath and does the saving, so the save is proved the same way.
+{
+  const jobLabel = j => (j.tag || '-') + ' — ' + (j.address || '') + (j.city ? ', ' + j.city : '') + (j.title ? ' — ' + j.title : '');
+  const NEWJOB = '+ Create a new job', SHOPL = 'THE SHOP — keep it in inventory';
+  const norm = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  let dl = document.getElementById('jobTypeList');
+  if (!dl) { dl = document.createElement('datalist'); dl.id = 'jobTypeList'; document.body.appendChild(dl); }
+  const fillList = () => { dl.innerHTML = [SHOPL, ...tix.map(jobLabel), NEWJOB].map(t => '<option value="' + esc(t) + '"></option>').join(''); };
+  fillList();
+  const idFor = t => t === SHOPL ? 'SHOP' : (tix.find(j => jobLabel(j) === t) || {}).id;
+  const japi = async (path, body) => {
+    const r = await fetch('/api/' + path, { method: body ? 'POST' : 'GET', headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+    const d = (r.headers.get('content-type') || '').includes('json') ? await r.json() : null;
+    if (!r.ok) throw Object.assign(new Error((d && d.error) || 'Error ' + r.status), { data: d, status: r.status });
+    return d;
+  };
+  let props = null, custs = null;
+  const loadLists = async () => {
+    if (!props) props = await japi('properties').catch(() => []);
+    if (!custs) { custs = await japi('customers').catch(() => []); let cl = document.getElementById('jobTypeCust'); if (!cl) { cl = document.createElement('datalist'); cl.id = 'jobTypeCust'; document.body.appendChild(cl); } cl.innerHTML = custs.map(c => '<option value="' + esc(c.name) + '"></option>').join(''); }
+  };
+  const findProp = (addr, city) => {
+    const a = norm(addr), c = norm(city); if (a.length < 4) return null;
+    const inCity = p => !c || norm(p.city) === c;
+    return props.find(p => norm(p.address) === a && inCity(p)) || props.find(p => a.length >= 6 && (norm(p.address).startsWith(a) || a.startsWith(norm(p.address))) && inCity(p)) || null;
+  };
+  $app().querySelectorAll('.jobsel').forEach(s => {
+    s.style.display = 'none';
+    const box = document.createElement('input'); box.type = 'text'; box.className = 'jobtype'; box.setAttribute('list', 'jobTypeList');
+    box.placeholder = 'Type the address…'; box.style.cssText = 'flex:1;min-width:260px';
+    s.before(box);
+    const show = () => { const j = tix.find(x => String(x.id) === s.value); box.value = s.value === 'SHOP' ? SHOPL : (j ? jobLabel(j) : ''); box.style.borderColor = s.value ? '' : 'var(--bad)'; };
+    call('/w/supply/' + s.dataset.id).then(inv => { const ids = [...new Set((inv.lines || []).map(l => l.shop ? 'SHOP' : String(l.job_id || '')))]; if (ids.length === 1 && ids[0]) s.value = ids[0]; show(); }).catch(show);
+    const pick = id => { s.value = String(id); s.dispatchEvent(new Event('change')); show(); };
+    let form = null;
+    const openNew = async addr => {
+      if (form) form.remove();
+      form = document.createElement('div'); form.className = 'jobnew';
+      form.style.cssText = 'flex-basis:100%;width:100%;display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px';
+      form.onclick = e => e.stopPropagation();
+      form.innerHTML = '<input class="jn-addr" placeholder="Address" style="min-width:200px"><input class="jn-city" placeholder="City" style="width:110px">'
+        + '<input class="jn-cust" list="jobTypeCust" placeholder="Customer (only for a new address)" style="min-width:220px">'
+        + '<select class="jn-tag"><option value="">Tag — not decided</option>' + ['BID', 'R', 'CO', 'UC', 'JC'].map(t => '<option>' + t + '</option>').join('') + '</select>'
+        + '<input class="jn-title" placeholder="Job name (short)" style="min-width:160px">'
+        + '<button type="button" class="jn-go">Create job + put invoice on it</button><button type="button" class="jn-x">Cancel</button>'
+        + '<div class="jn-msg help" style="flex-basis:100%"></div>';
+      (s.parentElement || box).insertAdjacentElement('afterend', form);
+      const q = c => form.querySelector(c), msg = t => { q('.jn-msg').textContent = t; };
+      q('.jn-addr').value = addr || '';
+      await loadLists();
+      const hint = () => { const p = findProp(q('.jn-addr').value, q('.jn-city').value); q('.jn-cust').style.display = p ? 'none' : ''; msg(p ? 'Goes on: ' + p.address + (p.city ? ', ' + p.city : '') + ' · ' + (p.customer_name || '') : 'New address — pick the customer and it makes the property too.'); };
+      q('.jn-addr').oninput = hint; q('.jn-city').oninput = hint; hint();
+      q('.jn-x').onclick = () => { form.remove(); form = null; };
+      q('.jn-go').onclick = async ev => {
+        const btn = ev.target; btn.disabled = true;
+        try {
+          const addr2 = q('.jn-addr').value.trim(), city = q('.jn-city').value.trim();
+          if (!addr2) throw new Error('Type the address');
+          let p = findProp(addr2, city);
+          if (!p) {
+            const c = custs.find(x => norm(x.name) === norm(q('.jn-cust').value));
+            if (!c) throw new Error('New address — pick the customer from the list');
+            try { const sp = await japi('properties', { customer_id: c.id, address: addr2, city, tenant: '', gc: '', notes: '' }); p = await japi('properties/' + sp.id); }
+            catch (e) { if (e.status === 409 && e.data && e.data.existing_id) p = await japi('properties/' + e.data.existing_id); else throw e; }
+            props.push(p);
+          }
+          const j = await japi('jobs', { property_id: p.id, tag: q('.jn-tag').value, title: q('.jn-title').value.trim(), notes: '' });
+          const back = await japi('jobs/' + j.id);
+          if (!back || String(back.property_id) !== String(p.id)) throw new Error('The job did not save — read back different');
+          const nj = { ...back, address: p.address, city: p.city };
+          tix.push(nj); fillList();
+          s.add(new Option(jobLabel(nj), String(nj.id)));
+          form.remove(); form = null;
+          pick(nj.id);
+        } catch (e) { msg(e.message); btn.disabled = false; }
+      };
+    };
+    box.onclick = e => e.stopPropagation();
+    box.onchange = () => { const t = box.value.trim(); if (t === NEWJOB) { box.value = ''; openNew(''); return; } const id = idFor(t); if (id && String(id) !== s.value) pick(id); };
+    box.onkeydown = e => {
+      if (e.key !== 'Enter') return; e.preventDefault();
+      const t = box.value.trim(); const id = idFor(t); if (id) { if (String(id) !== s.value) pick(id); return; }
+      const hits = tix.filter(j => jobLabel(j).toLowerCase().includes(t.toLowerCase()));
+      if (t && hits.length === 1) pick(hits[0].id); else if (t && !hits.length) openNew(t);
+    };
+  });
+}
 $app().querySelectorAll('.jobsel').forEach(s => {
 s.onclick = ev => ev.stopPropagation();
 call(`/w/supply/${s.dataset.id}`).then(inv => {
