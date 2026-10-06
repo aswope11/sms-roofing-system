@@ -341,7 +341,7 @@ ${st.k === 'hold' ? `<span class="paypill pay-hold">${esc(st.l)}</span>` : ''}
   $app().querySelectorAll('.jobsel').forEach(s => {
     s.style.display = 'none';
     const box = document.createElement('input'); box.type = 'text'; box.className = 'jobtype'; box.setAttribute('list', 'jobTypeList');
-    box.placeholder = 'Type the address…'; box.style.cssText = 'flex:1;min-width:260px';
+    box.placeholder = 'Type the address…'; box.style.cssText = 'flex:1 1 560px;min-width:260px';
     s.before(box);
     const show = () => { const j = tix.find(x => String(x.id) === s.value); box.value = s.value === 'SHOP' ? SHOPL : (j ? jobLabel(j) : ''); box.style.borderColor = s.value ? '' : 'var(--bad)'; };
     call('/w/supply/' + s.dataset.id).then(inv => { const ids = [...new Set((inv.lines || []).map(l => l.shop ? 'SHOP' : String(l.job_id || '')))]; if (ids.length === 1 && ids[0]) s.value = ids[0]; show(); }).catch(show);
