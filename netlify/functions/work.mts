@@ -402,9 +402,20 @@ Answer with exactly this JSON and nothing else:
 // TALK TO THE APP (10/4/26, his ask: "set the app up with verbal ... and the ability to decipher what I'm doing").
 // He talks; Claude picks the ticket from the open ones on file and writes the scope his way. NOTHING is saved here —
 // the screen shows him what it will do and only his Yes runs the app's own save / check / done buttons.
-async function claudeTalk(said: string, draft: string, tickets: any[], pinned: number | null) {
+function localTalk(said: string, draft: string, tickets: any[], pinned: number | null) {
+  // Safe no-AI fallback: when he is already looking at a ticket, keep the words on that ticket.
+  // Nothing is saved here; the normal confirmation screen still controls every write.
+  const t = pinned ? tickets.find((x: any) => x.id === pinned) : null;
+  if (!t) return { job_id: null, scope: draft || "", check_scope: false, mark_done: false,
+    question: "Open the job you mean, then use Talk again." };
+  const clean = said.replace(/\b(um+|uh+)\b[,. ]*/gi, "").replace(/\s+/g, " ").trim();
+  const scope = draft.trim() || (clean ? `Scope of work:\n• ${clean}` : "");
+  return { job_id: t.id, scope, check_scope: false, mark_done: false, question: "" };
+}
+
+async function appTalk(said: string, draft: string, tickets: any[], pinned: number | null) {
   const key = Netlify.env.get("ANTHROPIC_API_KEY");
-  if (!key) throw new Error("The app has no Claude key set (ANTHROPIC_API_KEY).");
+  if (!key) return localTalk(said, draft, tickets, pinned);
   const base = (Netlify.env.get("ANTHROPIC_BASE_URL") || "https://api.anthropic.com").replace(/\/$/, "");
   const list = tickets.map((t: any) => `${t.id} | ${t.tag} - ${t.title || ""} | ${t.address}, ${t.city || ""} | tenant: ${t.tenant || ""} | ${t.customer_name}${t.done_at ? " | already marked done" : ""}`).join("\n");
   const prompt = `A commercial roofing contractor is talking to his job app from the field (voice, so expect "um", restarts and self-corrections).
@@ -437,7 +448,7 @@ Answer with exactly this JSON and nothing else:
     headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
     body: JSON.stringify({ model: "claude-haiku-4-5", max_tokens: 1500, messages: [{ role: "user", content: prompt }] }) });
   const data: any = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error("Claude said: " + (data?.error?.message || res.status));
+  if (!res.ok) throw new Error("AI reader said: " + (data?.error?.message || res.status));
   const txt = (data.content || []).map((c: any) => c.text || "").join("");
   try { return JSON.parse(txt.slice(txt.indexOf("{"), txt.lastIndexOf("}") + 1)); } catch (e) { throw new Error("Couldn't read that — say it again."); }
 }
@@ -545,7 +556,7 @@ export default async function handler(req: Request) {
     const tickets = norm(await sql`${JOB_COLS(sql)} WHERE j.tag = ANY(${["R", "CO", "UC", "JC"]}::text[]) AND j.tabled_at IS NULL
       AND (j.done_at IS NULL OR j.done_at >= ${M.addDays(today(), -14)}) ORDER BY j.id DESC`);
     try {
-      const r = await claudeTalk(said, String(b.draft || ""), tickets, b.job_id ? Number(b.job_id) : null);
+      const r = await appTalk(said, String(b.draft || ""), tickets, b.job_id ? Number(b.job_id) : null);
       const t = tickets.find((x: any) => x.id === Number(r.job_id)) || null;
       return json({ job_id: t ? t.id : null, ticket: t ? `${t.tag} - ${t.title || ""} · ${t.address}${t.city ? ", " + t.city : ""} (${t.customer_name})` : "",
         already_done: !!(t && t.done_at), scope: String(r.scope || ""), check_scope: !!r.check_scope, mark_done: !!r.mark_done,
