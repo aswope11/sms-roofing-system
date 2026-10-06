@@ -1192,6 +1192,18 @@ export default async function handler(req: Request) {
           }
           if (!sentMsg && !b.anyway) return refuse(`No sent email with "${num || "this invoice's number"}" in the subject — not marked sent.`);
           if (sentMsg) sentDay = new Date(Number(sentMsg.internalDate || Date.now()) - 5 * 3600 * 1000).toISOString().slice(0, 10); // Central time
+          // MARK SENT = APP TOTAL MATCHES THE FINAL SENT INVOICE (his rule 10/6/26): read this invoice's total from QuickBooks
+          // and the app's saved total becomes that number before it moves to AR.
+          try {
+            const got: any = inv.qb_id
+              ? await qbQuery(`SELECT Id, TotalAmt FROM Invoice WHERE Id = '${qEsc(String(inv.qb_id))}'`)
+              : (num ? await qbQuery(`SELECT Id, TotalAmt FROM Invoice WHERE DocNumber = '${qEsc(num)}'`) : {});
+            const q = (got.Invoice || [])[0];
+            if (q) {
+              const t = Math.round(Number(q.TotalAmt) * 100) / 100;
+              if (Math.abs(t - Number(inv.amount)) > 0.004) await sql`UPDATE invoices SET amount = ${t} WHERE id = ${id}`;
+            }
+          } catch (e) { /* QuickBooks unreachable: the total syncs again the next time the ticket, Invoicing or AR opens */ }
         }
         // Step 5 rule: the real invoice stays future-dated until Mark it sent — then the date and the AR clock become real.
         const [r] = b.value
