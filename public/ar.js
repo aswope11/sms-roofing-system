@@ -25,8 +25,47 @@ export async function arPage() {
       <div class="lanebtns"><button class="lb on">Sent ${shortDate(r.sent_at)}</button><button class="lb send paid" data-id="${r.id}" data-job="${r.job_id}">Mark it paid</button></div>
     </div>`;
   };
+  // QB A/R AGING SUMMARY (10/6): looks exactly like the QuickBooks report. Click a ticket name or its total and it opens the ticket.
+  const COLS = [['Current', 0, 0], ['1 - 30', 1, 30], ['31 - 60', 31, 60], ['61 - 90', 61, 90], ['91 and Over', 91, 1e9]];
+  const fmt = v => v ? Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
+  const fmtT = v => '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const bucketsOf = list => COLS.map(([, lo, hi]) => round2(list.filter(r => r.days >= lo && r.days <= hi).reduce((a, r) => a + Number(r.amount), 0)));
+  const asOf = new Date(d.today + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const qbTable = () => {
+    if (!rows.length) return '<div class="card empty">Nothing out there. Everything you have sent has been paid.</div>';
+    const grand = bucketsOf(rows);
+    const body = names.map(c => {
+      const byJob = {}; byCust[c].forEach(r => (byJob[r.job_id] ||= []).push(r));
+      const jobs = Object.values(byJob).sort((a, b) => ticketName(a[0]).localeCompare(ticketName(b[0])));
+      const ct = bucketsOf(byCust[c]);
+      return `<tbody class="qbgrp"><tr class="qbparent"><td colspan="7"><span class="qbcar">&#9662;</span>${esc(c)}</td></tr>
+        ${jobs.map(js => { const b = bucketsOf(js), t = round2(b.reduce((a, v) => a + v, 0)), id = js[0].job_id;
+          return `<tr class="qbrow" data-hover="${id}"><td class="qbname"><a href="#/job/${id}" title="${esc(ticketName(js[0]))}">${esc(ticketName(js[0]))}</a></td>${b.map(v => `<td class="qbn">${fmt(v)}</td>`).join('')}<td class="qbn"><a href="#/job/${id}">${fmt(t) || '0.00'}</a></td></tr>`; }).join('')}
+        <tr class="qbtot"><td class="qbname">Total for ${esc(c)}</td>${ct.map(v => `<td class="qbn">${fmt(v)}</td>`).join('')}<td class="qbn">${fmtT(round2(ct.reduce((a, v) => a + v, 0)))}</td></tr></tbody>`;
+    }).join('');
+    return `<style>
+      .qbrep{background:#fff;color:#393a3d;max-width:1120px;margin-top:12px;padding:30px 28px 40px;border:1px solid #d4d7dc;border-radius:4px;font-family:"Avenir Next",Avenir,"Helvetica Neue",Helvetica,Arial,sans-serif;font-size:13px}
+      .qbhead{text-align:center;margin-bottom:26px}.qbco{font-size:21px;font-weight:600}.qbsub,.qbasof{font-size:13px;color:#6b6c72;margin-top:5px}
+      .qbtab{width:100%;border-collapse:collapse;table-layout:fixed}
+      .qbtab th{font-weight:600;text-align:right;padding:9px 8px;border-top:1px solid #babec5;border-bottom:2px solid #babec5;width:11%}
+      .qbtab th:first-child{width:34%;border-right:1px solid #e3e5e8}
+      .qbtab td{padding:6px 8px;line-height:1.3}
+      .qbn{text-align:right;white-space:nowrap}
+      .qbname{padding-left:30px!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .qbparent td{cursor:pointer;color:#393a3d;padding-top:8px}
+      .qbcar{display:inline-block;width:16px;color:#6b6c72;transition:transform .15s}
+      .qbgrp.closed .qbcar{transform:rotate(-90deg)}
+      .qbgrp.closed .qbrow{display:none}
+      .qbrow a{color:#393a3d;text-decoration:none}
+      .qbrow a:hover{color:#0077c5;text-decoration:underline}
+      .qbrow:hover td{background:#f4f5f8}
+      .qbtot td{font-weight:600;border-top:1px solid #babec5}
+      .qbgrand td{font-weight:700;padding-top:10px;border-top:1px solid #393a3d;border-bottom:3px double #393a3d}
+    </style><div class="qbrep"><div class="qbhead"><div class="qbco">SMS Roofing &amp; Waterproofing, LLC</div><div class="qbsub">A/R Aging Summary Report</div><div class="qbasof">As of ${asOf}</div></div>
+      <table class="qbtab"><thead><tr><th></th>${COLS.map(([l]) => `<th>${l}</th>`).join('')}<th>Total</th></tr></thead>${body}
+      <tfoot><tr class="qbgrand"><td>TOTAL</td>${grand.map(v => `<td class="qbn">${fmtT(v)}</td>`).join('')}<td class="qbn">${fmtT(total)}</td></tr></tfoot></table></div>`;
+  };
   $app().innerHTML = `<div class="oldgrid oldinv">
-    <h1>AR</h1>
     ${d.stuck.length ? `<div class="billgrp stuck" style="--lane:var(--bad)"><div class="bgh"><b>DONE — NOT GETTING PAID YET</b> <span class="lanen">${d.stuck.length}</span></div>
       ${d.stuck.map(t => `<div class="prow" data-hover="${t.id}" style="border-left-color:var(--bad)">
         <a class="pmain" href="#/job/${t.id}"><div class="pt">${esc(ticketName(t))}</div>
@@ -34,17 +73,10 @@ export async function arPage() {
           <div class="ps redtxt"><b>${t.why.map(w => w.toUpperCase()).join(' · ')}</b></div></a>
         <div class="lanebtns"><a class="lb send" href="#/jobcost/${t.id}/invoices">Fix it</a><button class="lb nocharge" data-job="${t.id}">No charge</button></div>
       </div>`).join('')}</div>` : ''}
-    <div class="invhead">
-      <div><div class="ih1">${money(total)}</div><div class="ih2">open receivable</div></div>
-      ${BUCKETS.map(([k, l, lo, hi]) => { const v = sumIn(lo, hi); return v ? `<div class="${lo > 60 ? 'warn' : ''}"><div class="ih1">${money(v)}</div><div class="ih2">${l}</div></div>` : ''; }).join('')}
-    </div>
-    ${rows.length ? names.map(c => {
-      const list = byCust[c].sort((a, b) => String(a.sent_at).localeCompare(String(b.sent_at)));
-      const owed = round2(list.reduce((a, r) => a + Number(r.amount), 0));
-      const late = list.filter(r => r.days > 30).length;
-      return `<div class="psec"><h3>${esc(c)} <span class="n">${list.length}</span> <span class="n">${money(owed)}</span>${late ? `<span class="nbad">${late} past 30 days</span>` : ''}</h3>${list.map(row).join('')}</div>`;
-    }).join('') : '<div class="card empty">Nothing out there. Everything you have sent has been paid.</div>'}
+    ${qbTable()}
   </div>`;
+  // Click a customer line to fold it up, like QuickBooks
+  $app().querySelectorAll('.qbparent').forEach(p => p.onclick = () => p.parentElement.classList.toggle('closed'));
   // No charge: the only other way off DONE — NOT GETTING PAID YET
   $app().querySelectorAll('.nocharge').forEach(b => b.onclick = async () => {
     const t = d.stuck.find(x => x.id === Number(b.dataset.job));
