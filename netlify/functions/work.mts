@@ -358,47 +358,8 @@ function addrHit(props: any[], text: string) {
     return key.length > 4 && /^\d/.test(num) && new RegExp(`\\b${num}\\b`).test(t) && key.split(" ").slice(1, 3).every((w: string) => t.includes(w));
   }) || null;
 }
-// Claude reads the one email — only ever called when an email is actually sitting in a label.
-// It picks a property ONLY from the ones already on file, and the app then checks the street
-// number is really in the email before it trusts the pick. It writes the ticket name and a short note.
-async function claudeRead(mail: { from: string; subject: string; text: string; files: string[] }, props: any[], custs: any[] = []) {
-  const key = Netlify.env.get("ANTHROPIC_API_KEY");
-  if (!key) return null;
-  const base = (Netlify.env.get("ANTHROPIC_BASE_URL") || "https://api.anthropic.com").replace(/\/$/, "");
-  const list = props.map((p: any) => `${p.id} | ${p.address}, ${p.city} | ${p.customer_name}`).join("\n");
-  const prompt = `A roofing contractor filed this email under a label. Read it and answer in JSON only.
-
-PROPERTIES ON FILE (id | address | customer):
-${list}
-
-CUSTOMERS ON FILE (id | name | email):
-${custs.map((c: any) => `${c.id} | ${c.name} | ${c.email || ""}`).join("\n")}
-
-EMAIL
-From: ${mail.from}
-Subject: ${mail.subject}
-Attachments: ${mail.files.join(", ") || "none"}
-${mail.text.slice(0, 9000)}
-
-Answer with exactly this JSON and nothing else:
-{"property_id": <the id from the list whose street address this email is about, or null if none matches — never guess>,
- "customer_id": <the id from CUSTOMERS ON FILE that sent this work or is paying for it — the company in the From line or the company the sender works for (same email domain, same company name) — or null if none of them — never guess>,
- "address_in_email": "<the JOB SITE street address as written in the email, or empty — never the sender's office, a signature block or an architect's address>",
- "job_name": "<the project or building name, e.g. DATCU Little Elm or Liberty Retail Center, or empty>",
- "city": "<the job site city, or empty>",
- "tenant": "<the tenant or business at the job site as the email names it (e.g. Pizzarella, MKOA Studio, Zensmiles) — never the property manager, the owner or the sender's company — or empty>",
- "customer_in_email": "<the company the work is for, or empty>",
- "title": "<what the work is, 60 characters max, plain words, no address>",
- "summary": "<one or two sentences: what they are asking for>",
- "bid_due": "<YYYY-MM-DD if a bid due date is stated, else null>"}`;
-  const res = await fetch(`${base}/v1/messages`, { method: "POST",
-    headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-    body: JSON.stringify({ model: "claude-haiku-4-5", max_tokens: 500, messages: [{ role: "user", content: prompt }] }) });
-  const data: any = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error("Claude said: " + (data?.error?.message || res.status));
-  const txt = (data.content || []).map((c: any) => c.text || "").join("");
-  try { return JSON.parse(txt.slice(txt.indexOf("{"), txt.lastIndexOf("}") + 1)); } catch (e) { return null; }
-}
+// Email placement is deterministic during stabilization: existing property/address and sender/customer rules only.
+// If those rules cannot place the email safely, it stays labeled and asks the user instead of guessing.
 // TALK TO THE APP (10/4/26, his ask: "set the app up with verbal ... and the ability to decipher what I'm doing").
 // He talks; Claude picks the ticket from the open ones on file and writes the scope his way. NOTHING is saved here —
 // the screen shows him what it will do and only his Yes runs the app's own save / check / done buttons.
@@ -414,43 +375,7 @@ function localTalk(said: string, draft: string, tickets: any[], pinned: number |
 }
 
 async function appTalk(said: string, draft: string, tickets: any[], pinned: number | null) {
-  const key = Netlify.env.get("ANTHROPIC_API_KEY");
-  if (!key) return localTalk(said, draft, tickets, pinned);
-  const base = (Netlify.env.get("ANTHROPIC_BASE_URL") || "https://api.anthropic.com").replace(/\/$/, "");
-  const list = tickets.map((t: any) => `${t.id} | ${t.tag} - ${t.title || ""} | ${t.address}, ${t.city || ""} | tenant: ${t.tenant || ""} | ${t.customer_name}${t.done_at ? " | already marked done" : ""}`).join("\n");
-  const prompt = `A commercial roofing contractor is talking to his job app from the field (voice, so expect "um", restarts and self-corrections).
-Work out which ticket he means and write the scope of work for it.
-
-OPEN TICKETS (id | type - title | address | tenant | customer):
-${list}
-${pinned ? `He is looking at ticket ${pinned} right now — use it unless he clearly names another.` : ""}
-${draft ? `SCOPE ALREADY WRITTEN (he is now correcting it — change ONLY what he asks, keep everything else word for word):\n${draft}\n` : ""}
-WHAT HE SAID:
-${said.slice(0, 8000)}
-
-Rules for the scope words:
-- His words, cleaned up: drop "um/uh", false starts and anything he takes back ("I'll take that part out", "no, remove that"). Fix obvious voice-typing mistakes. Never add work he did not say.
-- Layout exactly:
-Scope of work:
-• one line per item of work
-(blank line)
-Roof Assessment:
-one plain paragraph, never bullets — only if he gave an assessment.
-- A sentence he says goes in the Roof Assessment (or "make it the last line") goes there.
-
-Answer with exactly this JSON and nothing else:
-{"job_id": <id from the list, or null if you cannot tell — never guess>,
- "scope": "<the full scope text, laid out as above>",
- "check_scope": <true if he says the scope is entered/checked/done, else false>,
- "mark_done": <true if he says the work is done/complete, else false>,
- "question": "<if job_id is null: one short line asking which job, else empty>"}`;
-  const res = await fetch(`${base}/v1/messages`, { method: "POST",
-    headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-    body: JSON.stringify({ model: "claude-haiku-4-5", max_tokens: 1500, messages: [{ role: "user", content: prompt }] }) });
-  const data: any = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error("AI reader said: " + (data?.error?.message || res.status));
-  const txt = (data.content || []).map((c: any) => c.text || "").join("");
-  try { return JSON.parse(txt.slice(txt.indexOf("{"), txt.lastIndexOf("}") + 1)); } catch (e) { throw new Error("Couldn't read that — say it again."); }
+  return localTalk(said, draft, tickets, pinned);
 }
 // WHO IT IS FOR — worked out from who sent it (9/21/26: "They should be able to figure that out").
 // The sender's company email domain is matched to a customer: a customer's own email, or mail from that
@@ -1578,9 +1503,8 @@ export default async function handler(req: Request) {
         if (!job) {
           const props = norm(await sql`SELECT p.*, c.name AS customer_name FROM properties p LEFT JOIN customers c ON c.id = p.customer_id`);
           const words = `${subject}\n${text}`;
-          const custsAll = norm(await sql`SELECT id, name, email FROM customers`);
-          try { read = await claudeRead({ from, subject, text, files: atts.map((a: any) => a.name) }, props, custsAll); reader = read ? "claude" : "no-claude"; }
-          catch (e: any) { reader = "claude-failed: " + String(e?.message || e).slice(0, 80); }
+          read = null;
+          reader = "rules-only";
           // trust Claude's pick only if that property's street number is really in the email
           let prop = read?.property_id ? props.find((p: any) => p.id === Number(read.property_id)) : null;
           if (prop && !new RegExp(`\\b${addressKey(prop.address).split(" ")[0]}\\b`).test(words.toLowerCase())) prop = null;
