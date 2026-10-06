@@ -38,6 +38,8 @@ export async function schedulePage(start) {
   const listed = open.filter(j => j.customer_name !== 'SMS Shop');
   const shares = stopShares(w);
   const nobody = d => open.filter(j => j.scheduled_date === d && !w.stops.some(s => s.job_id === j.id && s.work_date === d));
+  // his rule 10/6/26: a job already on TODAY's board (Nobody on it yet, or a man on it) drops off the Ready to work list and the + box list. It comes back tomorrow; it stays open until it's done.
+  const onToday = j => j.scheduled_date === w.today || w.stops.some(s => s.job_id === j.id && s.work_date === w.today);
   const pfx = j => `<span class="pfx">${esc(j.tag)} -</span> `;
   // old board dayState: green when a human says the day is right; a past day nobody signed off shows red
   const isGreen = d => w.green.some(g => g.work_date === d && g.green);
@@ -91,7 +93,7 @@ export async function schedulePage(start) {
   const rowHTML = j => j.tag === 'R' ? `<div class="smsrep">${pRow(j)}</div>` : pRow(j);
   const fold = foldState();
   let sections = '';
-  const readyRows = listed.filter(j => bucketOf(j) === 'ready').sort(jobCmp);
+  const readyRows = listed.filter(j => bucketOf(j) === 'ready' && !onToday(j)).sort(jobCmp);
   if (readyRows.length) sections += `<div class="psec"><h3 data-fold="readytowork">${fold.readytowork ? '▸' : '▾'} Ready to work <span class="n">${readyRows.length}</span></h3>${fold.readytowork ? '' : readyRows.map(rowHTML).join('')}</div>`;
   [{ k: 'hold', l: 'Waiting on the customer' }, { k: 'trades', l: 'Waiting on other trades' }].forEach(h => {
     const rows = listed.filter(j => bucketOf(j) === h.k); if (!rows.length) return;
@@ -238,7 +240,7 @@ export async function schedulePage(start) {
     // no search: only what's ready to work. Typing finds anything open, ready or not.
     // his rule 9/30: a ticket marked done is off the Schedule picker — it lives on Invoicing now
     const pool = open;
-    const hits = pool.filter(j => q ? [j.tag, j.address, j.city, j.tenant, j.title, j.customer_name, j.parent_title].join(' ').toLowerCase().includes(q) : bucketOf(j) === 'ready');
+    const hits = pool.filter(j => q ? [j.tag, j.address, j.city, j.tenant, j.title, j.customer_name, j.parent_title].join(' ').toLowerCase().includes(q) : bucketOf(j) === 'ready' && !onToday(j));
     // his rule 9/30: repairs on top; the rest by job type, but tickets at the same address stay together (Mulberry CO sits with Mulberry UC)
     const grp = {}; hits.forEach(j => { if (j.tag !== 'R') grp[j.address] = Math.min(grp[j.address] ?? 9, order[j.tag] ?? 9); });
     const gOf = j => j.tag === 'R' ? 0 : (grp[j.address] ?? 9);
