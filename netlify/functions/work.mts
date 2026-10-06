@@ -510,6 +510,26 @@ function readInvoiceText(text: string) {
   return { number, inv_date, due_date, amount, po, lines };
 }
 
+// QB TOTAL WINS (10/6/26, his rule): every invoice total on a ticket is what QuickBooks says — what the customer was sent.
+// Change a price in QuickBooks and the ticket, Invoicing and AR all follow. Runs when a ticket, Invoicing or AR is opened.
+async function syncQbTotals(sql: any, jobId: number | null) {
+  try {
+    const rows = norm(jobId
+      ? await sql`SELECT id, qb_id, amount FROM invoices WHERE job_id = ${jobId} AND qb_id IS NOT NULL AND qb_id <> ''`
+      : await sql`SELECT id, qb_id, amount FROM invoices WHERE paid_at IS NULL AND qb_id IS NOT NULL AND qb_id <> ''`);
+    const ids = [...new Set(rows.map((r: any) => String(r.qb_id)))] as string[];
+    const tot: Record<string, number> = {};
+    for (let k = 0; k < ids.length; k += 100) {
+      const got: any = await qbQuery(`SELECT Id, TotalAmt FROM Invoice WHERE Id IN (${ids.slice(k, k + 100).map((x) => "'" + x + "'").join(",")}) MAXRESULTS 1000`);
+      for (const q of (got.Invoice || [])) tot[String(q.Id)] = Math.round(Number(q.TotalAmt) * 100) / 100;
+    }
+    for (const r of rows) {
+      const t = tot[String(r.qb_id)];
+      if (t !== undefined && Math.abs(t - Number(r.amount)) > 0.004) await sql`UPDATE invoices SET amount = ${t} WHERE id = ${r.id}`;
+    }
+  } catch (e) { /* QuickBooks unreachable: leave the ticket as it is, try again next open */ }
+}
+
 export default async function handler(req: Request) {
   const db = getDatabase();
   const sql = db.sql;
@@ -518,6 +538,7 @@ export default async function handler(req: Request) {
   const id = idRaw && /^\d+$/.test(idRaw) ? Number(idRaw) : null;
   const m = req.method;
   const body = async () => { try { return await req.json(); } catch { return {}; } };
+  if (m === "GET" && (kind === "ar" || kind === "invoicing" || (kind === "job" && id))) await syncQbTotals(sql, kind === "job" ? id : null);
 
   // TALK (10/4/26): reads what he said, returns what it WOULD do. Writes nothing.
   if (kind === "talk" && m === "POST") {
