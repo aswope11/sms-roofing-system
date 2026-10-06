@@ -38,17 +38,21 @@ export async function arPage() {
       const byJob = {}; byCust[c].forEach(r => (byJob[r.job_id] ||= []).push(r));
       const jobs = Object.values(byJob).sort((a, b) => ticketName(a[0]).localeCompare(ticketName(b[0])));
       const ct = bucketsOf(byCust[c]);
-      return `<tbody class="qbgrp"><tr class="qbparent"><td colspan="7"><span class="qbcar">&#9662;</span>${esc(c)}</td></tr>
+      return `<tbody class="qbgrp"><tr class="qbparent"><td colspan="8"><span class="qbcar">&#9662;</span>${esc(c)}</td></tr>
         ${jobs.map(js => { const b = bucketsOf(js), t = round2(b.reduce((a, v) => a + v, 0)), id = js[0].job_id;
-          return `<tr class="qbrow" data-hover="${id}"><td class="qbname"><a href="#/job/${id}" title="${esc(ticketName(js[0]))}">${esc(ticketName(js[0]))}</a></td>${b.map(v => `<td class="qbn">${fmt(v)}</td>`).join('')}<td class="qbn"><a href="#/job/${id}">${fmt(t) || '0.00'}</a></td></tr>`; }).join('')}
-        <tr class="qbtot"><td class="qbname">Total for ${esc(c)}</td>${ct.map(v => `<td class="qbn">${fmt(v)}</td>`).join('')}<td class="qbn">${fmtT(round2(ct.reduce((a, v) => a + v, 0)))}</td></tr></tbody>`;
+          return `<tr class="qbrow" data-hover="${id}"><td class="qbname" title="${esc(ticketName(js[0]))}">${esc(ticketName(js[0]))}</td>${b.map(v => `<td class="qbn">${v ? `<a href="#/job/${id}">${fmt(v)}</a>` : ''}</td>`).join('')}<td class="qbn"><a href="#/job/${id}">${fmt(t) || '0.00'}</a></td><td class="qbpay"><button class="lb send paid" data-ids="${js.map(r => r.id).join(',')}">Paid</button></td></tr>`; }).join('')}
+        <tr class="qbtot"><td class="qbname">Total for ${esc(c)}</td>${ct.map(v => `<td class="qbn">${fmt(v)}</td>`).join('')}<td class="qbn">${fmtT(round2(ct.reduce((a, v) => a + v, 0)))}</td><td></td></tr></tbody>`;
     }).join('');
     return `<style>
       .qbrep{background:var(--card);color:var(--ink);max-width:1120px;margin-top:12px;padding:26px 24px 32px;border:1px solid var(--line);border-radius:12px;font-size:14px}
       .qbhead{text-align:center;margin-bottom:22px}.qbco{font-size:22px;font-weight:800}.qbsub,.qbasof{font-size:13px;color:var(--mute);margin-top:4px}
       .qbtab{width:100%;border-collapse:collapse;table-layout:fixed}
       .qbtab th{font-weight:700;text-align:right;padding:9px 8px;color:var(--mute);font-size:12px;text-transform:uppercase;letter-spacing:.04em;border-bottom:2px solid var(--line);width:10%}
-      .qbtab th:first-child{width:40%}
+      .qbtab th:first-child{width:34%}
+      .qbtab th:last-child{width:6%}
+      .qbtab th{white-space:nowrap}
+      .qbpay{text-align:right;padding:4px 0 4px 8px!important}
+      .qbpay .lb{padding:3px 10px;font-size:12px}
       .qbtab td{padding:7px 8px;line-height:1.3}
       .qbn{text-align:right;white-space:nowrap}
       .qbname{padding-left:30px!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -57,8 +61,9 @@ export async function arPage() {
       .qbgrp.closed .qbcar{transform:rotate(-90deg)}
       .qbgrp.closed .qbrow{display:none}
       .qbrow td{border-bottom:1px solid var(--panel2)}
-      .qbrow a{color:var(--ink);font-weight:600;text-decoration:none}
-      .qbrow .qbn a{color:var(--ok)}
+      .qbrow .qbname{color:var(--ink);font-weight:600}
+      .qbrow a{text-decoration:none}
+      .qbrow .qbn a{color:var(--ok);font-weight:600}
       .qbrow a:hover{color:var(--brand);text-decoration:underline}
       .qbrow:hover td{background:var(--panel2)}
       .qbtot td{font-weight:800;border-top:1px solid var(--line)}
@@ -66,8 +71,8 @@ export async function arPage() {
       .qbgrand td{font-weight:800;font-size:15px;padding-top:12px;border-top:2px solid var(--line);border-bottom:3px double var(--line)}
       .qbgrand .qbn:last-child{color:var(--ok)}
     </style><div class="qbrep"><div class="qbhead"><div class="qbco">SMS Roofing &amp; Waterproofing, LLC</div><div class="qbsub">A/R Aging Summary Report</div><div class="qbasof">As of ${asOf}</div></div>
-      <table class="qbtab"><thead><tr><th></th>${COLS.map(([l]) => `<th>${l}</th>`).join('')}<th>Total</th></tr></thead>${body}
-      <tfoot><tr class="qbgrand"><td>TOTAL</td>${grand.map(v => `<td class="qbn">${fmtT(v)}</td>`).join('')}<td class="qbn">${fmtT(total)}</td></tr></tfoot></table></div>`;
+      <table class="qbtab"><thead><tr><th></th>${COLS.map(([l]) => `<th>${l}</th>`).join('')}<th>Total</th><th></th></tr></thead>${body}
+      <tfoot><tr class="qbgrand"><td>TOTAL</td>${grand.map(v => `<td class="qbn">${fmtT(v)}</td>`).join('')}<td class="qbn">${fmtT(total)}</td><td></td></tr></tfoot></table></div>`;
   };
   $app().innerHTML = `<div class="oldgrid oldinv">
     ${d.stuck.length ? `<div class="billgrp stuck" style="--lane:var(--bad)"><div class="bgh"><b>DONE — NOT GETTING PAID YET</b> <span class="lanen">${d.stuck.length}</span></div>
@@ -113,13 +118,16 @@ export async function arPage() {
     row.onmouseleave = () => { hv = null; clearTimeout(ht); tip.classList.remove('on'); };
   });
   $app().querySelectorAll('.paid').forEach(b => b.onclick = async () => {
-    const r = rows.find(x => x.id === Number(b.dataset.id));
-    // MONEY CAME IN — IT GETS MARKED PAID. What is still missing off the invoice is said, never a wall.
-    const miss = missingToMarkPaid(r);
+    const list = String(b.dataset.ids).split(',').map(Number).map(id => rows.find(x => x.id === id)).filter(Boolean);
+    if (!list.length || !confirm(`Paid: ${ticketName(list[0])} — ${money(list.reduce((a, r) => a + Number(r.amount), 0))}?\n\nIt comes off AR.`)) return;
     b.disabled = true;
     try {
-      await doAndProve(`/w/invoices/${r.id}/paid`, { method: 'POST', body: { value: true } }, '/w/ar', bk => !bk.rows.some(x => x.id === r.id),
-        `${ticketName(r)} — paid, off AR (read back and it's gone)${miss.length ? ' · still missing: ' + miss.join(', ') : ''}`);
+      // MONEY CAME IN — IT GETS MARKED PAID. What is still missing off the invoice is said, never a wall.
+      for (const r of list) {
+        const miss = missingToMarkPaid(r);
+        await doAndProve(`/w/invoices/${r.id}/paid`, { method: 'POST', body: { value: true } }, '/w/ar', bk => !bk.rows.some(x => x.id === r.id),
+          `${ticketName(r)} — paid, off AR (read back and it's gone)${miss.length ? ' · still missing: ' + miss.join(', ') : ''}`);
+      }
       arPage();
     } catch (e) { fail(e); b.disabled = false; }
   });
