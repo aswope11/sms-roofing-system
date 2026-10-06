@@ -402,7 +402,8 @@ test('step 5 server: writes name/memo/scope/tomorrow; placeholder zeroed ONLY af
   assert.ok(!w.includes('UPDATE invoices SET zeroed_from = amount, zeroed_by = $4'), 'no zeroing inside the Write the invoice transaction');
   const push = w.slice(w.indexOf('async function pushInvoiceToQB'), w.indexOf('// HIS LAW (9/28/26)'));
   assert.ok(push.indexOf('const back = (await qb("GET"') < push.indexOf('zeroReplacedPlaceholders(sql, inv, job)'), 'zero only after QuickBooks read-back');
-  assert.ok(w.includes('inv_date = CASE WHEN inv_date IS NULL OR inv_date > ${today()}::date THEN ${today()}::date ELSE inv_date END'));
+  // 10/6/26: sent makes the date real — the day the sent email went out (found by the invoice #), today only if he says "I know, it's ok"
+  assert.ok(w.includes('inv_date = CASE WHEN inv_date IS NULL OR inv_date > ${sentDay}::date THEN ${sentDay}::date ELSE inv_date END'));
 });
 
 test('LAW step 6: trips age from the oldest unpaid one, 21 days = stop; billing a trip never finishes a ticket', () => {
