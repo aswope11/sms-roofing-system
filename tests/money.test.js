@@ -560,6 +560,13 @@ test('LAW: the app reads only the five SMS labels on its own — no whole-inbox 
   assert.ok(work.includes('if (!prop && cust && read)'), 'without an AI read, a known sender must not create a fake property from the email subject');
 });
 
+test('STABILIZATION: Talk has a safe no-AI fallback and never saves by itself', () => {
+  const work = readFileSync('netlify/functions/work.mts', 'utf8');
+  assert.ok(work.includes('function localTalk('), 'Talk has no local fallback');
+  assert.ok(work.includes('if (!key) return localTalk('), 'missing AI key still breaks Talk');
+  assert.ok(work.includes('const r = await appTalk('), 'Talk route is not using the safe wrapper');
+});
+
 // HIS LAW, 9/21/26: "These two are the only standing seam templates. Never build a standing seam bid
 // from any other file." They came over from the old bid app byte for byte; this fails the build if
 // either one changes by a single byte, or if any other standing seam sheet shows up.
