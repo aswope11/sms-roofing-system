@@ -44,23 +44,27 @@ export async function arPage() {
         <tr class="qbtot"><td class="qbname">Total for ${esc(c)}</td>${ct.map(v => `<td class="qbn">${fmt(v)}</td>`).join('')}<td class="qbn">${fmtT(round2(ct.reduce((a, v) => a + v, 0)))}</td></tr></tbody>`;
     }).join('');
     return `<style>
-      .qbrep{background:#fff;color:#393a3d;max-width:1120px;margin-top:12px;padding:30px 28px 40px;border:1px solid #d4d7dc;border-radius:4px;font-family:"Avenir Next",Avenir,"Helvetica Neue",Helvetica,Arial,sans-serif;font-size:13px}
-      .qbhead{text-align:center;margin-bottom:26px}.qbco{font-size:21px;font-weight:600}.qbsub,.qbasof{font-size:13px;color:#6b6c72;margin-top:5px}
+      .qbrep{background:var(--card);color:var(--ink);max-width:1120px;margin-top:12px;padding:26px 24px 32px;border:1px solid var(--line);border-radius:12px;font-size:14px}
+      .qbhead{text-align:center;margin-bottom:22px}.qbco{font-size:22px;font-weight:800}.qbsub,.qbasof{font-size:13px;color:var(--mute);margin-top:4px}
       .qbtab{width:100%;border-collapse:collapse;table-layout:fixed}
-      .qbtab th{font-weight:600;text-align:right;padding:9px 8px;border-top:1px solid #babec5;border-bottom:2px solid #babec5;width:11%}
-      .qbtab th:first-child{width:34%;border-right:1px solid #e3e5e8}
-      .qbtab td{padding:6px 8px;line-height:1.3}
+      .qbtab th{font-weight:700;text-align:right;padding:9px 8px;color:var(--mute);font-size:12px;text-transform:uppercase;letter-spacing:.04em;border-bottom:2px solid var(--line);width:10%}
+      .qbtab th:first-child{width:40%}
+      .qbtab td{padding:7px 8px;line-height:1.3}
       .qbn{text-align:right;white-space:nowrap}
       .qbname{padding-left:30px!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      .qbparent td{cursor:pointer;color:#393a3d;padding-top:8px}
-      .qbcar{display:inline-block;width:16px;color:#6b6c72;transition:transform .15s}
+      .qbparent td{cursor:pointer;color:var(--mute);font-weight:800;font-size:12px;text-transform:uppercase;letter-spacing:.05em;padding-top:16px}
+      .qbcar{display:inline-block;width:16px;color:var(--mute);transition:transform .15s}
       .qbgrp.closed .qbcar{transform:rotate(-90deg)}
       .qbgrp.closed .qbrow{display:none}
-      .qbrow a{color:#393a3d;text-decoration:none}
-      .qbrow a:hover{color:#0077c5;text-decoration:underline}
-      .qbrow:hover td{background:#f4f5f8}
-      .qbtot td{font-weight:600;border-top:1px solid #babec5}
-      .qbgrand td{font-weight:700;padding-top:10px;border-top:1px solid #393a3d;border-bottom:3px double #393a3d}
+      .qbrow td{border-bottom:1px solid var(--panel2)}
+      .qbrow a{color:var(--ink);font-weight:600;text-decoration:none}
+      .qbrow .qbn a{color:var(--ok)}
+      .qbrow a:hover{color:var(--brand);text-decoration:underline}
+      .qbrow:hover td{background:var(--panel2)}
+      .qbtot td{font-weight:800;border-top:1px solid var(--line)}
+      .qbtot .qbn:last-child{color:var(--ok)}
+      .qbgrand td{font-weight:800;font-size:15px;padding-top:12px;border-top:2px solid var(--line);border-bottom:3px double var(--line)}
+      .qbgrand .qbn:last-child{color:var(--ok)}
     </style><div class="qbrep"><div class="qbhead"><div class="qbco">SMS Roofing &amp; Waterproofing, LLC</div><div class="qbsub">A/R Aging Summary Report</div><div class="qbasof">As of ${asOf}</div></div>
       <table class="qbtab"><thead><tr><th></th>${COLS.map(([l]) => `<th>${l}</th>`).join('')}<th>Total</th></tr></thead>${body}
       <tfoot><tr class="qbgrand"><td>TOTAL</td>${grand.map(v => `<td class="qbn">${fmtT(v)}</td>`).join('')}<td class="qbn">${fmtT(total)}</td></tr></tfoot></table></div>`;
