@@ -310,6 +310,14 @@ ${st.k === 'hold' ? `<span class="paypill pay-hold">${esc(st.l)}</span>` : ''}
     } catch (e) { fail(e); }
   });
   // WHICH JOB: one pick puts every line of the invoice on that job (or the shop), proved by a separate read.
+// TYPE THE JOB (10/6/26, his ask): a box beside every "Which job?" picker. Type any part of the address or job name and the list narrows to matches; Enter picks it when one is left.
+$app().querySelectorAll('.jobsel').forEach(s => {
+  const box = document.createElement('input'); box.type = 'search'; box.placeholder = 'Type the job…'; box.className = 'jobtype'; box.style.cssText = 'width:160px;margin-right:6px';
+  s.before(box);
+  const all = [...s.options];
+  box.oninput = () => { const q = box.value.trim().toLowerCase(); all.forEach(o => { o.hidden = !!q && !!o.value && !o.text.toLowerCase().includes(q); }); };
+  box.onkeydown = e => { if (e.key !== 'Enter') return; e.preventDefault(); const hit = all.filter(o => o.value && !o.hidden); if (hit.length === 1) { s.value = hit[0].value; s.dispatchEvent(new Event('change')); box.value = ''; box.oninput(); } else if (hit.length) { s.focus(); try { s.showPicker(); } catch (x) {} } };
+});
 $app().querySelectorAll('.jobsel').forEach(s => {
 s.onclick = ev => ev.stopPropagation();
 call(`/w/supply/${s.dataset.id}`).then(inv => {
