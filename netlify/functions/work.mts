@@ -1577,7 +1577,9 @@ export default async function handler(req: Request) {
           // NOT ON FILE YET, BUT WE KNOW WHO IT'S FROM: make the property under that customer and carry on.
           // A new bid is almost always a new address — that is not a reason to ask him anything.
           const cust = prop ? null : await customerFor(sql, from, read?.customer_id, String(read?.customer_in_email || ""));
-          if (!prop && cust) {
+          // SAFETY: without an AI read we may know the sender's customer from its email domain, but we do NOT
+          // know the job-site address. Never turn an email subject into a property address; ask him to place it instead.
+          if (!prop && cust && read) {
             const street = String(read?.address_in_email || "").trim(), jn = String(read?.job_name || "").trim();
             const addr = street || jn || subject.replace(/^(re|fwd?|fw)\s*:\s*/gi, "").trim() || "From email";
             const city = String(read?.city || "").trim();
