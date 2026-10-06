@@ -58,7 +58,15 @@ export async function renderTicket(jobId, mount) {
   }); return scopeChain; };
   flushScope = saveScope;
   q('#scope').oninput = () => { q('#scopeSaved').textContent = ''; clearTimeout(scopeT); scopeT = setTimeout(saveScope, 1200); };
-  q('#scope').onblur = () => { saveScope(); };
+  // 10/6/26 SCOPE BULLETS (his rule, every time): every scope line is a bullet. Lines ending in ":" are headers and stay plain; anything under "Roof Assessment:" stays a paragraph.
+  const scopeIsPara = (txt) => { let para = false; for (const l of txt.split('\n')) { const t = l.trim(); if (/:$/.test(t) && !/^[•*-]/.test(t)) para = /assessment/i.test(t); } return para; };
+  const bulletScope = (s) => { let para = false; return s.split('\n').map(l => { const t = l.trim(); if (!t) return l; if (/:$/.test(t) && !/^[•*-]/.test(t)) { para = /assessment/i.test(t); return l; } return para ? l : '• ' + t.replace(/^[•*-]\s*/, ''); }).join('\n'); };
+  q('#scope').onkeydown = (e) => { if (e.key !== 'Enter' || e.shiftKey) return; const box = e.target; let a = box.selectionStart, b = box.selectionEnd; const before = box.value.slice(0, a); if (scopeIsPara(before)) return;
+    const ls = before.lastIndexOf('\n') + 1, cur = before.slice(ls).trim(); e.preventDefault();
+    if (cur === '•') { box.setRangeText('', ls, b, 'end'); box.dispatchEvent(new Event('input')); return; }
+    if (cur && !/:$/.test(cur) && !/^•/.test(cur)) { const lead = before.slice(ls).length - before.slice(ls).trimStart().length; box.setRangeText('• ', ls + lead, ls + lead, 'preserve'); a = box.selectionStart; b = box.selectionEnd; }
+    box.setRangeText('\n• ', a, b, 'end'); box.dispatchEvent(new Event('input')); };
+  q('#scope').onblur = () => { const box = q('#scope'); const nv = bulletScope(box.value); if (nv !== box.value) box.value = nv; saveScope(); };
   // 10/4/26: no invoice price box. The invoice is always the placeholder's price, and the placeholder goes to $0.
   q('#scopeOk').onchange = () => run(() => act(`/w/job/${jobId}/check`, { which: 'scope', value: q('#scopeOk').checked }, b => b.job.scope_ok === q('#scopeOk').checked));
   if (q('#scopeNote')) q('#scopeNote').onchange = () => run(() => act(`/w/job/${jobId}/scope-note`, { value: q('#scopeNote').checked }, b => b.job.scope_note === q('#scopeNote').checked));
