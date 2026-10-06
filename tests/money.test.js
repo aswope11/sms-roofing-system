@@ -557,6 +557,7 @@ test('LAW: the app reads only the five SMS labels on its own — no whole-inbox 
   assert.ok(!/messages\/send|drafts|\/send"/.test(work), 'the app can send mail');
   // Claude is only asked after the "nothing in the labels" return
   assert.ok(work.indexOf('if (!todo.length) return') < work.indexOf('await claudeRead('), 'Claude is called before the empty-label check');
+  assert.ok(work.includes('if (!prop && cust && read)'), 'without an AI read, a known sender must not create a fake property from the email subject');
 });
 
 // HIS LAW, 9/21/26: "These two are the only standing seam templates. Never build a standing seam bid
