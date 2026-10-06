@@ -128,11 +128,8 @@ async function pushInvoiceToQB(sql: any, invoiceId: number, job: any) {
   if (inv.qb_id) throw new Error(`Already in QuickBooks as #${inv.number}.`);
   if (!(Number(inv.amount) > 0)) throw new Error("Can't do that yet — missing: the dollar amount");
   try {
-    // Four Corners check (9/28, his words: "make sure we don't send out bullshit"): a Four Corners invoice never goes to
-    // QuickBooks without the owning entity (LLC) and its address on the property (look it up in the property list pinned
-    // on the Four Corners page). It stops the QuickBooks send only — the invoice stays in the app and the placeholder stays whole.
-    if (/four\s*corners/i.test(String(job.customer_name || "")) && !(String(job.bill_name || "").trim() && String(job.bill_addr || "").trim()))
-      throw new Error("Four Corners invoice not sent to QuickBooks — this property has no bill-to entity (LLC) and address. The placeholder was NOT zeroed. Look it up in the property list pinned on the Four Corners page, fill Edit property → Invoice bill-to, then Send to QuickBooks.");
+    // Four Corners bill-to (LLC + address) gets checked BEFORE the invoice goes to the customer.
+    // 10/6/26, his order: it can NEVER hold up work complete — the QB invoice always gets written and the placeholder always zeroed.
     // SAME CUSTOMER AS ITS PLACEHOLDER (10/4/26): the real invoice goes to the QuickBooks customer its placeholder is already on.
     // A name lookup could miss a spelling (6101 Windhaven Pkwy vs Parkway) and make a duplicate customer; the placeholder never lies.
     let cust: any = null;
