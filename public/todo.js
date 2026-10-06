@@ -79,10 +79,6 @@ function draw() {
           <span style="flex:1;font-size:16px;${s.done ? 'text-decoration:line-through;opacity:.55' : ''}">${esc(s.text)}</span>
           <button class="ghost" data-tdsx="${esc(x.id)}|${esc(s.id)}" title="Remove task">✕</button>
         </div>`).join('')}
-        <form data-tdsa="${esc(x.id)}" style="display:flex;gap:8px;margin-top:6px">
-          <input placeholder="Add a task" style="flex:1;font-size:16px" autocomplete="off">
-          <button>Add</button>
-        </form>
       </div>` : ''}
     </div>`;
   }).join('') : '<p class="mute">Nothing on the list.</p>';
