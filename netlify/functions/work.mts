@@ -1160,12 +1160,41 @@ export default async function handler(req: Request) {
       if (m === "POST" && action === "sent") {
         if (!M.isBill(inv)) return refuse("A placeholder is a seat, not a bill — it never gets sent.");
         if (!b.value && inv.paid_at) return refuse("It's marked paid — un-mark paid first.");
+        // MARK SENT = FILE WHAT WAS SENT (his rule 10/4/26, built 10/6/26): find his sent email by the invoice # in the subject,
+        // file the email and every attachment in this job's file cabinet, and date it the day the email really went out.
+        // Not found → it is NOT marked sent and he is told right away; "I know, it's ok" (b.anyway) still moves it to AR.
+        const num = String(inv.number || "").trim();
+        let sentMsg: any = null, sentDay = today();
+        if (b.value) {
+          if (num) {
+            try {
+              const hit = await gmail(`messages?q=${encodeURIComponent(`in:sent subject:"${num}"`)}&maxResults=1`);
+              if (hit?.messages?.length) sentMsg = await gmail(`messages/${hit.messages[0].id}?format=full`);
+            } catch (e: any) { if (!b.anyway) return refuse("No sent email found — couldn't look in Gmail: " + String(e?.message || e)); }
+          }
+          if (!sentMsg && !b.anyway) return refuse(`No sent email with "${num || "this invoice's number"}" in the subject — not marked sent.`);
+          if (sentMsg) sentDay = new Date(Number(sentMsg.internalDate || Date.now()) - 5 * 3600 * 1000).toISOString().slice(0, 10); // Central time
+        }
         // Step 5 rule: the real invoice stays future-dated until Mark it sent — then the date and the AR clock become real.
         const [r] = b.value
-          ? await sql`UPDATE invoices SET sent_at = ${today()}, inv_date = CASE WHEN inv_date IS NULL OR inv_date > ${today()}::date THEN ${today()}::date ELSE inv_date END WHERE id = ${id} RETURNING *`
+          ? await sql`UPDATE invoices SET sent_at = ${sentDay}, inv_date = CASE WHEN inv_date IS NULL OR inv_date > ${sentDay}::date THEN ${sentDay}::date ELSE inv_date END WHERE id = ${id} RETURNING *`
           : await sql`UPDATE invoices SET sent_at = NULL WHERE id = ${id} RETURNING *`;
+        // the sent email + every attachment go in the job file, once (a re-mark never files it twice)
+        let filed = 0;
+        if (b.value && sentMsg) {
+          const [had] = norm(await sql`SELECT job_id FROM mail_items WHERE message_id = ${sentMsg.id}`);
+          if (!had || Number(had.job_id) !== Number(inv.job_id)) {
+            const subject = headerOf(sentMsg, "Subject");
+            const atts = attachmentsOf(sentMsg.payload);
+            await fileEmail(sql, inv.job_id, sentMsg.id, subject, sentDay);
+            for (const a of atts) { await fileAttachment(sql, inv.job_id, sentMsg.id, a); filed++; }
+            await sql`INSERT INTO mail_items (message_id, from_addr, subject, sent_at, snippet, job_id, state, what, attachments)
+              VALUES (${sentMsg.id}, ${headerOf(sentMsg, "From")}, ${subject}, ${sentDay}, ${(sentMsg.snippet || "").slice(0, 400)}, ${inv.job_id}, 'filed', ${`Sent ${num} → email + ${atts.length} file${atts.length === 1 ? "" : "s"} filed`}, ${atts.length})
+              ON CONFLICT (message_id) DO UPDATE SET job_id = EXCLUDED.job_id, state = EXCLUDED.state, what = EXCLUDED.what, attachments = EXCLUDED.attachments`;
+          }
+        }
         if (b.value && inv.qb_id) { try { await qbSetDate(inv.qb_id, norm(r).inv_date); } catch (e: any) { return json({ ...norm(r), qb_error: "Marked sent, but QuickBooks date didn't change: " + String(e?.message || e) }); } }
-        return json(norm(r));
+        return json({ ...norm(r), filed_email: !!sentMsg, filed_files: filed });
       }
       if (m === "POST" && action === "qb") {
         const job = norm(await loadJob(inv.job_id));
