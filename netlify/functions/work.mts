@@ -232,6 +232,19 @@ async function qbRestorePlaceholder(qbId: string, amount: number) {
     Line: [{ DetailType: "SalesItemLineDetail", Amount: amount, Description: desc, SalesItemLineDetail: { ItemRef: { value: "1" }, Qty: 1, UnitPrice: amount } }] });
 }
 const qbGone = (e: any) => /not found|Object Not Found|was deleted|6240|610/i.test(String(e?.message || e));
+// Adam emails and takes payment inside QuickBooks. An invoice the CRM still calls unsent may already have gone out.
+async function qbAlreadySentOrPaid(qbId: string) {
+  let cur: any;
+  try { cur = (await qb("GET", `invoice/${qbId}`)).Invoice; } catch (e) { if (qbGone(e)) return ""; throw e; }
+  if (!cur) return "";
+  const emailed = String(cur.EmailStatus || "") === "EmailSent";
+  const total = Number(cur.TotalAmt), bal = Number(cur.Balance);
+  const paidSome = Number.isFinite(total) && Number.isFinite(bal) && total > 0 && bal < total - 0.004;
+  if (!emailed && !paidSome) return "";
+  const num = cur.DocNumber ? "#" + cur.DocNumber : "that invoice";
+  const how = [emailed ? "emailed from QuickBooks" : "", paidSome ? "paid in QuickBooks" : ""].filter(Boolean).join(" and ");
+  return `Invoice ${num} was already ${how} — ticket NOT reopened. Nothing was changed.`;
+}
 async function qbDeleteInvoice(qbId: string) {
   let cur: any;
   try { cur = (await qb("GET", `invoice/${qbId}`)).Invoice; } catch (e) { if (qbGone(e)) return "already gone"; throw e; }
@@ -652,13 +665,23 @@ export default async function handler(req: Request) {
     }
     return String(v).slice(0, 10);
   };
+  // A day already Zelled must not have its split rewritten — that would change a paid amount, and a moved stop could be paid again.
+  const paidSplitMessage = async (q: (text: string, vals?: any[]) => Promise<any[]>, date: any, crewId: number) => {
+    const rows = await q(`SELECT sp.pay_to FROM stops s JOIN crew c ON c.id = s.crew_id
+      JOIN sub_paid sp ON sp.paid AND sp.work_date = s.work_date AND sp.job_id = s.job_id AND sp.pay_to = COALESCE(c.pay_to, '')
+      WHERE s.work_date = $1::date AND s.crew_id = $2 LIMIT 1`, [ymd(date), Number(crewId)]);
+    return rows.length ? `That pay is already marked paid to ${rows[0].pay_to} — un-tap paid first. Nothing was changed.` : "";
+  };
   // Write a man's day back to 100 after a job is added or taken off. Same connection as the caller's transaction.
   // Blank days are left blank (rebalancePcts returns null) so an untouched day is never rewritten.
+  // An even split is stored as NULL. A paid day is refused instead of rewritten.
   const applyRebalance = async (q: (text: string, vals?: any[]) => Promise<any[]>, date: any, crewId: number) => {
     const rows = await q(`SELECT id, pct FROM stops WHERE work_date = $1::date AND crew_id = $2 ORDER BY seq NULLS LAST, id`, [ymd(date), Number(crewId)]);
     const fix = M.rebalancePcts(rows.map((r: any) => ({ key: r.id, pct: r.pct })));
     if (!fix) return;
-    for (const r of rows) await q(`UPDATE stops SET pct = $1 WHERE id = $2`, [fix[r.id], r.id]);
+    const paid = await paidSplitMessage(q, date, crewId);
+    if (paid) { const err: any = new Error(paid); err.paidSplit = true; throw err; }
+    for (const r of rows) await q(`UPDATE stops SET pct = $1 WHERE id = $2`, [fix[r.id] == null ? null : fix[r.id], r.id]);
   };
   // What each ticket has cost so far: labor shares + supply lines applied to it.
   const costFor = async (ids: number[]) => {
@@ -878,7 +901,8 @@ export default async function handler(req: Request) {
       const wInvs = jobs.length ? norm(await sql`SELECT * FROM invoices WHERE job_id = ANY(${jobs.map((j: any) => j.id)}::int[]) AND kind IN ('real','draw') AND paid_at IS NULL`) : [];
       const agedJobs = jobs.map((j: any) => ({ ...j, aging: M.drawAging(j, wInvs, today()) }));
       const boardAdd = norm(await sql`SELECT crew_id FROM board_add WHERE week_start = ${start} AND on_board`).map((r: any) => r.crew_id);
-      return json({ start, dates, today: today(), crew, stops, crewDays, green, jobs: agedJobs, scopes, board_add: boardAdd });
+      const seated = norm(await sql`SELECT job_id, work_date FROM invoices WHERE kind = 'placeholder' AND COALESCE(qb_id, '') <> '' AND work_date = ANY(${dates}::date[])`);
+      return json({ start, dates, today: today(), crew, stops, crewDays, green, jobs: agedJobs, scopes, board_add: boardAdd, seated });
     }
 
     // ================= STOPS =================
@@ -896,6 +920,14 @@ export default async function handler(req: Request) {
         if (!job) return refuse("That ticket doesn't exist.", 404);
         if (!M.isWork(job.tag)) return refuse("A bid is not work — it can't go on a day. It gets a ticket when it's awarded.");
         if (!b.work_date || !b.crew_id) return refuse("A stop is a man on a day — that one came in with no cell behind it.", 400);
+        const have = norm(await sql`SELECT id, pct FROM stops WHERE work_date = ${b.work_date}::date AND crew_id = ${Number(b.crew_id)}`);
+        const preview = M.rebalancePcts([...have.map((r: any) => ({ key: r.id, pct: r.pct })), { key: "new", pct: null }]);
+        if (preview) {
+          const [paid] = norm(await sql`SELECT sp.pay_to FROM stops s JOIN crew c ON c.id = s.crew_id
+            JOIN sub_paid sp ON sp.paid AND sp.work_date = s.work_date AND sp.job_id = s.job_id AND sp.pay_to = COALESCE(c.pay_to, '')
+            WHERE s.work_date = ${b.work_date}::date AND s.crew_id = ${Number(b.crew_id)} LIMIT 1`);
+          if (paid) return refuse(`That pay is already marked paid to ${paid.pay_to} — un-tap paid first. Nothing was changed.`);
+        }
         const [row] = await sql`INSERT INTO stops (work_date, crew_id, job_id) VALUES (${b.work_date}::date, ${Number(b.crew_id)}, ${job.id})
           ON CONFLICT (work_date, crew_id, job_id) DO UPDATE SET work_date = EXCLUDED.work_date RETURNING *`;
         const client = await db.pool.connect();
@@ -917,6 +949,8 @@ export default async function handler(req: Request) {
           const [cur] = await q(`SELECT * FROM stops WHERE id = $1`, [id]);
           if (!cur) { await client.query("ROLLBACK"); return refuse("That entry isn't on the board anymore.", 404); }
           const oldDate = ymd(cur.work_date), oldCrew = Number(cur.crew_id);
+          const [paidStop] = await q(`SELECT sp.pay_to FROM crew c JOIN sub_paid sp ON sp.paid AND sp.work_date = $1::date AND sp.job_id = $2 AND sp.pay_to = COALESCE(c.pay_to, '') WHERE c.id = $3 LIMIT 1`, [oldDate, cur.job_id, oldCrew]);
+          if (paidStop) { await client.query("ROLLBACK"); return refuse(`That pay is already marked paid to ${paidStop.pay_to} — un-tap paid first. Nothing was changed.`); }
           const [clash] = await q(`SELECT id FROM stops WHERE work_date = $1::date AND crew_id = $2 AND job_id = $3 AND id <> $4`, [workDate, crewId, cur.job_id, id]);
           if (clash) { await client.query("ROLLBACK"); return refuse("He already has that job on that day."); }
           const [row] = await q(`UPDATE stops SET work_date = $1::date, crew_id = $2 WHERE id = $3 RETURNING *`, [workDate, crewId, id]);
@@ -936,6 +970,7 @@ export default async function handler(req: Request) {
         } catch (e: any) {
           try { await client.query("ROLLBACK"); } catch { /* already closed */ }
           const msg = String(e?.message || e);
+          if (e?.paidSplit) return refuse(msg);
           if (/duplicate key|unique/i.test(msg)) return refuse("He already has that job on that day.");
           return json({ error: msg }, 500);
         } finally { client.release(); }
@@ -1008,6 +1043,15 @@ export default async function handler(req: Request) {
           const rows = await q(`SELECT id, job_id, pct FROM stops WHERE work_date = $1::date AND crew_id = $2`, [date, man]);
           const same = rows.length === mineNow.length && rows.every((r: any) => mineNow.some((m: any) => m.job_id === r.job_id));
           if (same) {
+            const changing = rows.some((r: any) => {
+              const src = mineNow.find((m: any) => m.job_id === r.job_id);
+              const next = src ? src.pct : null;
+              return (r.pct == null ? null : Number(r.pct)) !== (next == null ? null : Number(next));
+            });
+            if (changing) {
+              const paidAlso = await paidSplitMessage(q, date, man);
+              if (paidAlso) { const err: any = new Error(paidAlso); err.paidSplit = true; throw err; }
+            }
             for (const r of rows) {
               const src = mineNow.find((m: any) => m.job_id === r.job_id);
               await client.query(`UPDATE stops SET pct = $1 WHERE id = $2`, [src ? src.pct : null, r.id]);
@@ -1016,7 +1060,7 @@ export default async function handler(req: Request) {
         }
         await client.query("COMMIT");
         return json({ job_id: jobId, co: !!b.co }, 201);
-      } catch (e) { await client.query("ROLLBACK"); throw e; } finally { client.release(); }
+      } catch (e: any) { await client.query("ROLLBACK"); if (e?.paidSplit) return refuse(String(e.message || e)); throw e; } finally { client.release(); }
     }
 
     if (kind === "crew-days" && m === "PUT") {
@@ -1265,12 +1309,25 @@ export default async function handler(req: Request) {
           const phs = invs.filter((x: any) => x.kind === "placeholder" && x.zeroed_by === inv.id);
           const ready: { p: any; amt: number }[] = [];
           for (const p of phs) {
-            const amt = p.zeroed_from != null && p.zeroed_from !== "" ? Number(p.zeroed_from) : (phs.length === 1 ? Number(inv.amount) : NaN);
-            if (!(amt > 0) && amt !== 0) {
-              qbErrors.push(`placeholder #${p.number || p.id} has no saved price — ticket NOT reopened`);
-            } else ready.push({ p, amt });
+            if (p.zeroed_from == null || p.zeroed_from === "") {
+              qbErrors.push(`placeholder #${p.number || p.id} has no saved price — ticket NOT reopened. Nothing was changed.`);
+              continue;
+            }
+            const amt = Number(p.zeroed_from);
+            if (!(amt > 0) && amt !== 0) qbErrors.push(`placeholder #${p.number || p.id} has no saved price — ticket NOT reopened. Nothing was changed.`);
+            else ready.push({ p, amt });
           }
           plan.push({ inv, phs: ready });
+        }
+        if (qbErrors.length) return json({ error: "QuickBooks: " + qbErrors.join(" · "), qb_errors: qbErrors }, 502);
+        for (const item of plan) {
+          if (!item.inv.qb_id) continue;
+          try {
+            const why = await qbAlreadySentOrPaid(item.inv.qb_id);
+            if (why) qbErrors.push(why);
+          } catch (e: any) {
+            qbErrors.push(`could not check QuickBooks invoice ${item.inv.number || item.inv.qb_id} (${String(e?.message || e)}) — ticket NOT reopened. Nothing was changed.`);
+          }
         }
         if (qbErrors.length) return json({ error: "QuickBooks: " + qbErrors.join(" · "), qb_errors: qbErrors }, 502);
         const restored: { p: any; amt: number }[] = [];
