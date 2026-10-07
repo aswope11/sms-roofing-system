@@ -17,7 +17,7 @@ const typeColor = t => TYPE_COLOR[t] || '#8a93a3';
 const STAGES = [{ k: 'ready', l: 'Ready to work' }, { k: 'hold', l: 'the customer' }, { k: 'trades', l: 'other trades' }, { k: 'contract', l: 'Awarded' }];
 const STAGE_GROUPS = [{ l: '', ks: ['ready'] }, { l: 'Waiting on', ks: ['hold', 'trades'] }, { l: '', ks: ['contract'] }];
 const STAGE_LABEL = { ready: 'Ready to work', hold: 'Held up by the customer', trades: 'Waiting on other trades', contract: 'Awarded' };
-let activeDay = null;   // his rule 10/6/26 (changed his mind): tap "Active" on any date and that day works like today — its jobs drop off Ready to work and the + box list. The Today button puts it back on today.
+let activeDay = [];  // 10/7/26: he can hold Active on several dates at once — tap a date to add it, tap again to drop it.   // his rule 10/6/26 (changed his mind): tap "Active" on any date and that day works like today — its jobs drop off Ready to work and the + box list. The Today button puts it back on today.
 let schedOpen = { hold: false, trades: false };           // the two hold buckets start shut on every load
 const foldState = () => { try { return JSON.parse(localStorage.getItem('smsSchedFold') || '{}') || {}; } catch { return {}; } };
 
@@ -40,8 +40,8 @@ export async function schedulePage(start) {
   const shares = stopShares(w);
   const nobody = d => open.filter(j => j.scheduled_date === d && !w.stops.some(s => s.job_id === j.id && s.work_date === d));
   // his rule 10/6/26: a job already on TODAY's board (Nobody on it yet, or a man on it) drops off the Ready to work list and the + box list. It comes back tomorrow; it stays open until it's done.
-  const act = activeDay || w.today;
-  const onToday = j => j.scheduled_date === act || w.stops.some(s => s.job_id === j.id && s.work_date === act);
+  const isAct = d => (activeDay.length ? activeDay : [w.today]).includes(d);
+  const onToday = j => isAct(j.scheduled_date) || w.stops.some(s => s.job_id === j.id && isAct(s.work_date));
   const pfx = j => `<span class="pfx">${esc(j.tag)} -</span> `;
   // old board dayState: green when a human says the day is right; a past day nobody signed off shows red
   const isGreen = d => w.green.some(g => g.work_date === d && g.green);
@@ -142,9 +142,9 @@ export async function schedulePage(start) {
     <div class="card fitgrid">
       <table class="grid schedgrid">
         <colgroup><col class="mancol">${dates.map(() => '<col>').join('')}</colgroup>
-        <tr><th></th>${dates.map(d => { const st = dayState(d); return `<th class="hcell ${st}${d === w.today ? ' today' : ''}" data-green="${d}"${d === act ? ' style="box-shadow: inset 0 0 0 3px #ff7a3d"' : ''} title="Tap when the day is right — every man and every job accounted for, good to bill">
+        <tr><th></th>${dates.map(d => { const st = dayState(d); return `<th class="hcell ${st}${d === w.today ? ' today' : ''}" data-green="${d}"${isAct(d) ? ' style="box-shadow: inset 0 0 0 3px #ff7a3d"' : ''} title="Tap when the day is right — every man and every job accounted for, good to bill">
           <div class="d">${dayName(d)}</div><div class="dt">${dayShort(d)}</div>
-          <button type="button" data-act="${d}" style="margin:4px 0 2px;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;cursor:pointer;border:1px solid #ff7a3d;${d === act ? 'background:#ff7a3d;color:#111' : 'background:transparent;color:#ff7a3d'}">${d === act ? 'ACTIVE' : 'Active'}</button>
+          <button type="button" data-act="${d}" style="margin:4px 0 2px;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;cursor:pointer;border:1px solid #ff7a3d;${isAct(d) ? 'background:#ff7a3d;color:#111' : 'background:transparent;color:#ff7a3d'}">${isAct(d) ? 'ACTIVE' : 'Active'}</button>
           <div class="dchk">${st === 'acct' ? '✓ good to bill' : st === 'late' ? 'not accounted' : 'tap when right'}</div></th>`; }).join('')}</tr>
         <tr><th>Nobody on it yet</th>${dates.map(d => `<td class="cell" data-dropdate="${d}" data-dropcrew="">${nobody(d).map(j => jobCardHTML(j, '', d)).join('')}
           <div class="plus ${nobody(d).length ? 'has' : ''}" data-nobody="1" data-date="${d}">+</div></td>`).join('')}</tr>
@@ -185,7 +185,7 @@ export async function schedulePage(start) {
   const weekUrl = `/w/week?start=${w.start}`;
   document.getElementById('prev').onclick = () => schedulePage(addDays(w.start, -7));
   document.getElementById('next').onclick = () => schedulePage(addDays(w.start, 7));
-  document.getElementById('thisw').onclick = () => { activeDay = null; schedulePage(); };
+  document.getElementById('thisw').onclick = () => { activeDay = []; schedulePage(); };
   const addStop = (crew_id, job_id, work_date) => doAndProve('/w/stops', { method: 'POST', body: { crew_id, job_id, work_date } }, weekUrl,
     back => back.stops.some(s => s.crew_id === Number(crew_id) && s.job_id === Number(job_id) && s.work_date === work_date));
   const run = async fn => { try { await fn(); reload(); } catch (e) { fail(e); } };
@@ -221,7 +221,7 @@ export async function schedulePage(start) {
   $app().querySelectorAll('[data-drop]').forEach(x => x.onclick = ev => { ev.stopPropagation(); board(Number(x.dataset.drop), false); });
 
   // tap a day header: green it (good to bill) or take it back
-  $app().querySelectorAll('button[data-act]').forEach(b => b.onclick = ev => { ev.stopPropagation(); activeDay = b.dataset.act === w.today ? null : b.dataset.act; schedulePage(w.start); });
+  $app().querySelectorAll('button[data-act]').forEach(b => b.onclick = ev => { ev.stopPropagation(); { const d = b.dataset.act, cur = activeDay.length ? activeDay : [w.today]; activeDay = cur.includes(d) ? cur.filter(x => x !== d) : [...cur, d]; } schedulePage(w.start); });
   $app().querySelectorAll('th[data-green]').forEach(th => th.onclick = () => {
     const d = th.dataset.green, green = !isGreen(d);
     run(async () => {
