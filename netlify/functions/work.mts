@@ -10,6 +10,7 @@ import { getDatabase } from "@netlify/database";
 import { getStore } from "@netlify/blobs";
 import type { Config } from "@netlify/functions";
 import * as M from "../../lib/money.js";
+import { repushReason } from "../../lib/mail-label.js";
 import * as TALK from "../../lib/bidtalk.js";
 import { addressKey, chunkCount, CHUNK_BYTES } from "../../lib/rules.js";
 import zlib from "node:zlib";
@@ -509,7 +510,7 @@ async function markImported(msgId: string) {
 async function listLabeled(labelId: string, excludeCrm: boolean) {
   const out: any[] = [];
   let page = "";
-  const q = excludeCrm ? `-label:"CRM imported"` : "newer_than:60d";
+  const q = excludeCrm ? "-label:crm-imported" : "newer_than:60d";
   for (let p = 0; p < 4; p++) {
     const list: any = await gmail(`messages?labelIds=${encodeURIComponent(labelId)}&maxResults=25&q=${encodeURIComponent(q)}${page ? `&pageToken=${encodeURIComponent(page)}` : ""}`);
     for (const m of list.messages || []) out.push(m);
@@ -517,6 +518,12 @@ async function listLabeled(labelId: string, excludeCrm: boolean) {
     if (!page) break;
   }
   return out;
+}
+// Mail that already has "CRM imported" is missing from the poll above. This is one page of the last
+// 14 days that still wears both that label and one SMS label, so a second SMS label can be flagged.
+async function listRelabeled(labelId: string) {
+  const list: any = await gmail(`messages?labelIds=${encodeURIComponent(labelId)}&maxResults=25&q=${encodeURIComponent("label:crm-imported newer_than:14d")}`);
+  return list.messages || [];
 }
 // A reply on a thread already filed in the last 60 days. One new message, no Claude, no second ticket.
 // A label whose type disagrees with the ticket already on that thread is listed, not filed.
@@ -1718,13 +1725,15 @@ export default async function handler(req: Request) {
         // bill. It goes on the Supply Houses book — never a job file, never a ticket. The PDF rides with it,
         // lines land on no job until he places them, and the label comes off. One email per call, like the rest.
         let excludeCrm = false;
+        let supplyLabelId = "";
         {
           const labelList: any[] = (await gmail("labels")).labels || [];
           const sup = labelList.find((l: any) => String(l.name).toLowerCase() === "!sms/supply");
+          supplyLabelId = sup?.id || "";
           excludeCrm = !!labelList.find((l: any) => String(l.name).toLowerCase() === "crm imported");
-          const slMsgs: any[] = sup?.id ? await listLabeled(sup.id, excludeCrm) : [];
+          const slMsgs: any[] = supplyLabelId ? await listLabeled(supplyLabelId, excludeCrm) : [];
           const supplyIds = slMsgs.map((m0: any) => m0.id);
-          const supplyKnown = supplyIds.length ? norm(await sql`SELECT message_id, state, job_id FROM mail_items WHERE message_id = ANY(${supplyIds}::text[])`) : [];
+          const supplyKnown = supplyIds.length ? norm(await sql`SELECT message_id, state, job_id, import_label FROM mail_items WHERE message_id = ANY(${supplyIds}::text[])`) : [];
           const supplyMap = new Map(supplyKnown.map((r: any) => [r.message_id, r]));
           for (const s0 of slMsgs) {
             const seenS: any = supplyMap.get(s0.id);
@@ -1732,7 +1741,8 @@ export default async function handler(req: Request) {
               const [won] = norm(await sql`UPDATE mail_items SET created_at = NOW() WHERE message_id = ${s0.id} AND state = 'importing' AND created_at < NOW() - INTERVAL '2 minutes' RETURNING id`);
               if (!won) return json({ counts: { "!SMS/SUPPLY": slMsgs.length }, done: null, left: 1, reader: "supply" });
             } else if (seenS) {
-              await noteOnce(sql, s0.id, "repush:SUPPLY", "Already imported from !SMS/SUPPLY. Not imported again.", seenS.job_id || null);
+              const again = repushReason(seenS.import_label, "!SMS/SUPPLY", "", "");
+              if (again) await noteOnce(sql, s0.id, "repush:SUPPLY", again, seenS.job_id || null);
               continue;
             }
             if (!seenS) {
@@ -1740,9 +1750,10 @@ export default async function handler(req: Request) {
                 VALUES (${s0.id}, '', '', NOW(), '', 'importing', 'Importing !SMS/SUPPLY', ${s0.threadId || ""}, FALSE)
                 ON CONFLICT (message_id) DO NOTHING RETURNING id`);
               if (!claimed) {
-                const [have] = norm(await sql`SELECT state, job_id FROM mail_items WHERE message_id = ${s0.id}`);
+                const [have] = norm(await sql`SELECT state, job_id, import_label FROM mail_items WHERE message_id = ${s0.id}`);
                 if (have && have.state !== "importing") {
-                  await noteOnce(sql, s0.id, "repush:SUPPLY", "Already imported from !SMS/SUPPLY. Not imported again.", have.job_id || null);
+                  const again = repushReason(have.import_label, "!SMS/SUPPLY", "", "");
+                  if (again) await noteOnce(sql, s0.id, "repush:SUPPLY", again, have.job_id || null);
                   continue;
                 }
                 const [won] = norm(await sql`UPDATE mail_items SET created_at = NOW() WHERE message_id = ${s0.id} AND state = 'importing' AND created_at < NOW() - INTERVAL '2 minutes' RETURNING id`);
@@ -1785,7 +1796,8 @@ export default async function handler(req: Request) {
               made.push({ id: inv.id, house, number, amount: read.amount });
             }
             await sql`UPDATE mail_items SET from_addr = ${from}, subject = ${subject}, sent_at = ${sentAt}, snippet = ${(msg.snippet || "").slice(0, 400)},
-              state = 'filed', what = ${"Supply invoice (!SMS/SUPPLY label) → " + house}, attachments = ${pdfs.length}, thread_id = ${s0.threadId || ""}, label_kept = TRUE
+              state = 'filed', what = ${"Supply invoice (!SMS/SUPPLY label) → " + house}, attachments = ${pdfs.length}, thread_id = ${s0.threadId || ""}, label_kept = TRUE,
+              import_label = COALESCE(NULLIF(import_label, ''), '!SMS/SUPPLY')
               WHERE message_id = ${s0.id}`;
             const why = await markImported(s0.id);
             if (why) await noteOnce(sql, s0.id, "crm-label", why, null);
@@ -1795,10 +1807,14 @@ export default async function handler(req: Request) {
         const ids = await sureLabels();
         // an email the old whole-inbox sweep once looked at (and was cleared off the list) is NOT "seen" —
         // only what this label reader itself filed, asked about, or was told "not ours" counts
-        const waiting = norm(await sql`SELECT message_id, state, label_kept, job_id FROM mail_items WHERE state IN ('filed','needs_you','waiting')
-          OR (state = 'skipped' AND what LIKE 'Not ours (label)%') OR (state = 'skipped' AND what LIKE 'Bounce%') OR (state = 'skipped' AND what LIKE 'Dismissed%')`);
+        const waiting = norm(await sql`SELECT mi.message_id, mi.state, mi.job_id, mi.import_label, j.tag AS job_tag
+          FROM mail_items mi LEFT JOIN jobs j ON j.id = mi.job_id
+          WHERE mi.state IN ('filed','needs_you','waiting')
+          OR (mi.state = 'skipped' AND mi.what LIKE 'Not ours (label)%') OR (mi.state = 'skipped' AND mi.what LIKE 'Bounce%') OR (mi.state = 'skipped' AND mi.what LIKE 'Dismissed%')`);
         const seen = new Map(waiting.map((r: any) => [r.message_id, r.state]));
         const filedJob = new Map(waiting.map((r: any) => [r.message_id, r.job_id]));
+        const importLabel = new Map(waiting.map((r: any) => [r.message_id, r.import_label || ""]));
+        const jobTagOf = new Map(waiting.map((r: any) => [r.message_id, r.job_tag || ""]));
         const inLabels: any[] = [];
         for (const [name, lid] of Object.entries(ids)) {
           const list = await listLabeled(lid, excludeCrm);
@@ -1806,9 +1822,13 @@ export default async function handler(req: Request) {
         }
         const pageIds = [...new Set(inLabels.map(x => x.id))];
         if (pageIds.length) {
-          const onBook = norm(await sql`SELECT message_id, state, job_id FROM mail_items WHERE message_id = ANY(${pageIds}::text[])`);
+          const onBook = norm(await sql`SELECT mi.message_id, mi.state, mi.job_id, mi.import_label, j.tag AS job_tag FROM mail_items mi LEFT JOIN jobs j ON j.id = mi.job_id WHERE mi.message_id = ANY(${pageIds}::text[])`);
           for (const r of onBook) if (!seen.has(r.message_id) && r.state !== "importing") seen.set(r.message_id, r.state);
-          for (const r of onBook) if (r.job_id && !filedJob.get(r.message_id)) filedJob.set(r.message_id, r.job_id);
+          for (const r of onBook) {
+            if (r.job_id && !filedJob.get(r.message_id)) filedJob.set(r.message_id, r.job_id);
+            if (!importLabel.has(r.message_id)) importLabel.set(r.message_id, r.import_label || "");
+            if (!jobTagOf.has(r.message_id)) jobTagOf.set(r.message_id, r.job_tag || "");
+          }
         }
         const counts = Object.fromEntries(Object.keys(ids).map(n => [n, inLabels.filter(x => x.name === n).length]));
         // ONE THREAD = ONE QUESTION, also for questions asked before this rule: the oldest one stays, the rest ride with it
@@ -1828,14 +1848,39 @@ export default async function handler(req: Request) {
             }
           }
         }
-        // His label stays after a successful import. Any already-imported message that shows up again,
-        // under any of the five labels, is an import problem with a link to the job. Once per label.
+        // Same SMS label as the one we filed under is a quiet skip, including when "CRM imported" did not stick.
+        // A different label is an import problem, once per label.
         for (const x of inLabels) {
           if (seen.get(x.id) !== "filed") continue;
-          await noteOnce(sql, x.id, `repush:${x.tag}`, `Already imported under ${x.name}. Not imported again.`, filedJob.get(x.id) || null);
+          const again = repushReason(importLabel.get(x.id) || "", x.name, jobTagOf.get(x.id) || "", x.tag);
+          if (again) await noteOnce(sql, x.id, `repush:${x.tag}`, again, filedJob.get(x.id) || null);
         }
         // waiting on him — asked once, not asked again, not read again
         const todo = inLabels.filter(x => !seen.has(x.id));
+        if (!todo.length && excludeCrm) {
+          const extra: { id: string; name: string; tag: string }[] = [];
+          const pull = async (labelId: string, name: string, tag: string) => {
+            if (!labelId) return;
+            for (const m0 of await listRelabeled(labelId)) extra.push({ id: m0.id, name, tag });
+          };
+          await pull(supplyLabelId, "!SMS/SUPPLY", "");
+          for (const [name, lid] of Object.entries(ids)) await pull(lid, name, MAIL_LABELS[name]);
+          const need = [...new Set(extra.map(e => e.id))].filter(id => !importLabel.has(id));
+          if (need.length) {
+            const rows = norm(await sql`SELECT mi.message_id, mi.state, mi.job_id, mi.import_label, j.tag AS job_tag FROM mail_items mi LEFT JOIN jobs j ON j.id = mi.job_id WHERE mi.message_id = ANY(${need}::text[])`);
+            for (const r of rows) {
+              importLabel.set(r.message_id, r.import_label || "");
+              jobTagOf.set(r.message_id, r.job_tag || "");
+              if (r.job_id) filedJob.set(r.message_id, r.job_id);
+              if (r.state === "filed") seen.set(r.message_id, "filed");
+            }
+          }
+          for (const e of extra) {
+            if (seen.get(e.id) !== "filed") continue;
+            const again = repushReason(importLabel.get(e.id) || "", e.name, jobTagOf.get(e.id) || "", e.tag);
+            if (again) await noteOnce(sql, e.id, `repush:${e.tag || "SUPPLY"}`, again, filedJob.get(e.id) || null);
+          }
+        }
         const followed = todo.length ? null : await takeThreadFollow(sql, ids);
         if (!todo.length) return json(followed ? { counts, ...followed } : { counts, done: null, left: 0, waiting_on_you: inLabels.filter(x => seen.get(x.id) === "needs_you").length });
 
@@ -1846,13 +1891,14 @@ export default async function handler(req: Request) {
           VALUES (${x.id}, '', '', NOW(), '', 'importing', ${"Importing " + x.name}, ${x.threadId || ""}, FALSE)
           ON CONFLICT (message_id) DO NOTHING RETURNING id`);
         if (!claimed) {
-          const [have] = norm(await sql`SELECT id, job_id, state, created_at FROM mail_items WHERE message_id = ${x.id}`);
+          const [have] = norm(await sql`SELECT mi.id, mi.job_id, mi.state, mi.created_at, mi.import_label, j.tag AS job_tag FROM mail_items mi LEFT JOIN jobs j ON j.id = mi.job_id WHERE mi.message_id = ${x.id}`);
           if (have?.state === "importing" && have.job_id) heldJob = norm(await loadJob(Number(have.job_id)));
           else if (have?.state === "importing") {
             const [won] = norm(await sql`UPDATE mail_items SET created_at = NOW() WHERE message_id = ${x.id} AND state = 'importing' AND job_id IS NULL AND created_at < NOW() - INTERVAL '2 minutes' RETURNING id`);
             if (!won) return json({ counts, done: null, left: todo.length, reader: "none" });
           } else if (have) {
-            if (have.state === "filed" || have.job_id) await noteOnce(sql, x.id, `repush:${x.tag}`, `Already imported under ${x.name}. Not imported again.`, have.job_id || null);
+            const again = repushReason(have.import_label, x.name, have.job_tag, x.tag);
+            if (again) await noteOnce(sql, x.id, `repush:${x.tag}`, again, have.job_id || null);
             return json({ counts, done: { message_id: x.id, state: have.state, job_id: have.job_id, what: "Already on the book. Not imported again." }, left: Math.max(0, todo.length - 1), reader: "none" });
           }
         }
@@ -1952,8 +1998,8 @@ export default async function handler(req: Request) {
         for (const a of atts) await fileAttachment(sql, job.id, x.id, a);
         await threads.setJSON(`thread/${x.threadId}`, { job_id: job.id });
         what = `${x.name} → ${priorJob ? "filed on" : "new"} ${M.ticketName(job)} · email + ${atts.length} file${atts.length === 1 ? "" : "s"}`;
-        const [row] = norm(await sql`INSERT INTO mail_items (message_id, from_addr, subject, sent_at, snippet, job_id, state, what, attachments, thread_id, label_kept)
-          VALUES (${x.id}, ${from}, ${subject}, ${when}, ${(msg.snippet || "").slice(0, 400)}, ${job.id}, 'filed', ${what}, ${atts.length}, ${x.threadId || ""}, TRUE) ON CONFLICT (message_id) DO UPDATE SET thread_id = COALESCE(mail_items.thread_id, EXCLUDED.thread_id), label_kept = TRUE, job_id = EXCLUDED.job_id, state = EXCLUDED.state, what = EXCLUDED.what, attachments = EXCLUDED.attachments, subject = EXCLUDED.subject, from_addr = EXCLUDED.from_addr RETURNING *`);
+        const [row] = norm(await sql`INSERT INTO mail_items (message_id, from_addr, subject, sent_at, snippet, job_id, state, what, attachments, thread_id, label_kept, import_label)
+          VALUES (${x.id}, ${from}, ${subject}, ${when}, ${(msg.snippet || "").slice(0, 400)}, ${job.id}, 'filed', ${what}, ${atts.length}, ${x.threadId || ""}, TRUE, ${x.name}) ON CONFLICT (message_id) DO UPDATE SET thread_id = COALESCE(mail_items.thread_id, EXCLUDED.thread_id), label_kept = TRUE, job_id = EXCLUDED.job_id, state = EXCLUDED.state, what = EXCLUDED.what, attachments = EXCLUDED.attachments, subject = EXCLUDED.subject, from_addr = EXCLUDED.from_addr, import_label = COALESCE(NULLIF(mail_items.import_label, ''), EXCLUDED.import_label) RETURNING *`);
         const why = await markImported(x.id);
         if (why) await noteOnce(sql, x.id, "crm-label", why, job.id);
         return json({ counts, done: { ...row, label_off: false }, left: todo.length - 1, reader });
@@ -1999,13 +2045,14 @@ export default async function handler(req: Request) {
           await fileEmail(sql, job.id, mid, headerOf(m2, "Subject"), w2);
           const a2 = attachmentsOf(m2.payload);
           for (const a of a2) await fileAttachment(sql, job.id, mid, a);
-          await sql`UPDATE mail_items SET job_id = ${job.id}, state = 'filed', label_kept = TRUE, thread_id = COALESCE(thread_id, ${pend.thread || ""}), what = ${`Same thread → ${M.ticketName(job)} · email + ${a2.length} file${a2.length === 1 ? "" : "s"}`} WHERE message_id = ${mid}`;
+          await sql`UPDATE mail_items SET job_id = ${job.id}, state = 'filed', label_kept = TRUE, thread_id = COALESCE(thread_id, ${pend.thread || ""}), import_label = COALESCE(NULLIF(import_label, ''), ${pend.label || ""}), what = ${`Same thread → ${M.ticketName(job)} · email + ${a2.length} file${a2.length === 1 ? "" : "s"}`} WHERE message_id = ${mid}`;
           const moreWhy = await markImported(mid);
           if (moreWhy) await noteOnce(sql, mid, "crm-label", moreWhy, job.id);
           alsoFiled++;
         }
         await threads.delete(`pending-thread/${pend.thread}`);
         const [r] = norm(await sql`UPDATE mail_items SET job_id = ${job.id}, state = 'filed', label_kept = TRUE, thread_id = COALESCE(thread_id, ${pend.thread || ""}),
+          import_label = COALESCE(NULLIF(import_label, ''), ${pend.label || ""}),
           what = ${`${pend.label} → new ${M.ticketName(job)} · email + ${atts.length} file${atts.length === 1 ? "" : "s"}`} WHERE id = ${id} RETURNING *`);
         return json({ ...r, job_id: job.id, label_off: false, same_thread_filed: alsoFiled });
       }

@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import * as M from '../lib/money.js';
+import { repushReason } from '../lib/mail-label.js';
 
 const crew = [
   { id: 1, name: 'Puma', day_rate: 400, kind: 'sub', pay_to: 'Tenorio Roofing', boss_id: null },
@@ -595,6 +596,15 @@ test('a sent invoice that names a building only lands on that building', () => {
 
 // HIS LAW, 9/21/26: "Turn off the whole-inbox Gmail read. The app now reads ONLY these five Gmail
 // labels. Nothing else in my inbox is ever read." Built into the app as a 15-minute scheduled function.
+test('a re-push is a different SMS label, and the same label stays quiet', () => {
+  assert.equal(repushReason('!SMS/R', '!SMS/R', 'R', 'R'), '');
+  assert.equal(repushReason('', '!SMS/R', 'R', 'R'), '');
+  assert.equal(repushReason('', '!SMS/SUPPLY', '', ''), '');
+  assert.ok(repushReason('!SMS/R', '!SMS/CO', 'R', 'CO').includes('different label'));
+  assert.ok(repushReason('', '!SMS/CO', 'R', 'CO').includes('does not match'));
+  assert.ok(repushReason('', '!SMS/R', '', 'R').includes('not the label'));
+});
+
 test('LAW: the app reads only the five SMS labels on its own — no whole-inbox sweep, every 15 minutes, never sends', () => {
   const work = readFileSync('netlify/functions/work.mts', 'utf8');
   const sched = readFileSync('netlify/functions/labels.mts', 'utf8');
@@ -603,7 +613,12 @@ test('LAW: the app reads only the five SMS labels on its own — no whole-inbox 
   assert.ok(sched.includes('schedule: "*/15 * * * *"'), 'the label check is not on a 15-minute schedule');
   assert.ok(sched.includes('10000'), 'the label check stops around 10 seconds and resumes next run');
   assert.ok(!sched.includes('20000'), 'the label check is not still on a 20 second budget');
-  assert.ok(work.includes('-label:"CRM imported"') && work.includes("repush:") && work.includes("'importing'"), 'filed mail is left out of the poll, a re-push is noted, and the message is claimed before a ticket');
+  assert.ok(work.includes("-label:crm-imported") && !work.includes('-label:"CRM imported"'), 'the exclusion uses Gmail\'s hyphenated label form');
+  assert.ok(work.includes("label:crm-imported newer_than:14d") && work.includes("repushReason") && work.includes("import_label"));
+  assert.ok(work.includes("repush:") && work.includes("'importing'"), 'a re-push is noted, and the message is claimed before a ticket');
+  const mig = readFileSync('netlify/database/migrations/037_mail-import-log/migration.sql', 'utf8');
+  assert.ok(mig.includes('ADD COLUMN IF NOT EXISTS') && mig.includes('CREATE TABLE IF NOT EXISTS mail_import_log') && mig.includes('CREATE INDEX IF NOT EXISTS'));
+  assert.ok(!/ADD COLUMN (?!IF NOT EXISTS)/.test(mig) && !/CREATE INDEX (?!IF NOT EXISTS)/.test(mig), '037 has no unguarded add or index');
   assert.ok(work.includes('Dismissed%') && work.includes('action === "file-anyway"') && work.includes('action === "dismiss"'));
   const mailPage = readFileSync('public/mail.js', 'utf8');
   assert.ok(mailPage.includes('File it on this job') && mailPage.includes('dismiss-mail'));
