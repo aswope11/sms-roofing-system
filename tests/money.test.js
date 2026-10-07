@@ -598,7 +598,13 @@ test('LAW: the app reads only the five SMS labels on its own — no whole-inbox 
   for (const l of ['!SMS/BID', '!SMS/R', '!SMS/CO', '!SMS/JC', '!SMS/UC']) assert.ok(work.includes(`"${l}"`), l);
   assert.ok(!work.includes('newer_than:14d -in:chats'), 'the whole-inbox sweep is back');
   assert.ok(sched.includes('schedule: "*/15 * * * *"'), 'the label check is not on a 15-minute schedule');
-  assert.ok(sched.includes('20000'), 'the label check stops around 20 seconds and resumes next run');
+  assert.ok(sched.includes('10000'), 'the label check stops around 10 seconds and resumes next run');
+  assert.ok(!sched.includes('20000'), 'the label check is not still on a 20 second budget');
+  assert.ok(work.includes('-label:"CRM imported"') && work.includes("repush:") && work.includes("'importing'"), 'filed mail is left out of the poll, a re-push is noted, and the message is claimed before a ticket');
+  assert.ok(work.includes('Dismissed%') && work.includes('action === "file-anyway"') && work.includes('action === "dismiss"'));
+  const mailPage = readFileSync('public/mail.js', 'utf8');
+  assert.ok(mailPage.includes('File it on this job') && mailPage.includes('dismiss-mail'));
+  assert.ok(!mailPage.includes('lb skip dismiss'), 'dismiss is not the Not-ours button');
   assert.ok(!/messages\/send|drafts|\/send"/.test(work), 'the app can send mail');
   // Claude is only asked after the "nothing in the labels" return
   assert.ok(work.indexOf('if (!todo.length) return') < work.indexOf('await claudeRead('), 'Claude is called before the empty-label check');

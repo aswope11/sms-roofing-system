@@ -12,7 +12,7 @@ export default async () => {
   let filed = 0;
   let stopped = "";
   for (let i = 0; i < 8; i++) {
-    if (Date.now() - started > 20000) { stopped = "20s budget"; break; }
+    if (Date.now() - started > 10000) { stopped = "10s budget"; break; }
     // 10/6/26: call the app directly, not through the web address — the site password (401) was silently stopping every run since 10/2.
     const r = await work(new Request(`${base}/w/mail/labels`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }));
     const d: any = await r.json().catch(() => ({}));

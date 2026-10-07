@@ -503,6 +503,21 @@ async function markImported(msgId: string) {
     return "";
   } catch (e: any) { return "CRM imported label was not added — " + String(e?.message || e); }
 }
+// Newest mail in one label, up to four pages. Mail that already wears "CRM imported" is left out of the
+// query so a pile of filed mail cannot hide a new one. If that label does not exist, the query is
+// limited to 60 days and the caller drops message ids already on the book.
+async function listLabeled(labelId: string, excludeCrm: boolean) {
+  const out: any[] = [];
+  let page = "";
+  const q = excludeCrm ? `-label:"CRM imported"` : "newer_than:60d";
+  for (let p = 0; p < 4; p++) {
+    const list: any = await gmail(`messages?labelIds=${encodeURIComponent(labelId)}&maxResults=25&q=${encodeURIComponent(q)}${page ? `&pageToken=${encodeURIComponent(page)}` : ""}`);
+    for (const m of list.messages || []) out.push(m);
+    page = list.nextPageToken || "";
+    if (!page) break;
+  }
+  return out;
+}
 // A reply on a thread already filed in the last 60 days. One new message, no Claude, no second ticket.
 // A label whose type disagrees with the ticket already on that thread is listed, not filed.
 async function takeThreadFollow(sql: any, labelIds: Record<string, string>) {
@@ -1702,14 +1717,37 @@ export default async function handler(req: Request) {
         // !SMS/SUPPLY (9/22/26): "Add a label for supply houses." An email under this label is a supply-house
         // bill. It goes on the Supply Houses book — never a job file, never a ticket. The PDF rides with it,
         // lines land on no job until he places them, and the label comes off. One email per call, like the rest.
+        let excludeCrm = false;
         {
-          const sup = ((await gmail("labels")).labels || []).find((l: any) => String(l.name).toLowerCase() === "!sms/supply");
-          const sl: any = sup?.id ? await gmail(`messages?labelIds=${encodeURIComponent(sup.id)}&maxResults=25`) : {};
-          for (const s0 of (sl.messages || [])) {
-            const [seenS] = norm(await sql`SELECT id, label_kept FROM mail_items WHERE message_id = ${s0.id}`);
-            if (seenS) {
-              if (!seenS.label_kept) await noteOnce(sql, s0.id, "repush", "Already imported from !SMS/SUPPLY. Not imported again.", null);
+          const labelList: any[] = (await gmail("labels")).labels || [];
+          const sup = labelList.find((l: any) => String(l.name).toLowerCase() === "!sms/supply");
+          excludeCrm = !!labelList.find((l: any) => String(l.name).toLowerCase() === "crm imported");
+          const slMsgs: any[] = sup?.id ? await listLabeled(sup.id, excludeCrm) : [];
+          const supplyIds = slMsgs.map((m0: any) => m0.id);
+          const supplyKnown = supplyIds.length ? norm(await sql`SELECT message_id, state, job_id FROM mail_items WHERE message_id = ANY(${supplyIds}::text[])`) : [];
+          const supplyMap = new Map(supplyKnown.map((r: any) => [r.message_id, r]));
+          for (const s0 of slMsgs) {
+            const seenS: any = supplyMap.get(s0.id);
+            if (seenS?.state === "importing") {
+              const [won] = norm(await sql`UPDATE mail_items SET created_at = NOW() WHERE message_id = ${s0.id} AND state = 'importing' AND created_at < NOW() - INTERVAL '2 minutes' RETURNING id`);
+              if (!won) return json({ counts: { "!SMS/SUPPLY": slMsgs.length }, done: null, left: 1, reader: "supply" });
+            } else if (seenS) {
+              await noteOnce(sql, s0.id, "repush:SUPPLY", "Already imported from !SMS/SUPPLY. Not imported again.", seenS.job_id || null);
               continue;
+            }
+            if (!seenS) {
+              const [claimed] = norm(await sql`INSERT INTO mail_items (message_id, from_addr, subject, sent_at, snippet, state, what, thread_id, label_kept)
+                VALUES (${s0.id}, '', '', NOW(), '', 'importing', 'Importing !SMS/SUPPLY', ${s0.threadId || ""}, FALSE)
+                ON CONFLICT (message_id) DO NOTHING RETURNING id`);
+              if (!claimed) {
+                const [have] = norm(await sql`SELECT state, job_id FROM mail_items WHERE message_id = ${s0.id}`);
+                if (have && have.state !== "importing") {
+                  await noteOnce(sql, s0.id, "repush:SUPPLY", "Already imported from !SMS/SUPPLY. Not imported again.", have.job_id || null);
+                  continue;
+                }
+                const [won] = norm(await sql`UPDATE mail_items SET created_at = NOW() WHERE message_id = ${s0.id} AND state = 'importing' AND created_at < NOW() - INTERVAL '2 minutes' RETURNING id`);
+                if (!won) return json({ counts: { "!SMS/SUPPLY": slMsgs.length }, done: null, left: 1, reader: "supply" });
+              }
             }
             const msg = await gmail(`messages/${s0.id}?format=full`);
             const from = headerOf(msg, "From"), subject = headerOf(msg, "Subject");
@@ -1746,26 +1784,31 @@ export default async function handler(req: Request) {
               }
               made.push({ id: inv.id, house, number, amount: read.amount });
             }
-            await sql`INSERT INTO mail_items (message_id, from_addr, subject, sent_at, snippet, state, what, attachments, thread_id, label_kept)
-              VALUES (${s0.id}, ${from}, ${subject}, ${sentAt}, ${(msg.snippet || "").slice(0, 400)}, 'filed', ${"Supply invoice (!SMS/SUPPLY label) → " + house}, ${pdfs.length}, ${s0.threadId || ""}, TRUE)
-              ON CONFLICT (message_id) DO NOTHING`;
+            await sql`UPDATE mail_items SET from_addr = ${from}, subject = ${subject}, sent_at = ${sentAt}, snippet = ${(msg.snippet || "").slice(0, 400)},
+              state = 'filed', what = ${"Supply invoice (!SMS/SUPPLY label) → " + house}, attachments = ${pdfs.length}, thread_id = ${s0.threadId || ""}, label_kept = TRUE
+              WHERE message_id = ${s0.id}`;
             const why = await markImported(s0.id);
             if (why) await noteOnce(sql, s0.id, "crm-label", why, null);
-            return json({ counts: { "!SMS/SUPPLY": (sl.messages || []).length }, done: { supply: made, house, subject, label_off: false, state: "filed" }, left: 1, reader: "supply" });
+            return json({ counts: { "!SMS/SUPPLY": slMsgs.length }, done: { supply: made, house, subject, label_off: false, state: "filed" }, left: 1, reader: "supply" });
           }
         }
         const ids = await sureLabels();
         // an email the old whole-inbox sweep once looked at (and was cleared off the list) is NOT "seen" —
         // only what this label reader itself filed, asked about, or was told "not ours" counts
         const waiting = norm(await sql`SELECT message_id, state, label_kept, job_id FROM mail_items WHERE state IN ('filed','needs_you','waiting')
-          OR (state = 'skipped' AND what LIKE 'Not ours (label)%') OR (state = 'skipped' AND what LIKE 'Bounce%')`);
+          OR (state = 'skipped' AND what LIKE 'Not ours (label)%') OR (state = 'skipped' AND what LIKE 'Bounce%') OR (state = 'skipped' AND what LIKE 'Dismissed%')`);
         const seen = new Map(waiting.map((r: any) => [r.message_id, r.state]));
-        const kept = new Map(waiting.map((r: any) => [r.message_id, !!r.label_kept]));
         const filedJob = new Map(waiting.map((r: any) => [r.message_id, r.job_id]));
         const inLabels: any[] = [];
         for (const [name, lid] of Object.entries(ids)) {
-          const list = await gmail(`messages?labelIds=${encodeURIComponent(lid)}&maxResults=25`);
-          for (const m0 of list.messages || []) inLabels.push({ id: m0.id, threadId: m0.threadId, name, lid, tag: MAIL_LABELS[name] });
+          const list = await listLabeled(lid, excludeCrm);
+          for (const m0 of list) inLabels.push({ id: m0.id, threadId: m0.threadId, name, lid, tag: MAIL_LABELS[name] });
+        }
+        const pageIds = [...new Set(inLabels.map(x => x.id))];
+        if (pageIds.length) {
+          const onBook = norm(await sql`SELECT message_id, state, job_id FROM mail_items WHERE message_id = ANY(${pageIds}::text[])`);
+          for (const r of onBook) if (!seen.has(r.message_id) && r.state !== "importing") seen.set(r.message_id, r.state);
+          for (const r of onBook) if (r.job_id && !filedJob.get(r.message_id)) filedJob.set(r.message_id, r.job_id);
         }
         const counts = Object.fromEntries(Object.keys(ids).map(n => [n, inLabels.filter(x => x.name === n).length]));
         // ONE THREAD = ONE QUESTION, also for questions asked before this rule: the oldest one stays, the rest ride with it
@@ -1785,11 +1828,11 @@ export default async function handler(req: Request) {
             }
           }
         }
-        // His label stays after a successful import. An email already on the book is not filed again.
-        // One note, once, when an older import still has the label (he put it back, or it never came off).
+        // His label stays after a successful import. Any already-imported message that shows up again,
+        // under any of the five labels, is an import problem with a link to the job. Once per label.
         for (const x of inLabels) {
-          if (seen.get(x.id) !== "filed" || kept.get(x.id)) continue;
-          await noteOnce(sql, x.id, "repush", "Already imported. The label is still on it, so it was not filed again.", filedJob.get(x.id) || null);
+          if (seen.get(x.id) !== "filed") continue;
+          await noteOnce(sql, x.id, `repush:${x.tag}`, `Already imported under ${x.name}. Not imported again.`, filedJob.get(x.id) || null);
         }
         // waiting on him — asked once, not asked again, not read again
         const todo = inLabels.filter(x => !seen.has(x.id));
@@ -1797,6 +1840,22 @@ export default async function handler(req: Request) {
         if (!todo.length) return json(followed ? { counts, ...followed } : { counts, done: null, left: 0, waiting_on_you: inLabels.filter(x => seen.get(x.id) === "needs_you").length });
 
         const x = todo[0];
+        // Claim the message before a ticket exists. A cut-off run finds this row and reuses its job.
+        let heldJob: any = null;
+        const [claimed] = norm(await sql`INSERT INTO mail_items (message_id, from_addr, subject, sent_at, snippet, state, what, thread_id, label_kept)
+          VALUES (${x.id}, '', '', NOW(), '', 'importing', ${"Importing " + x.name}, ${x.threadId || ""}, FALSE)
+          ON CONFLICT (message_id) DO NOTHING RETURNING id`);
+        if (!claimed) {
+          const [have] = norm(await sql`SELECT id, job_id, state, created_at FROM mail_items WHERE message_id = ${x.id}`);
+          if (have?.state === "importing" && have.job_id) heldJob = norm(await loadJob(Number(have.job_id)));
+          else if (have?.state === "importing") {
+            const [won] = norm(await sql`UPDATE mail_items SET created_at = NOW() WHERE message_id = ${x.id} AND state = 'importing' AND job_id IS NULL AND created_at < NOW() - INTERVAL '2 minutes' RETURNING id`);
+            if (!won) return json({ counts, done: null, left: todo.length, reader: "none" });
+          } else if (have) {
+            if (have.state === "filed" || have.job_id) await noteOnce(sql, x.id, `repush:${x.tag}`, `Already imported under ${x.name}. Not imported again.`, have.job_id || null);
+            return json({ counts, done: { message_id: x.id, state: have.state, job_id: have.job_id, what: "Already on the book. Not imported again." }, left: Math.max(0, todo.length - 1), reader: "none" });
+          }
+        }
         const msg = await gmail(`messages/${x.id}?format=full`);
         const subject = headerOf(msg, "Subject"), from = headerOf(msg, "From");
         const when = new Date(Number(msg.internalDate || Date.now())).toISOString();
@@ -1825,7 +1884,7 @@ export default async function handler(req: Request) {
             VALUES (${x.id}, ${from}, ${subject}, ${when}, ${(msg.snippet || "").slice(0, 400)}, NULL, 'waiting', 'Same thread as the one waiting on you — it files with that one', ${atts.length}) ON CONFLICT (message_id) DO UPDATE SET job_id = EXCLUDED.job_id, state = EXCLUDED.state, what = EXCLUDED.what, attachments = EXCLUDED.attachments, subject = EXCLUDED.subject, from_addr = EXCLUDED.from_addr RETURNING *`);
           return json({ counts, done: row, left: todo.length - 1, reader: "none" });
         }
-        let job: any = priorJob, what = "", reader = "none";
+        let job: any = heldJob || priorJob, what = "", reader = "none";
         let read: any = null;
         if (!job) {
           const props = norm(await sql`SELECT p.*, c.name AS customer_name FROM properties p LEFT JOIN customers c ON c.id = p.customer_id`);
@@ -1856,6 +1915,11 @@ export default async function handler(req: Request) {
             const due = x.tag === "BID" && /^\d{4}-\d{2}-\d{2}$/.test(String(read?.bid_due || "")) ? read.bid_due : null;
             [job] = norm(await sql`INSERT INTO jobs (property_id, tag, title, notes, stage, bid_due, tenant_name)
               VALUES (${prop.id}, ${x.tag}, ${title}, ${notes}, 'ready', ${due}, ${String(read?.tenant || "").trim()}) RETURNING *`);
+            const [stamped] = norm(await sql`UPDATE mail_items SET job_id = ${job.id} WHERE message_id = ${x.id} AND job_id IS NULL RETURNING job_id`);
+            if (!stamped) {
+              const [other] = norm(await sql`SELECT job_id FROM mail_items WHERE message_id = ${x.id}`);
+              if (other?.job_id) job = norm(await loadJob(Number(other.job_id))) || job;
+            }
             job = norm(await loadJob(job.id));
           } else {
             // CAN'T PLACE IT — ask him about this one email. The label stays on until he answers.
@@ -1874,12 +1938,13 @@ export default async function handler(req: Request) {
             return json({ counts, done: row, left: todo.length - 1, reader });
           }
         }
+        if (job?.id) await sql`UPDATE mail_items SET job_id = ${job.id} WHERE message_id = ${x.id} AND job_id IS NULL`;
         // A label that disagrees with the ticket already on this thread is not filed onto it, and the ticket is not changed.
         if (priorJob && String(job.tag || "") !== String(x.tag)) {
           const q = `Import problem — ${x.name} is ${x.tag} and this thread is already ${job.tag} on ${M.ticketName(job)}. Not filed.`;
           const [crow] = norm(await sql`INSERT INTO mail_items (message_id, from_addr, subject, sent_at, snippet, job_id, state, what, attachments, thread_id, label_kept)
             VALUES (${x.id}, ${from}, ${subject}, ${when}, ${(msg.snippet || "").slice(0, 400)}, ${job.id}, 'needs_you', ${q}, ${atts.length}, ${x.threadId || ""}, TRUE)
-            ON CONFLICT (message_id) DO NOTHING RETURNING *`);
+            ON CONFLICT (message_id) DO UPDATE SET state = 'needs_you', what = EXCLUDED.what, job_id = EXCLUDED.job_id, label_kept = TRUE, thread_id = COALESCE(mail_items.thread_id, EXCLUDED.thread_id), subject = EXCLUDED.subject, from_addr = EXCLUDED.from_addr RETURNING *`);
           return json({ counts, done: crow || { state: "needs_you", what: q, message_id: x.id, job_id: job.id }, left: todo.length - 1, reader: "none" });
         }
         // FILE IT: the email itself and every attachment. His label stays. The message id stops a second copy.
@@ -2052,6 +2117,29 @@ export default async function handler(req: Request) {
         return json({ looked_at: (list.messages || []).length, new: out.length, not_invoices: skipped.length,
           finished: out.filter((r: any) => r.state === "filed").length,
           needs_you: out.filter((r: any) => r.state === "needs_you").length, rows: out });
+      }
+      // A label-mismatch row: file it onto the job already named on the problem, or take it off the list.
+      if (m === "POST" && id && action === "file-anyway") {
+        const [item] = norm(await sql`SELECT * FROM mail_items WHERE id = ${id}`);
+        if (!item) return refuse("That email isn't on the list.", 404);
+        if (!item.job_id) return refuse("There is no job on that problem to file it onto.", 400);
+        const job = norm(await loadJob(Number(item.job_id)));
+        if (!job) return refuse("That job isn't on the book anymore.", 404);
+        const msg = await gmail(`messages/${item.message_id}?format=full`);
+        const subject = headerOf(msg, "Subject"), when = new Date(Number(msg.internalDate || Date.now())).toISOString();
+        const atts = attachmentsOf(msg.payload);
+        await fileEmail(sql, job.id, item.message_id, subject, when);
+        for (const a of atts) await fileAttachment(sql, job.id, item.message_id, a);
+        const why = await markImported(item.message_id);
+        if (why) await noteOnce(sql, item.message_id, "crm-label", why, job.id);
+        const what = `Filed on ${M.ticketName(job)} anyway · email + ${atts.length} file${atts.length === 1 ? "" : "s"}`;
+        const [r] = norm(await sql`UPDATE mail_items SET state = 'filed', label_kept = TRUE, job_id = ${job.id}, what = ${what} WHERE id = ${id} RETURNING *`);
+        return json(r);
+      }
+      if (m === "POST" && id && action === "dismiss") {
+        const [r] = norm(await sql`UPDATE mail_items SET state = 'skipped', label_kept = TRUE, what = 'Dismissed — left off the list' WHERE id = ${id} AND state = 'needs_you' RETURNING *`);
+        if (!r) return refuse("That one isn't waiting.", 404);
+        return json(r);
       }
       // He says which job it belongs to; then it files what was attached.
       if (m === "POST" && id && action === "assign") {

@@ -27,7 +27,7 @@ export async function mailStrip(mount) {
     <div class="row"><span class="mute">It reads ONLY emails you put in !SMS/BID, !SMS/R, !SMS/CO, !SMS/JC or !SMS/UC — every 15 minutes on its own. Each one is matched to its property by address, a ticket with that tag is made, and the email and attachments go in that job file. Your label stays. A reply on a thread already filed goes on that same job, and it can never send.</span></div>
     ${problems.length ? `<div class="row"><b>Import problems</b></div>` + problems.map(r => `<div class="row">
       <span>${r.subject ? `<b>${esc(r.subject)}</b><br>` : ''}<span class="mute">${esc(r.what || '')}</span>${jobLink(r)}</span>
-      <span class="lanebtns">${r.kind === 'log' ? `<button class="lb skip dismiss" data-prob="${r.id}">Dismiss</button>` : ''}</span>
+      <span class="lanebtns">${r.kind === 'mail' && r.job_id ? `<button class="lb send fileanyway" data-id="${r.id}">File it on this job</button>` : ''}${r.kind === 'mail' ? `<button class="lb dismiss-mail" data-id="${r.id}">Dismiss</button>` : ''}${r.kind === 'log' ? `<button class="lb dismiss" data-prob="${r.id}">Dismiss</button>` : ''}</span>
     </div>`).join('') : ''}
     ${need.map(r => `<div class="row">
       <span><b>${esc(r.subject || '(no subject)')}</b><br><span class="mute">${esc(r.from_addr)}${r.sent_at ? ' · ' + shortDateYY(String(r.sent_at).slice(0, 10)) : ''} — ${esc(r.what)}</span></span>
@@ -84,4 +84,8 @@ export async function mailStrip(mount) {
     bk => !bk.needs_you.some(r => r.id === Number(b.dataset.id)), 'Off the list')));
   mount.querySelectorAll('.dismiss').forEach(b => b.onclick = () => run(() => doAndProve(`/w/mail/problem/${b.dataset.prob}`, { method: 'POST', body: {} }, '/w/mail',
     bk => !(bk.import_problems || []).some(r => r.id === Number(b.dataset.prob)), 'Off the import problems list')));
+  mount.querySelectorAll('.fileanyway').forEach(b => b.onclick = () => run(() => doAndProve(`/w/mail/${b.dataset.id}/file-anyway`, { method: 'POST', body: {} }, '/w/mail',
+    bk => !(bk.needs_you || []).some(r => r.id === Number(b.dataset.id)), 'Filed on the job already on that problem')));
+  mount.querySelectorAll('.dismiss-mail').forEach(b => b.onclick = () => run(() => doAndProve(`/w/mail/${b.dataset.id}/dismiss`, { method: 'POST', body: {} }, '/w/mail',
+    bk => !(bk.needs_you || []).some(r => r.id === Number(b.dataset.id)), 'Off the import problems list')));
 }
