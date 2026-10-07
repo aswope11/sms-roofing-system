@@ -309,8 +309,8 @@ test('LAW: half/full is what he is paid; a percent split divides that day — 10
 test('a man\'s day rebalances when a job is added or taken off, and an all-blank day is left blank', () => {
   assert.equal(M.rebalancePcts([{ key: 'a', pct: null }, { key: 'b', pct: null }]), null);
   assert.equal(M.rebalancePcts([{ key: 'a', pct: 100 }]), null);
-  assert.deepEqual(M.rebalancePcts([{ key: 'a', pct: 100 }, { key: 'b', pct: null }]), { a: 50, b: 50 });
-  assert.deepEqual(M.rebalancePcts([{ key: 'a', pct: 50 }, { key: 'b', pct: 50 }, { key: 'c', pct: null }]), { a: 33, b: 33, c: 34 });
+  assert.deepEqual(M.rebalancePcts([{ key: 'a', pct: 100 }, { key: 'b', pct: null }]), { a: null, b: null });
+  assert.deepEqual(M.rebalancePcts([{ key: 'a', pct: 50 }, { key: 'b', pct: 50 }, { key: 'c', pct: null }]), { a: null, b: null, c: null });
   assert.deepEqual(M.rebalancePcts([{ key: 'a', pct: 33 }, { key: 'b', pct: 33 }, { key: 'c', pct: 34 }]), null);
   assert.deepEqual(M.rebalancePcts([{ key: 'a', pct: 15 }, { key: 'b', pct: 45 }, { key: 'c', pct: 40 }, { key: 'd', pct: null }]), { a: 11, b: 34, c: 30, d: 25 });
   assert.deepEqual(M.rebalancePcts([{ key: 'a', pct: 15 }, { key: 'b', pct: 45 }]), { a: 25, b: 75 });
@@ -493,9 +493,15 @@ test('DELETE: every delete lives in one place, asks first, and never calls Quick
   const w = readFileSync('netlify/functions/work.mts', 'utf8');
   const reopen = w.slice(w.indexOf('action === "reopen"'), w.indexOf('action === "table"'));
   assert.ok(reopen.indexOf('qbRestorePlaceholder') >= 0 && reopen.indexOf('qbRestorePlaceholder') < reopen.indexOf('qbDeleteInvoice'), 'placeholder money is restored before the unsent invoice is removed');
+  assert.ok(reopen.indexOf('qbAlreadySentOrPaid') < reopen.indexOf('qbRestorePlaceholder'), 'emailed or paid in QuickBooks is refused before anything is restored');
+  assert.ok(!reopen.includes('phs.length === 1'), 'reopen never guesses a placeholder price from the invoice total');
+  assert.ok(reopen.includes('has no saved price') && reopen.includes('qbAlreadySentOrPaid') && w.includes('EmailStatus'));
   assert.ok(reopen.includes('invoice_archive') && reopen.includes('ticket NOT reopened'));
   assert.ok(w.includes('applyRebalance') && w.includes('He already has that job on that day.'));
-  assert.ok(readFileSync('netlify/functions/delete.mts', 'utf8').includes('rebalancePcts'));
+  assert.ok(w.includes('already marked paid') && w.includes('Nothing was changed.'));
+  assert.ok(del.includes('rebalancePcts') && del.includes('The split was not changed.') && del.includes('That placeholder will not update.'));
+  assert.ok(sch.includes('offJobAsk') && sch.includes("Onto Nobody") && sch.includes('That placeholder will not update.'));
+  assert.ok(sch.includes('Leave the boxes blank for an even share of his day.'));
   const inv = readFileSync('public/invoicing.js', 'utf8');
   assert.ok(inv.includes('#/jobcost/${o.job.id}/labor') && inv.includes('l.how'));
   const led = readFileSync('public/ledger.js', 'utf8');

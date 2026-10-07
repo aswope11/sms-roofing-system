@@ -275,12 +275,22 @@ export async function schedulePage(start) {
     run(() => doAndProve(`/w/job/${id}/plan`, { method: 'PUT', body: { scheduled_date: null } }, weekUrl,
       back => back.jobs.some(row => row.id === id && !row.scheduled_date), 'Taken off the day — the job is still there')); });
   // Crew didn't go: this man off this job for this day only. The job stays. His pay day comes off if it was his only job.
+  const dayOf = v => String(v || '').slice(0, 10);
+  const placeholderWarn = (day, jobIds) => {
+    if (!(w.green || []).some(g => g.green && dayOf(g.work_date) === dayOf(day))) return '';
+    const hit = [...new Set((jobIds || []).filter(Boolean))].some(id => (w.seated || []).some(row => Number(row.job_id) === Number(id) && dayOf(row.work_date) === dayOf(day)));
+    return hit ? `\n\nHEADS UP: ${dayHead(day)} is green and already has a QuickBooks placeholder. That placeholder will not update.` : '';
+  };
+  const offJobAsk = s => {
+    const man = w.crew.find(c => c.id === s.crew_id), j = jobsById[s.job_id];
+    const others = w.stops.filter(row => row.crew_id === s.crew_id && dayOf(row.work_date) === dayOf(s.work_date) && row.id !== s.id);
+    const who = man ? man.name : 'He';
+    return `${who} didn't go to ${j ? ticketName(j) : 'that job'} on ${dayHead(s.work_date)}?\n\nTakes him off that job for that day only. The job stays.${others.length ? '' : '\n\nIt was his only job that day, so that pay day comes off Payroll too.'}${placeholderWarn(s.work_date, [s.job_id])}`;
+  };
   $app().querySelectorAll('[data-miss]').forEach(x => x.onclick = async ev => { ev.preventDefault(); ev.stopPropagation(); hidePeek();
     const id = Number(x.dataset.miss), s = w.stops.find(row => row.id === id); if (!s) return;
     const man = w.crew.find(c => c.id === s.crew_id), j = jobsById[s.job_id];
-    const others = w.stops.filter(row => row.crew_id === s.crew_id && row.work_date === s.work_date && row.id !== s.id);
-    const who = man ? man.name : 'He';
-    if (!confirm(`${who} didn't go to ${j ? ticketName(j) : 'that job'} on ${dayHead(s.work_date)}?\n\nTakes him off that job for that day only. The job stays.${others.length ? '' : '\n\nIt was his only job that day, so that pay day comes off Payroll too.'}`)) return;
+    if (!confirm(offJobAsk(s))) return;
     try {
       await call(`/d/stop/${id}`, { method: 'DELETE' });
       const back = await call(weekUrl);
@@ -378,8 +388,11 @@ export async function schedulePage(start) {
       const ins = [...f.querySelectorAll('.lfpct')];
       const fix = rebalancePcts(ins.map(i => ({ key: i.dataset.key, pct: i.value === '' ? null : Number(i.value) })));
       if (fix) {
-        ins.forEach(i => { i.value = fix[i.dataset.key]; });
-        document.getElementById('lfNote').textContent = 'His other jobs already used the whole day, so the split was rebalanced to make room. Change any of them if that is wrong.';
+        const even = ins.every(i => fix[i.dataset.key] == null);
+        ins.forEach(i => { const v = fix[i.dataset.key]; i.value = v == null ? '' : v; });
+        document.getElementById('lfNote').textContent = even
+          ? 'Leave the boxes blank for an even share of his day.'
+          : 'His other jobs already used the whole day, so the split was rebalanced to make room. Change any of them if that is wrong. A blank box is an even share.';
       }
     }
     f.querySelectorAll('.lfpct').forEach(i => i.oninput = evenHint); evenHint();
@@ -397,6 +410,8 @@ export async function schedulePage(start) {
       const body = { crew_id: crewId, work_date: day, job_id: j.id, days: Number(f.querySelector('input[name=lfDays]:checked').value),
         scopes, scope_split, also_crew: [...also], co: co.checked, co_title: document.getElementById('lfCoTitle').value.trim(), split };
       if (body.co && !body.co_title) { err.textContent = "Say what the change order is."; return; }
+      const warn = placeholderWarn(day, [j.id, ...others.map(s => s.job_id)]);
+      if (warn && !confirm(`Log this day?${warn}`)) return;
       const btn = document.getElementById('lfSave'); btn.disabled = true;
       try {
         const saved = await call('/w/log', { method: 'POST', body });
@@ -503,7 +518,6 @@ export async function schedulePage(start) {
   // DRAG A PILL onto a man or onto Nobody, including a different day.
   // An assigned pill keeps its stop (scope stays on it). An unassigned pill ("Nobody on it yet") moves the plan date,
   // or lands on a man. The day it leaves and the day it lands rebalance that man's percents on the server.
-  const dayOf = v => String(v || '').slice(0, 10);
   let dragStop = 0, dragPlan = 0;
   $app().querySelectorAll('.jobcard[draggable="true"]').forEach(c => {
     c.ondragstart = e => {
@@ -548,7 +562,8 @@ export async function schedulePage(start) {
       const s = w.stops.find(x => x.id === id);
       if (!s || !work_date) return;
       if (!crew_id) {
-        // Onto Nobody: he comes off the job, the pill stays on that day with nobody on it.
+        // Onto Nobody: he comes off the job, the pill stays on that day with nobody on it. Same confirm as crew-didn't-go.
+        if (!confirm(offJobAsk(s))) return;
         return run(async () => {
           await call(`/d/stop/${id}`, { method: 'DELETE' });
           await call(`/w/job/${s.job_id}/plan`, { method: 'PUT', body: { scheduled_date: work_date } });
@@ -560,6 +575,12 @@ export async function schedulePage(start) {
         });
       }
       const same = Number(s.crew_id) === crew_id && dayOf(s.work_date) === work_date;
+      if (!same) {
+        const srcJobs = w.stops.filter(row => row.crew_id === s.crew_id && dayOf(row.work_date) === dayOf(s.work_date)).map(row => row.job_id);
+        const destJobs = w.stops.filter(row => Number(row.crew_id) === crew_id && dayOf(row.work_date) === work_date).map(row => row.job_id);
+        const warn = placeholderWarn(s.work_date, srcJobs) + placeholderWarn(work_date, [...destJobs, s.job_id]);
+        if (warn && !confirm(`Move this pill?${warn}`)) return;
+      }
       const cards = [...td.querySelectorAll('.jobcard[data-stop]')].filter(c => Number(c.dataset.stop) !== id);
       let at = cards.findIndex(c => { const r = c.getBoundingClientRect(); return e.clientY < r.top + r.height / 2; });
       if (at < 0) at = cards.length;

@@ -179,8 +179,20 @@ export default async (req: Request) => {
       const attached = [others ? `his day splits over his other ${countOf(others, "job")} instead` : `it's his only job that day — his whole day (and that pay) comes off payroll`];
       if (s.day_scope) attached.push(`what he did: ${s.day_scope}`);
       if (green) attached.push(`${M.shortDate(d)} is marked green`);
+      const hisJobs = (await q(`SELECT DISTINCT job_id FROM stops WHERE work_date = $1 AND crew_id = $2`, [d, s.crew_id])).map((r: any) => r.job_id);
+      const seated = hisJobs.length ? await n(`SELECT COUNT(*)::int AS n FROM invoices WHERE kind = 'placeholder' AND COALESCE(qb_id, '') <> '' AND work_date = $1 AND job_id = ANY($2::int[])`, [d, hisJobs]) : 0;
+      if (green && seated) attached.push(`${M.shortDate(d)} is green and already has a QuickBooks placeholder. That placeholder will not update.`);
+      const blocked = paid ? [`the pay for this job that day is marked paid to ${s.pay_to} — un-tap paid first`] : [];
+      if (others) {
+        const left = await q(`SELECT s.id, s.pct, s.job_id, COALESCE(c.pay_to, '') AS pay_to FROM stops s JOIN crew c ON c.id = s.crew_id WHERE s.work_date = $1 AND s.crew_id = $2 AND s.id <> $3`, [d, s.crew_id, s.id]);
+        const fix = M.rebalancePcts(left.map((r: any) => ({ key: r.id, pct: r.pct })));
+        if (fix) {
+          const paidLeft = await n(`SELECT COUNT(*)::int AS n FROM sub_paid WHERE paid AND work_date = $1 AND job_id = ANY($2::int[]) AND pay_to = ANY($3::text[])`, [d, left.map((r: any) => r.job_id), [...new Set(left.map((r: any) => r.pay_to))]]);
+          if (paidLeft) blocked.push("his other job that day is already marked paid — un-tap paid first. The split was not changed.");
+        }
+      }
       return { what: "schedule entry", label: `${s.name} on ${M.ticketName(s)}, ${M.shortDate(d)}`, back: "#/schedule", attached,
-        blocked: paid ? [`the pay for this job that day is marked paid to ${s.pay_to} — un-tap paid first`] : [],
+        blocked,
         run: async () => {
           await q(`DELETE FROM stops WHERE id = $1`, [s.id]);
           if (!others) await q(`DELETE FROM crew_days WHERE work_date = $1 AND crew_id = $2`, [d, s.crew_id]);
