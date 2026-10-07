@@ -35,6 +35,10 @@ export async function renderTicket(jobId, mount) {
         const tot = round2(sent.reduce((a, i) => a + Number(i.amount), 0));
         return `<div style="margin-top:12px"><h3 style="margin:0 0 6px">Invoices sent</h3>${sent.map(i => `<div>Invoice ${esc(i.number)} · ${money(i.amount)} · sent ${shortDate(i.sent_at)}${i.paid_at ? ' · paid' : ''}</div>`).join('')}<div style="margin-top:6px"><b>Total sent: ${money(tot)}</b></div></div>`;
       })()}
+      ${L.shares && L.shares.length ? `<div style="margin-top:12px"><h3 style="margin:0 0 6px">Logged <a href="#/jobcost/${jobId}/labor">Labor detail ›</a></h3>${
+        Object.entries(L.shares.reduce((g, s) => { (g[s.work_date] ||= []).push(s); return g; }, {})).sort((a, b) => a[0] < b[0] ? 1 : -1).map(([d, rows]) =>
+          `<div><b>${shortDate(d)}</b> — ${rows.map(s => `${esc(s.man)} ${Number(s.days) === 0.5 ? 'half' : 'full'}${s.day_scope ? ' · ' + esc(s.day_scope) : ''} · ${money(s.cost)}`).join('; ')}</div>`).join('')
+        }${L.material && L.material.length ? `<div class="mute" style="margin-top:4px">Material ${L.material.map(m => `${esc(m.house || '')} ${money(m.line_total)}`).join(' · ')}</div>` : ''}</div>` : ''}
       <div class="btnrow" style="margin-top:14px">
         ${!j.done_at ? '<button id="done">Work is done</button>' : '<button class="ghost" id="reopen">Reopen — put it back on the schedule</button>'}
         ${j.done_at && !j.tabled_at ? '<button class="ghost" id="table">Table it — not billing yet</button>' : ''}
@@ -72,13 +76,33 @@ export async function renderTicket(jobId, mount) {
   if (q('#scopeNote')) q('#scopeNote').onchange = () => run(() => act(`/w/job/${jobId}/scope-note`, { value: q('#scopeNote').checked }, b => b.job.scope_note === q('#scopeNote').checked));
   q('#picsOk').onchange = () => run(() => act(`/w/job/${jobId}/check`, { which: 'pics', value: q('#picsOk').checked }, b => b.job.pics_ok === q('#picsOk').checked));
   q('#nocharge').onchange = () => run(() => act(`/w/job/${jobId}/no-charge`, { value: q('#nocharge').checked }, b => b.job.no_charge === q('#nocharge').checked));
-  if (q('#done')) q('#done').onclick = () => { if (confirm(`Are you sure you're done with ${ticketName(j)}?\n\nIt moves to Invoicing.`)) run(() => act(`/w/job/${jobId}/done`, {}, b => !!b.job.done_at)); };
+  const seatedDays = new Set(L.invoices.filter(i => i.kind === 'placeholder' && i.work_date && Number(i.amount) > 0).map(i => String(i.work_date).slice(0, 10)));
+  const green = new Set((L.green_dates || []).map(d => String(d).slice(0, 10)));
+  const loggedDays = [...new Set((L.shares || []).map(s => String(s.work_date).slice(0, 10)))];
+  const notGreen = loggedDays.filter(d => !green.has(d) && (!coveredThrough || d > String(coveredThrough).slice(0, 10)));
+  const notSeated = loggedDays.filter(d => !seatedDays.has(d) && (!coveredThrough || d > String(coveredThrough).slice(0, 10)));
+  const stillPlanned = j.scheduled_date && String(j.scheduled_date).slice(0, 10) >= String(L.today).slice(0, 10) ? String(j.scheduled_date).slice(0, 10) : '';
+  const laterWork = loggedDays.filter(d => d > String(L.today).slice(0, 10));
+  const doneWarn = [notGreen.length ? `${notGreen.map(shortDate).join(', ')} ${notGreen.length === 1 ? 'is' : 'are'} logged but not green yet` : '',
+    !notGreen.length && notSeated.length ? `${notSeated.map(shortDate).join(', ')} ${notSeated.length === 1 ? 'has' : 'have'} no placeholder yet` : '',
+    stillPlanned ? `it's still on the schedule for ${shortDate(stillPlanned)}` : '',
+    laterWork.length ? `work is already logged on ${laterWork.map(shortDate).join(', ')}` : ''].filter(Boolean);
+  if (q('#done')) q('#done').onclick = () => { if (confirm(`Are you sure you're done with ${ticketName(j)}?\n\nIt moves to Invoicing and the invoice gets written now.${doneWarn.length ? `\n\nHEADS UP: ${doneWarn.join('; ')}. Anything worked after this goes on a SECOND invoice. Cancel, green the day first, then press Work is done.` : ''}`)) run(() => act(`/w/job/${jobId}/done`, {}, b => !!b.job.done_at)); };
   if (q('#reopen')) q('#reopen').onclick = () => {
     const unsent = L.invoices.filter(i => i.kind === 'real' && !i.sent_at && !i.paid_at);
-    if (unsent.length && !confirm(`Reopen it?\n\nThe invoice${unsent.length === 1 ? '' : 's'} not sent yet (${unsent.map(i => (i.number ? '#' + i.number + ' ' : '') + money(i.amount)).join(', ')}) get deleted here and in QuickBooks, and the placeholders go back to their price.`)) return;
+    const backPh = L.invoices.filter(p => p.kind === 'placeholder' && unsent.some(u => u.id === p.zeroed_by));
+    const noPrice = backPh.filter(p => p.zeroed_from == null || p.zeroed_from === '');
+    const invTot = round2(unsent.reduce((a, i) => a + Number(i.amount), 0));
+    const phTot = round2(backPh.reduce((a, p) => a + Number(p.zeroed_from || 0), 0));
+    if (unsent.length && !confirm(`Reopen it?\n\nThe invoice${unsent.length === 1 ? '' : 's'} not sent yet (${unsent.map(i => (i.number ? '#' + i.number + ' ' : '') + money(i.amount)).join(', ')}) get deleted here and in QuickBooks.\n`
+      + `${backPh.length ? `The money goes back on placeholder ${backPh.map(p => '#' + (p.number || p.id) + ' ' + money(p.zeroed_from || 0)).join(', ')} — nothing is lost, and it all bills on ONE invoice when you press Work is done again.` : 'No placeholder holds this money.'}`
+      + `${noPrice.length || (backPh.length && invTot !== phTot) ? `\n\nHEADS UP: the invoice says ${money(invTot)} and the saved placeholder price adds to ${money(phTot)}.` : ''}`)) return;
     run(async () => {
-      const { result } = await act(`/w/job/${jobId}/reopen`, {}, b => !b.job.done_at && !b.invoices.some(i => unsent.some(u => u.id === i.id)), 'Reopened — back on the schedule, off Invoicing (read back and it matches)');
-      if ((result.qb_done || []).length) toast(`Reopened · ${result.qb_done.join(' · ')}${(result.sent_left || []).length ? ' · already sent, NOT touched: ' + result.sent_left.join(', ') : ''}`);
+      const { result, back } = await act(`/w/job/${jobId}/reopen`, {}, b => !b.job.done_at && !b.invoices.some(i => unsent.some(u => u.id === i.id)), 'Reopened — back on the schedule, off Invoicing (read back and it matches)');
+      const wrong = backPh.filter(p => { const x = back.invoices.find(y => y.id === p.id); const want = p.zeroed_from != null && p.zeroed_from !== '' ? Number(p.zeroed_from) : null; return !x || (want != null && Number(x.amount) !== want); });
+      const errs = result.qb_errors || [];
+      if (wrong.length || errs.length) toast(`Reopened, BUT check QuickBooks: ${[...errs, ...wrong.map(p => `placeholder #${p.number || p.id} did not come back to ${money(p.zeroed_from || 0)}`)].join(' · ')}`, false);
+      else if ((result.qb_done || []).length) toast(`Reopened · ${result.qb_done.join(' · ')}${(result.sent_left || []).length ? ' · already sent, NOT touched: ' + result.sent_left.join(', ') : ''}`);
       else if ((result.sent_left || []).length) toast(`Reopened · already sent, NOT touched: ${result.sent_left.join(', ')} — fix that one in QuickBooks by hand`, false);
     });
   };
