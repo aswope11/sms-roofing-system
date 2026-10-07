@@ -84,7 +84,7 @@ async function qbCustomerFor(job: any) {
     const byCity = city ? pool.filter((c: any) => c.DisplayName.toLowerCase().includes(city)) : [];
     if (byCity.length === 1) return byCity[0];
     if (byCity.length) pool = byCity;
-    for (const name of [job.tenant, job.parent_title, job.title]) {   // TENANT IS THE ANSWER (10/1/26): the ticket's tenant picks the QB customer first
+    for (const name of [job.tenant, job.title, job.parent_title]) {   // TENANT IS THE ANSWER (10/1/26): the ticket's tenant picks the QB customer first; then THIS ticket's own title before its parent job's (10/7/26)
       const n = String(name || "").trim().toLowerCase();
       if (!n) continue;
       const hit = pool.filter((c: any) => { const d = c.DisplayName.toLowerCase(); return d.endsWith(" - " + n) || d.includes(" - " + n + " -") || d.includes(" " + n); });
@@ -197,26 +197,114 @@ async function qbSetDate(qbId: string, date: string) {
 
 // Step 2 placeholder into QuickBooks: dated 2 weeks after the day worked, due the same day, memo = type + day, one "Services Rendered - Roof" line.
 const mdyy = (iso: string) => { const [y, mo, d] = String(iso).slice(0, 10).split("-"); return `${Number(mo)}/${Number(d)}/${y.slice(2)}`; };
+// ONE OPEN PLACEHOLDER PER TICKET (10/7/26, his rule): a non-JC ticket (CO, R, UC) has ONE open QuickBooks placeholder —
+// the unsent running total for that ticket. It is found by the ticket (job_id), never by the day. When a day goes green,
+// that day's dollars are ADDED to it — in the app and in QuickBooks (one more line on the same invoice). A new QuickBooks
+// invoice is made only when the ticket has no open placeholder yet. Several open ones on one ticket (from before this rule)
+// are folded into the oldest first. JC tickets never get one. Every failure names the ticket and says why.
+const tixLabel = (job: any) => `${M.ticketName(job)} (ticket #${job.id})`;
+// The green days a placeholder holds and each day's dollars: {"2026-10-05": 1050}. Old rows hold only their work_date.
+const dayMap = (p: any): Record<string, number> => {
+  let d: any = p?.days;
+  if (typeof d === "string") { try { d = JSON.parse(d); } catch { d = null; } }
+  const out: Record<string, number> = {};
+  if (d && typeof d === "object") for (const k of Object.keys(d)) out[String(k).slice(0, 10)] = Number(d[k]) || 0;
+  if (!Object.keys(out).length && p?.work_date) out[String(p.work_date).slice(0, 10)] = Number(p.amount) || 0;
+  return out;
+};
+// open = a placeholder still carrying money that nothing has zeroed. Oldest first.
+async function openPlaceholders(sql: any, jobId: number) {
+  return norm(await sql`SELECT * FROM invoices WHERE job_id = ${jobId} AND kind = 'placeholder' AND amount > 0 AND zeroed_by IS NULL ORDER BY work_date NULLS LAST, id`);
+}
+const qbSalesLines = (inv: any) => (inv?.Line || []).filter((l: any) => l.DetailType === "SalesItemLineDetail");
+const qbLine = (amount: number, desc: string) => ({ DetailType: "SalesItemLineDetail", Amount: amount, Description: desc, SalesItemLineDetail: { ItemRef: { value: "1" }, Qty: 1, UnitPrice: amount } });
+async function qbGetPlaceholder(p: any, label: string) {
+  let cur: any = null;
+  try { cur = (await qb("GET", `invoice/${p.qb_id}`)).Invoice; }
+  catch (e: any) { throw new Error(`${label}: placeholder #${p.number || p.id} could not be read from QuickBooks (${qbGone(e) ? "it is not in QuickBooks any more" : String(e?.message || e)}). Nothing was changed and no second placeholder was made.`); }
+  if (!cur) throw new Error(`${label}: placeholder #${p.number || p.id} is not in QuickBooks any more. Nothing was changed and no second placeholder was made.`);
+  return cur;
+}
+// Put the lines on one QuickBooks invoice, then read it back in a separate request and check the total.
+async function qbPutLines(qbId: string, cur: any, lines: any[], total: number, label: string, number: string) {
+  await qb("POST", "invoice", { Id: qbId, SyncToken: cur.SyncToken, sparse: true, CustomerRef: cur.CustomerRef, Line: lines });
+  const back = (await qb("GET", `invoice/${qbId}`)).Invoice;
+  if (!back || Math.abs(Number(back.TotalAmt) - total) > 0.004) throw new Error(`${label}: QuickBooks read-back on placeholder #${number} says ${M.money(Number(back?.TotalAmt) || 0)}, expected ${M.money(total)} — check it in QuickBooks.`);
+}
+// FOLD: every open placeholder on this ticket goes into the OLDEST one. QuickBooks first — the oldest gets each extra's
+// words as one more line and the summed total, read back. Then the app. Only then are the extras zeroed and renamed
+// Job Cost N, the same way zeroReplacedPlaceholders does it. If the oldest can't be updated, nothing is zeroed.
+async function foldOpenPlaceholders(sql: any, job: any) {
+  const label = tixLabel(job);
+  const open = await openPlaceholders(sql, job.id);
+  if (open.length < 2) return { folded: 0, into: open[0]?.number || "", total: Number(open[0]?.amount || 0), errors: [] as string[] };
+  const [keep, ...extra] = open;
+  if (!keep.qb_id) throw new Error(`${label}: the oldest placeholder #${keep.number || keep.id} is not in QuickBooks, so the other ${extra.length} could not be folded into it. Nothing was changed.`);
+  const cur = await qbGetPlaceholder(keep, label);
+  const lines = [...qbSalesLines(cur)];
+  let total = M.round2(Number(cur.TotalAmt) || 0);
+  const days = dayMap(keep);
+  for (const p of extra) {
+    let amt = Number(p.amount), words = String(p.memo || "");
+    if (p.qb_id) {
+      const pc = await qbGetPlaceholder(p, label);
+      amt = Number(pc.TotalAmt) || 0;
+      words = qbSalesLines(pc).map((l: any) => String(l.Description || "")).filter(Boolean).join("\n\n") || words;
+    }
+    lines.push(qbLine(amt, words));
+    total = M.round2(total + amt);
+    Object.assign(days, dayMap(p));
+  }
+  await qbPutLines(keep.qb_id, cur, lines, total, label, keep.number);
+  await sql`UPDATE invoices SET amount = ${total}, days = ${JSON.stringify(days)}::jsonb WHERE id = ${keep.id}`;
+  const names = norm(await sql`SELECT name FROM invoices WHERE job_id = ${job.id} AND kind = 'placeholder'`).map((i: any) => ({ name: i.name }));
+  const errors: string[] = [];
+  for (const p of extra) {
+    const name = M.nextJobCostName(names); names.push({ name });
+    await sql`UPDATE invoices SET zeroed_from = amount, zeroed_by = ${keep.id}, amount = 0, name = ${name}, memo = ${p.memo || M.placeholderMemo(job, p.work_date)} WHERE id = ${p.id}`;
+    if (p.qb_id) { try { await qbZeroPlaceholder(p.qb_id, name); } catch (e: any) { errors.push(`${label}: placeholder #${p.number} was folded into #${keep.number} but not zeroed in QuickBooks: ${String(e?.message || e)}`); } }
+  }
+  return { folded: extra.length, into: keep.number, total, errors };
+}
 async function pushPlaceholderToQB(sql: any, o: any, amount: number) {
-  if (!(amount > 0)) throw new Error("Can't do that yet — missing: a price — a $0 placeholder puts nothing in AR");
-  const [seated] = norm(await sql`SELECT id FROM invoices WHERE kind = 'placeholder' AND job_id = ${o.job.id} AND work_date = ${o.work_date}`);
-  if (seated) throw new Error("That day already has a placeholder.");
-  const cust = await qbCustomerFor(o.job);
+  const label = tixLabel(o.job);
+  if (!(amount > 0)) throw new Error(`${label}: can't do that yet — missing: a price — a $0 placeholder puts nothing in AR`);
+  if (!M.canPlaceholder(o.job.tag)) throw new Error(`${label}: a JC never gets a placeholder — its draw schedule bills it.`);
+  const day = String(o.work_date).slice(0, 10);
+  const desc = [`Date: ${mdyy(o.work_date)}`, ...o.labor.map((l: any) => l.how + (l.amount != null ? ` = ${M.money(l.amount)}` : "")),
+    ...(o.material_cost ? [`Material ${M.money(o.material_cost)}${o.job.tag === "JC" ? "" : " × 1.2"} = ${M.money(M.billMaterial(o.material_cost, o.job.tag))}`] : [])].join("\n\n");
+  await foldOpenPlaceholders(sql, o.job);
+  const [ph] = await openPlaceholders(sql, o.job.id);
+  if (ph) { // ADD this day to the ticket's open placeholder — never a second QuickBooks invoice
+    if (dayMap(ph)[day] != null) throw new Error(`${label}: ${mdyy(day)} is already on placeholder #${ph.number}.`);
+    if (!ph.qb_id) throw new Error(`${label}: its open placeholder #${ph.number || ph.id} is not in QuickBooks yet, so ${mdyy(day)} could not be added to it. No second placeholder was made.`);
+    const cur = await qbGetPlaceholder(ph, label);
+    const total = M.round2((Number(cur.TotalAmt) || 0) + amount);
+    await qbPutLines(ph.qb_id, cur, [...qbSalesLines(cur), qbLine(amount, desc)], total, label, ph.number);
+    const days = { ...dayMap(ph), [day]: amount };
+    const [r] = norm(await sql`UPDATE invoices SET amount = ${total}, days = ${JSON.stringify(days)}::jsonb WHERE id = ${ph.id} RETURNING *`);
+    return { number: ph.number, customer: cur.CustomerRef?.name || "", amount, total, added: true, invoice: r };
+  }
+  // No open placeholder on this ticket → ONE new QuickBooks invoice. The customer follows THIS ticket: the customer its
+  // earlier placeholders were on; else the lookup (a change order's own title before its parent job's).
+  let cust: any = null;
+  const [prev] = norm(await sql`SELECT qb_id FROM invoices WHERE job_id = ${o.job.id} AND kind = 'placeholder' AND COALESCE(qb_id, '') <> '' ORDER BY id DESC LIMIT 1`);
+  if (prev?.qb_id) { try { const pi = (await qb("GET", `invoice/${prev.qb_id}`)).Invoice; if (pi?.CustomerRef?.value) cust = { Id: pi.CustomerRef.value, DisplayName: pi.CustomerRef.name || "" }; } catch { cust = null; } }
+  if (!cust) { try { cust = await qbCustomerFor(o.job); } catch (e: any) { throw new Error(`${label}: QuickBooks couldn't match a customer — ${String(e?.message || e)}`); } }
   const DocNumber = await qbNextNumber();
   const inv_date = M.addDays(o.work_date, 14);
   const memo = M.placeholderMemo(o.job, o.work_date);
-  const desc = [`Date: ${mdyy(o.work_date)}`, ...o.labor.map((l: any) => l.how + (l.amount != null ? ` = ${M.money(l.amount)}` : "")),
-    ...(o.material_cost ? [`Material ${M.money(o.material_cost)}${o.job.tag === "JC" ? "" : " × 1.2"} = ${M.money(M.billMaterial(o.material_cost, o.job.tag))}`] : [])].join("\n\n");
   const made = (await qb("POST", "invoice", {
     CustomerRef: { value: cust.Id }, DocNumber, TxnDate: inv_date, DueDate: inv_date, PrivateNote: memo,
-    Line: [{ DetailType: "SalesItemLineDetail", Amount: amount, Description: desc, SalesItemLineDetail: { ItemRef: { value: "1" }, Qty: 1, UnitPrice: amount } }],
+    Line: [qbLine(amount, desc)],
   })).Invoice;
   const back = (await qb("GET", `invoice/${made.Id}`)).Invoice;
-  if (!back || Number(back.TotalAmt) !== amount || back.DocNumber !== DocNumber) throw new Error("QuickBooks read-back doesn't match — check placeholder #" + DocNumber + " in QuickBooks.");
-  const [r] = norm(await sql`INSERT INTO invoices (job_id, kind, name, number, amount, inv_date, work_date, memo, qb_id)
-    VALUES (${o.job.id}, 'placeholder', '', ${DocNumber}, ${amount}, ${inv_date}, ${o.work_date}, ${memo}, ${made.Id}) RETURNING *`);
-  return { number: DocNumber, customer: cust.DisplayName, amount, invoice: r };
+  if (!back || Number(back.TotalAmt) !== amount || back.DocNumber !== DocNumber) throw new Error(`${label}: QuickBooks read-back doesn't match — check placeholder #${DocNumber} in QuickBooks.`);
+  const [r] = norm(await sql`INSERT INTO invoices (job_id, kind, name, number, amount, inv_date, work_date, memo, qb_id, days)
+    VALUES (${o.job.id}, 'placeholder', '', ${DocNumber}, ${amount}, ${inv_date}, ${o.work_date}, ${memo}, ${made.Id}, ${JSON.stringify({ [day]: amount })}::jsonb) RETURNING *`);
+  return { number: DocNumber, customer: cust.DisplayName, amount, total: amount, added: false, invoice: r };
 }
+
 // Real invoice written → the QuickBooks placeholder it replaces goes to $0 and is renamed Job Cost N, memo kept.
 async function qbZeroPlaceholder(qbId: string, name: string) {
   const cur = (await qb("GET", `invoice/${qbId}`)).Invoice;
@@ -724,7 +812,7 @@ export default async function handler(req: Request) {
       const shares = M.stopShares({ stops, crew, crewDays });
       const jobIds = [...new Set(shares.map((s: any) => s.job_id))];
       const owedJobs = jobIds.length ? norm(await sql`${JOB_COLS(sql)} WHERE j.id = ANY(${jobIds}::int[])`) : [];
-      const seats = jobIds.length ? norm(await sql`SELECT job_id, work_date FROM invoices WHERE kind = 'placeholder' AND job_id = ANY(${jobIds}::int[])`) : [];
+      const seats = jobIds.length ? norm(await sql`SELECT job_id, work_date, amount, days FROM invoices WHERE kind = 'placeholder' AND job_id = ANY(${jobIds}::int[])`) : [];
       const covers = jobIds.length ? norm(await sql`SELECT job_id, covers_through FROM invoices WHERE kind = 'real' AND covers_through IS NOT NULL AND job_id = ANY(${jobIds}::int[])`) : [];
       const mat = jobIds.length ? norm(await sql`SELECT l.job_id, l.line_total, s.inv_date FROM supply_lines l JOIN supply_invoices s ON s.id = l.invoice_id
         WHERE l.job_id = ANY(${jobIds}::int[]) AND s.inv_date = ANY(${greens}::date[])`) : [];
@@ -733,7 +821,7 @@ export default async function handler(req: Request) {
         if (!M.canPlaceholder(j.tag) || j.no_charge || j.tabled_at) continue;
         const days = [...new Set(shares.filter((s: any) => s.job_id === j.id).map((s: any) => s.work_date))].sort();
         for (const d of days) {
-          if (seats.some((x: any) => x.job_id === j.id && x.work_date === d)) continue;
+          if (seats.some((x: any) => x.job_id === j.id && dayMap(x)[d] != null)) continue; // that day is already on one of this ticket's placeholders (10/7/26)
           if (covers.some((x: any) => x.job_id === j.id && x.covers_through >= d)) continue;   // a real invoice already covers that day
           const lines = shares.filter((s: any) => s.job_id === j.id && s.work_date === d);
           const labor = lines.map((s: any) => ({ ...M.billLabor(s), man: s.shows_as }));
@@ -923,7 +1011,9 @@ export default async function handler(req: Request) {
       const wInvs = jobs.length ? norm(await sql`SELECT * FROM invoices WHERE job_id = ANY(${jobs.map((j: any) => j.id)}::int[]) AND kind IN ('real','draw') AND paid_at IS NULL`) : [];
       const agedJobs = jobs.map((j: any) => ({ ...j, aging: M.drawAging(j, wInvs, today()) }));
       const boardAdd = norm(await sql`SELECT crew_id FROM board_add WHERE week_start = ${start} AND on_board`).map((r: any) => r.crew_id);
-      const seated = norm(await sql`SELECT job_id, work_date FROM invoices WHERE kind = 'placeholder' AND COALESCE(qb_id, '') <> '' AND work_date = ANY(${dates}::date[])`);
+      // a placeholder holds every green day added to it (10/7/26) — each of those days shows as seated
+      const seated = norm(await sql`SELECT job_id, work_date, amount, days FROM invoices WHERE kind = 'placeholder' AND COALESCE(qb_id, '') <> '' AND (work_date = ANY(${dates}::date[]) OR job_id = ANY(${jobs.map((j: any) => j.id)}::int[]))`)
+        .flatMap((p: any) => Object.keys(dayMap(p)).filter((d) => dates.includes(d)).map((d) => ({ job_id: p.job_id, work_date: d })));
       return json({ start, dates, today: today(), crew, stops, crewDays, green, jobs: agedJobs, scopes, board_add: boardAdd, seated });
     }
 
@@ -1116,14 +1206,38 @@ export default async function handler(req: Request) {
         for (const o of owed.filter((x: any) => x.work_date === b.work_date)) {
           const label = `${M.ticketName(o.job)}`;
           if (o.suggested == null) { qbErrors.push(`${label}: not priced (5+ stops) — use Send to QuickBooks on Invoicing`); continue; }
-          try { const r = await pushPlaceholderToQB(sql, o, o.suggested); qbDone.push(`#${r.number} ${label} ${M.money(r.amount)}`); }
-          catch (e: any) { qbErrors.push(`${label}: ${String(e?.message || e)}`); }
+          try { const r = await pushPlaceholderToQB(sql, o, o.suggested); qbDone.push(r.added ? `added to #${r.number} ${label} ${M.money(r.amount)} — now ${M.money(r.total)}` : `#${r.number} ${label} ${M.money(r.amount)}`); }
+          catch (e: any) { const msg = String(e?.message || e); qbErrors.push(msg.startsWith(label) ? msg : `${label}: ${msg}`); }
         }
       } else {
-        const gone = norm(await sql`SELECT * FROM invoices WHERE kind = 'placeholder' AND work_date = ${b.work_date} AND amount > 0`);
+        // Taken back → that day comes off its ticket's placeholder (10/7/26: one placeholder holds many days). A placeholder
+        // holding only that day is deleted, as before. One holding other days too keeps them: that day's line comes off in
+        // QuickBooks and its dollars come off the total, read back.
+        const day = String(b.work_date).slice(0, 10);
+        const gone = norm(await sql`SELECT * FROM invoices WHERE kind = 'placeholder' AND amount > 0 AND zeroed_by IS NULL AND (work_date = ${b.work_date} OR jsonb_exists(days, ${day}))`);
         for (const p of gone) {
-          try { const how = p.qb_id ? await qbDeleteInvoice(p.qb_id) : ""; await sql`DELETE FROM invoices WHERE id = ${p.id}`; qbDone.push(`deleted #${p.number}${how ? " (" + how + " in QuickBooks)" : ""}`); }
-          catch (e: any) { qbErrors.push(`#${p.number}: ${String(e?.message || e)}`); }
+          const dm = dayMap(p);
+          if (Object.keys(dm).every((k) => k === day)) {
+              try { const how = p.qb_id ? await qbDeleteInvoice(p.qb_id) : ""; await sql`DELETE FROM invoices WHERE id = ${p.id}`; qbDone.push(`deleted #${p.number}${how ? " (" + how + " in QuickBooks)" : ""}`); }
+              catch (e: any) { qbErrors.push(`#${p.number}: ${String(e?.message || e)}`); }
+            continue;
+          }
+          const job = norm(await loadJob(Number(p.job_id)));
+          const label = job ? tixLabel(job) : `ticket #${p.job_id}`;
+          try {
+            delete dm[day];
+            let total = M.round2(Object.values(dm).reduce((a: number, n: any) => a + Number(n), 0));
+            if (p.qb_id) {
+              const cur = await qbGetPlaceholder(p, label);
+              const ls = qbSalesLines(cur);
+              const hit = ls.findIndex((l: any) => String(l.Description || "").startsWith(`Date: ${mdyy(day)}`));
+              if (hit < 0) throw new Error(`${label}: placeholder #${p.number} has no "Date: ${mdyy(day)}" line in QuickBooks, so that day was not taken off it. Nothing was changed.`);
+              total = M.round2((Number(cur.TotalAmt) || 0) - Number(ls[hit].Amount || 0));
+              await qbPutLines(p.qb_id, cur, ls.filter((_: any, i: number) => i !== hit), total, label, p.number);
+            }
+            await sql`UPDATE invoices SET amount = ${total}, days = ${JSON.stringify(dm)}::jsonb, work_date = ${Object.keys(dm).sort()[0]} WHERE id = ${p.id}`;
+            qbDone.push(`${mdyy(day)} taken off #${p.number} ${label} — now ${M.money(total)}`);
+          } catch (e: any) { qbErrors.push(String(e?.message || e)); }
         }
       }
       return json({ ...norm(row), qb_done: qbDone, qb_errors: qbErrors });
@@ -1578,6 +1692,22 @@ export default async function handler(req: Request) {
       const tInvs = tIds.length ? norm(await sql`SELECT * FROM invoices WHERE job_id = ANY(${tIds}::int[])`) : [];
       const allTickets = [...tickets, ...tabledOpen.map((j: any) => ({ ...j, invoices: tInvs.filter((i: any) => i.job_id === j.id) }))];
       return json({ tickets: allTickets.map(withCost), draws: draws.map(withCost), owed, ready, today: today() });
+    }
+
+    // ================= FOLD DOUBLED PLACEHOLDERS (10/7/26) =================
+    // Every non-JC ticket carrying more than one open placeholder gets them folded into its oldest one — the same fold
+    // a green day runs on its own ticket. Reports ticket by ticket what it did and what it could not do, and why.
+    if (kind === "placeholder-fold" && m === "POST") {
+      const rows = norm(await sql`SELECT job_id FROM invoices WHERE kind = 'placeholder' AND amount > 0 AND zeroed_by IS NULL GROUP BY job_id HAVING COUNT(*) > 1`);
+      const done: string[] = [], errors: string[] = [];
+      for (const r of rows) {
+        const job = norm(await loadJob(Number(r.job_id)));
+        if (!job) { errors.push(`ticket #${r.job_id}: has open placeholders but the ticket was not found — left alone`); continue; }
+        if (!M.canPlaceholder(job.tag)) { errors.push(`${tixLabel(job)}: a JC carrying open placeholders — left alone, check it by hand`); continue; }
+        try { const f = await foldOpenPlaceholders(sql, job); done.push(`${tixLabel(job)}: ${f.folded} folded into #${f.into}, now ${M.money(f.total)}`); errors.push(...f.errors); }
+        catch (e: any) { errors.push(String(e?.message || e)); }
+      }
+      return json({ done, errors });
     }
 
     // ================= PLACEHOLDER → QUICKBOOKS (button on Placeholders owed) =================
