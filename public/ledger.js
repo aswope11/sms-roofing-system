@@ -17,6 +17,7 @@ export async function renderTicket(jobId, mount) {
 
   mount.innerHTML = `
     ${aging && aging.stale ? `<div class="card stalebar">Unpaid ${money(aging.owed)} · ${aging.days} days — don't send a crew back until it clears</div>` : ''}
+    ${L.legacy_warning ? `<div class="card stalebar">${esc(L.legacy_warning)}</div>` : ''}
     <div class="card">
       <h2>Ticket</h2>
       <label class="full" style="margin-top:12px">

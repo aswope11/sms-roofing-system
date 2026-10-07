@@ -183,7 +183,7 @@ async function customer(id) {
     if (go) go.onclick = async () => {
       go.disabled = true;
       try {
-        await call(`/w/qb-map/${id}`, { method: 'POST', body: { confirm: true } });
+        await call(`/w/qb-map/${id}`, { method: 'POST', body: { confirm: true, lines } });
         toast('QuickBooks customers saved');
         route();
       } catch (e) { fail(e, document.getElementById('qbe')); go.disabled = false; }

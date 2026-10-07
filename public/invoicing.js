@@ -51,7 +51,8 @@ export async function invoicingPage() {
   html += grp('var(--bad)', 'Placeholders owed in QuickBooks', d.owed.length, d.owed.map((o, k) => `<div class="prow" style="border-left-color:var(--bad)">
       <a class="pmain" ${open(o.job.id)}><div class="pt">${shortDate(o.work_date)} · ${esc(ticketName(o.job))}</div>
         <div class="ps">${esc(who(o.job))} · ${o.suggested != null ? money(o.suggested) : '<span class="redtxt">not priced</span>'}</div>
-        ${o.qb_error ? `<div class="ps redtxt">${esc(o.qb_error)}</div>` : ''}</a>
+        ${o.qb_error ? `<div class="ps redtxt">${esc(o.qb_error)}</div>` : ''}
+        ${o.legacy_warning ? `<div class="ps redtxt">${esc(o.legacy_warning)}</div>` : ''}</a>
       <div class="lanebtns"><button class="lb send phqb" data-k="${k}">Send to QuickBooks${o.suggested != null ? ' ' + money(o.suggested) : ''}</button><button class="lb seat" data-k="${k}">Put the QB number on</button></div></div>`).join(''));
   // READY TO BILL (10/4/26): invoice written, scope AND pictures checked — all that's left is emailing the customer
   // 10/4/26: no 'Real invoice owed' section. The app writes the invoice itself (work complete / both boxes ticked); if one ever didn't land, it shows here.

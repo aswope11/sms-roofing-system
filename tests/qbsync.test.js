@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as QB from '../lib/qbsync.js';
+import * as M from '../lib/money.js';
 
 const wortham = { Id: '10', DisplayName: 'Wortham Bros., Inc.', FullyQualifiedName: 'Wortham Bros., Inc.', Job: false };
 const mulberry = { Id: '11', DisplayName: '216 W. Mulberry St., Denton - MKOA Studio', FullyQualifiedName: 'Wortham Bros., Inc.:216 W. Mulberry St., Denton - MKOA Studio', Job: true, ParentRef: { value: '10' } };
@@ -431,10 +432,121 @@ test('legacy change-order placeholders are named in the warning and not edited',
   assert.equal(lines.length, 1);
   assert.equal(lines[0].Description, 'keep me');
   const sql = readFileSync('netlify/database/migrations/038_qb-customer-map/migration.sql', 'utf8');
-  assert.equal((sql.match(/ON DELETE CASCADE/g) || []).length, 2);
+  assert.equal((sql.match(/ON DELETE CASCADE/g) || []).length, 3);
+  assert.ok(sql.includes('ADD COLUMN IF NOT EXISTS'));
+  assert.ok(sql.includes('CREATE TABLE IF NOT EXISTS qb_sync_attempts'));
+  assert.ok(sql.includes('CREATE TABLE IF NOT EXISTS qb_sync_claims'));
+  assert.ok(sql.includes('CREATE TABLE IF NOT EXISTS qb_co_open'));
   assert.equal(readFileSync('netlify/functions/delete.mts', 'utf8').includes('DELETE FROM qb_sync_claims'), true);
   const work = readFileSync('netlify/functions/work.mts', 'utf8');
   assert.ok(work.includes('QB.invoicesToUndo(invs, job.qb_co_invoice_id)'));
   assert.ok(work.includes("That day isn't owed a placeholder"));
   assert.ok(work.includes('customerFromPlaceholder'));
+  assert.ok(work.includes('QB.dayIsCovered('));
+  assert.ok(work.includes('QB.coBillSplit('));
+  assert.ok(work.includes('b.lines'));
+  assert.ok(readFileSync('public/invoicing.js', 'utf8').includes('o.legacy_warning'));
+  assert.ok(readFileSync('public/ledger.js', 'utf8').includes('L.legacy_warning'));
+});
+
+test('un-green then re-green of a change-order day bills that day again', async () => {
+  const co = job({ id: 39, tag: 'CO', title: 'Gravel stop and reflash the posts' });
+  const h = harness({ customers: [wortham, strait] }, []);
+  const day = (work_date, amount) => ({ job: co, work_date, labor, material_cost: 0, amount });
+  await h.run({ slots: [day('2026-10-01', 200), day('2026-10-02', 300)] });
+  assert.equal(h.invoices.length, 1);
+  assert.equal(h.store.state.invoices[0].covers_through, '2026-10-02');
+  h.invoices[0].Line = QB.linesForUpdate(h.invoices[0].Line, '2026-10-01');
+  h.invoices[0].TotalAmt = h.invoices[0].Line.reduce((a, l) => a + Number(l.Amount), 0);
+  h.store.state.claims.delete('39|2026-10-01');
+  const covers = [{ job_id: 39, covers_through: h.store.state.invoices[0].covers_through }];
+  const claims = [...h.store.state.claims.values()];
+  assert.equal(QB.dayIsCovered(co, '2026-10-01', { covers, claims }), false);
+  assert.equal(QB.dayIsCovered(co, '2026-10-02', { covers, claims }), true);
+  const again = await h.run({ slots: [day('2026-10-01', 200)] });
+  assert.equal(again.errors.length, 0, again.errors.join(' | '));
+  assert.equal(h.invoices.length, 1);
+  assert.ok(QB.lineHasDay(h.invoices[0].Line, '2026-10-01'));
+  assert.ok(QB.lineHasDay(h.invoices[0].Line, '2026-10-02'));
+});
+
+test('an earlier failed change-order day stays owed after a later day succeeds', async () => {
+  const co = job({ id: 39, tag: 'CO', title: 'Gravel stop and reflash the posts' });
+  const h = harness({ customers: [wortham, strait] }, []);
+  const first = await h.run({ slots: [
+    { job: co, work_date: '2026-10-01', labor, material_cost: 0, amount: 0 },
+    { job: co, work_date: '2026-10-02', labor, material_cost: 0, amount: 300 },
+  ] });
+  assert.equal(first.errors.length, 1);
+  assert.match(first.errors[0], /not priced/);
+  assert.equal(h.invoices.length, 1);
+  const covers = [{ job_id: 39, covers_through: h.store.state.invoices[0].covers_through }];
+  const claims = [...h.store.state.claims.values()];
+  assert.equal(QB.dayIsCovered(co, '2026-10-01', { covers, claims }), false);
+  assert.equal(QB.dayIsCovered(co, '2026-10-02', { covers, claims }), true);
+  assert.equal(QB.dayIsCovered(job({ id: 7, tag: 'R' }), '2026-10-01', { covers: [{ job_id: 7, covers_through: '2026-10-02' }] }), true);
+  const failed = QB.owedRows({ attempts: h.store.state.attempts, claims, invoices: h.store.state.invoices });
+  assert.equal(QB.keepVisible(failed, [{ job_id: 39, work_date: '2026-10-01' }]).length, 1);
+  const send = await h.run({ slots: [{ job: co, work_date: '2026-10-01', labor, material_cost: 0, amount: 200, allowRetry: true }] });
+  assert.equal(send.errors.length, 0, send.errors.join(' | '));
+  assert.equal(h.invoices.length, 1);
+  assert.ok(QB.lineHasDay(h.invoices[0].Line, '2026-10-01'));
+  assert.ok(QB.lineHasDay(h.invoices[0].Line, '2026-10-02'));
+});
+
+test('a change order bill leaves legacy placeholders out of the amount and does not change them', () => {
+  const co = job({ id: 39, tag: 'CO', title: 'Gravel stop and reflash the posts' });
+  const ready = {
+    days: [
+      { date: '2026-09-30', labor: [{ amount: 400 }], labor_total: 400 },
+      { date: '2026-10-02', labor: [{ amount: 180 }], labor_total: 180 },
+      { date: '2026-10-05', labor: [{ amount: 1050 }], labor_total: 1050 },
+      { date: '2026-10-06', labor: [{ amount: 330 }], labor_total: 330 },
+    ],
+    material: 0, through: '2026-10-06',
+  };
+  const invs = [
+    { id: 1, kind: 'placeholder', qb_sync: false, number: '4817', amount: 400, qb_id: '1', work_date: '2026-09-30' },
+    { id: 2, kind: 'placeholder', qb_sync: false, number: '4845', amount: 180, qb_id: '2', work_date: '2026-10-02' },
+    { id: 3, kind: 'placeholder', qb_sync: false, number: '4865', amount: 1050, qb_id: '3', work_date: '2026-10-05' },
+  ];
+  const split = QB.coBillSplit(co, ready, invs, [], [
+    { job_id: 39, inv_date: '2026-09-30', line_total: 10 },
+    { job_id: 39, inv_date: '2026-10-06', line_total: 0 },
+  ]);
+  assert.match(split.warning, /not included/);
+  assert.match(split.warning, /#4817/);
+  assert.match(split.warning, /#4865/);
+  const w = M.writeRealInvoice(co, split.ready, split.invoices, '2026-10-07', null);
+  assert.equal(w.amount, 330);
+  assert.deepEqual(w.zero, []);
+  assert.equal(invs[0].amount, 400);
+  assert.equal(invs[1].amount, 180);
+  assert.equal(invs[2].amount, 1050);
+  const blocked = QB.coBillSplit(co, ready, invs, []);
+  const onlyLegacy = QB.coBillSplit(co, { ...ready, days: ready.days.slice(0, 3), through: '2026-10-05' }, invs, []);
+  assert.equal(onlyLegacy.ready, null);
+  assert.equal(blocked.ready.days.length, 1);
+});
+
+test('two days of a new change order do not each open an invoice', async () => {
+  const title = 'Gravel stop and reflash the posts';
+  const h = harness({ customers: [wortham, strait] }, []);
+  const day = (work_date, amount) => ({ job: job({ id: 39, tag: 'CO', title }), work_date, labor, material_cost: 0, amount });
+  const [first, second] = await Promise.all([
+    h.run({ slots: [day('2026-10-06', 330)] }),
+    h.run({ slots: [day('2026-10-07', 50)] }),
+  ]);
+  const creates = h.calls.filter(c => c.method === 'POST' && c.path === 'invoice' && c.payload && !c.payload.Id);
+  assert.equal(creates.length, 1);
+  assert.equal(h.invoices.length, 1);
+  const errs = [...first.errors, ...second.errors];
+  if (errs.length) {
+    const missed = first.errors.length ? ['2026-10-06', 330] : ['2026-10-07', 50];
+    const again = await h.run({ slots: [{ ...day(missed[0], missed[1]), allowRetry: true }] });
+    assert.equal(again.errors.length, 0, again.errors.join(' | '));
+  }
+  assert.equal(h.invoices.length, 1);
+  assert.ok(QB.lineHasDay(h.invoices[0].Line, '2026-10-06'));
+  assert.ok(QB.lineHasDay(h.invoices[0].Line, '2026-10-07'));
 });

@@ -46,6 +46,7 @@ export async function jobCostPage(jobId, sub) {
 
   const top = title => `
     <div class="btnrow noprint">${sub ? `<a class="jcpill" href="#/jobcost/${jobId}">‹ Job cost sheet</a>` : `<a class="jcpill" href="#/job/${jobId}">‹ Back to the ticket</a>`}<button class="small ghost" id="printIt">Print / save as PDF</button></div>
+    ${D.legacy_warning ? `<div class="card stalebar">${esc(D.legacy_warning)}</div>` : ''}
     <div class="jc-head"><div class="jc-co">SMS Roofing &amp; Waterproofing, LLC · ${esc(title)}</div>
       <h1>${esc(ticketName(j))}</h1>
       <div class="mute">${esc(j.customer_name)}${j.tenant ? ' · ' + esc(j.tenant) : ''}${j.gc ? ' · ' + esc(j.gc) : ''} · as of ${dt(D.today)}</div></div>`;

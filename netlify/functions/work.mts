@@ -142,7 +142,7 @@ async function pushInvoiceToQB(sql: any, invoiceId: number, job: any) {
 async function zeroReplacedPlaceholders(sql: any, inv: any, job: any) {
   const all = norm(await sql`SELECT * FROM invoices WHERE job_id = ${inv.job_id}`);
   const through = String(inv.covers_through || "").slice(0, 10);
-  const covered = all.filter((p: any) => p.kind === "placeholder" && Number(p.amount) > 0 && !p.zeroed_by && p.work_date && (!through || String(p.work_date).slice(0, 10) <= through) && (job.tag !== "CO" || p.qb_sync))
+  const covered = all.filter((p: any) => p.kind === "placeholder" && Number(p.amount) > 0 && !p.zeroed_by && p.work_date && (!through || String(p.work_date).slice(0, 10) <= through) && (job.tag !== "CO" || (p.qb_sync && !String(p.qb_id || ""))))
     .sort((a: any, b: any) => String(a.work_date).localeCompare(String(b.work_date)));
   const names = all.filter((i: any) => i.kind === "placeholder").map((i: any) => ({ name: i.name }));
   const errs: string[] = [];
@@ -539,6 +539,8 @@ export default async function handler(req: Request) {
       const owedJobs = jobIds.length ? norm(await sql`${JOB_COLS(sql)} WHERE j.id = ANY(${jobIds}::int[])`) : [];
       const seats = jobIds.length ? norm(await sql`SELECT job_id, work_date, qb_id, qb_sync, number, qb_error FROM invoices WHERE kind = 'placeholder' AND job_id = ANY(${jobIds}::int[])`) : [];
       const covers = jobIds.length ? norm(await sql`SELECT job_id, covers_through FROM invoices WHERE kind = 'real' AND covers_through IS NOT NULL AND job_id = ANY(${jobIds}::int[])`) : [];
+      const coIds = owedJobs.filter((j: any) => j.tag === "CO").map((j: any) => j.id);
+      const coClaims = coIds.length ? norm(await sql`SELECT job_id, work_date, state, qb_id FROM qb_sync_claims WHERE job_id = ANY(${coIds}::int[])`) : [];
       const mat = jobIds.length ? norm(await sql`SELECT l.job_id, l.line_total, s.inv_date FROM supply_lines l JOIN supply_invoices s ON s.id = l.invoice_id
         WHERE l.job_id = ANY(${jobIds}::int[]) AND s.inv_date = ANY(${greens}::date[])`) : [];
       const owed: any[] = [];
@@ -548,7 +550,7 @@ export default async function handler(req: Request) {
         for (const d of days) {
           const seated = seats.some((x: any) => x.job_id === j.id && x.work_date === d && (String(x.qb_id || "") || (!x.qb_sync && String(x.number || "").trim() && !String(x.qb_error || "").trim())));
           if (seated) continue;
-          if (covers.some((x: any) => x.job_id === j.id && x.covers_through >= d)) continue;   // a real invoice already covers that day
+          if (QB.dayIsCovered(j, d, { covers, claims: coClaims })) continue;   // a real invoice already covers that day; a change order only when that day itself is on an invoice
           const lines = shares.filter((s: any) => s.job_id === j.id && s.work_date === d);
           const labor = lines.map((s: any) => ({ ...M.billLabor(s), man: s.shows_as }));
           const matCost = mat.filter((x: any) => x.job_id === j.id && x.inv_date === d).reduce((a: number, x: any) => a + Number(x.line_total), 0);
@@ -899,7 +901,8 @@ export default async function handler(req: Request) {
             } else {
               await qb("POST", "invoice", { Id: co.qb_id, SyncToken: cur.SyncToken, sparse: true, Line: lines });
               const back = (await qb("GET", `invoice/${co.qb_id}`)).Invoice;
-              await sql`UPDATE invoices SET amount = ${Number(back.TotalAmt)} WHERE id = ${co.invoice_id}`;
+              const still = QB.latestCoveredDate(back.Line);
+              await sql`UPDATE invoices SET amount = ${Number(back.TotalAmt)}, covers_through = ${still || null} WHERE id = ${co.invoice_id}`;
               await sql`DELETE FROM qb_sync_claims WHERE job_id = ${co.job_id} AND work_date = ${b.work_date}`;
               qbDone.push(`took ${b.work_date} off change order #${co.number}`);
             }
@@ -951,8 +954,10 @@ export default async function handler(req: Request) {
         // his ask 9/29: a CO's labor shows on the main job's Labor-by-scope under the CO's own scope names (e.g. "CO - Additional 1/12")
         const coScopes = allShares.filter((x: any) => x.job_id !== id).flatMap((x: any) => M.splitByScope(x.cost, splitOf[x.stop_id]))
           .map((x: any) => ({ name: x.name || "CO - no scope", amount: x.amount }));
+        const mineInvoices = mine(invoices, id);
         return json({ job, contract, today: today(), scopes, categories, cos, coScopes,
-          labor, material: mine(material, id), invoices: mine(invoices, id), places: M.whereIs(job, mine(invoices, id)) });
+          legacy_warning: job.tag === "CO" ? QB.legacyPlaceholderWarning(mineInvoices) : "",
+          labor, material: mine(material, id), invoices: mineInvoices, places: M.whereIs(job, mineInvoices) });
       }
       const b = await body();
       const money = (v: any) => v === "" || v == null ? null : Number(v);
@@ -1008,6 +1013,7 @@ export default async function handler(req: Request) {
         const propInvs = norm(await sql`SELECT i.* FROM invoices i JOIN jobs j ON j.id = i.job_id WHERE j.property_id = ${job.property_id}`);
         const contract = M.contractFor(job, propJobs, propInvs);
         return json({ job, invoices, shares, material, contract, bidSystems, bidOptions, places: M.whereIs(job, invoices),
+          legacy_warning: job.tag === "CO" ? QB.legacyPlaceholderWarning(invoices) : "",
           lastWorkDate: M.workDate(id, stops), today: today() });
       }
 
@@ -1117,6 +1123,7 @@ export default async function handler(req: Request) {
               await sql`UPDATE invoices SET amount = ${p.zeroed_from}, name = '', zeroed_from = NULL, zeroed_by = NULL WHERE id = ${p.id}`;
             }
             await sql`DELETE FROM invoices WHERE id = ${inv.id}`;
+            await sql`DELETE FROM qb_sync_claims WHERE invoice_id = ${inv.id} AND COALESCE(qb_id, '') IN ('', ${String(inv.qb_id || '')})`;
             qbDone.push(`invoice ${inv.number ? "#" + inv.number + " " : ""}${M.money(inv.amount)} undone`);
           } catch (e: any) { qbErrors.push(`invoice #${inv.number}: ${String(e?.message || e)} — ticket NOT reopened`); }
         }
@@ -1272,15 +1279,17 @@ export default async function handler(req: Request) {
           return { property_id: p.id, address: where, ...QB.previewProperty({ ...p, address: p.address, city: p.city, tenant: p.tenant }, hit.customer, customers) };
         });
         if (!b.confirm) return json({ preview: true, qb_customer_id: String(hit.customer.Id), qb_customer_name: hit.customer.DisplayName || "", lines });
+        if (!Array.isArray(b.lines)) return refuse("Confirm the list that was just shown.");
         await store.saveParent(c.id, hit.customer);
-        for (const line of lines) {
-          const p = props.find((x: any) => x.id === line.property_id);
+        for (const line of b.lines) {
+          const p = props.find((x: any) => x.id === Number(line.property_id));
+          if (!p) continue;
           if (line.action === "match" && line.qb_subcustomer_id && String(p.qb_subcustomer_id || "") !== String(line.qb_subcustomer_id)) {
             const sub = customers.find((x: any) => String(x.Id) === String(line.qb_subcustomer_id)) || { Id: line.qb_subcustomer_id, DisplayName: line.qb_subcustomer_name || "" };
             await store.saveSub(p.id, sub);
           }
-          if (line.action !== "create") continue;
-          const display = QB.subDisplayName(p);
+          if (line.action !== "create" || !(Number(p.work_count) > 0)) continue;
+          const display = String(line.qb_subcustomer_name || "").trim() || QB.subDisplayName(p);
           if (!display) { line.error = "No address on this property, so no QuickBooks sub-customer was created."; continue; }
           const sub = (await qb("POST", "customer", { DisplayName: display, ParentRef: { value: String(hit.customer.Id) }, Job: true, BillWithParent: false })).Customer;
           customers.push(sub);
@@ -1289,7 +1298,7 @@ export default async function handler(req: Request) {
           line.qb_subcustomer_id = String(sub.Id);
           line.qb_subcustomer_name = sub.DisplayName || sub.FullyQualifiedName || "";
         }
-        return json({ preview: false, qb_customer_id: String(hit.customer.Id), qb_customer_name: hit.customer.DisplayName || "", lines });
+        return json({ preview: false, qb_customer_id: String(hit.customer.Id), qb_customer_name: hit.customer.DisplayName || "", lines: b.lines });
       }
       if (m === "PUT") {
         const b = await body();
@@ -1380,6 +1389,13 @@ export default async function handler(req: Request) {
       const neverRows = QB.neverSentRows(open, attempts, claims)
         .filter((g: any) => !failRows.some((f: any) => f.job_id === g.job_id && f.work_date === g.work_date) && !gapRows.some((f: any) => f.job_id === g.job_id && String(f.work_date).slice(0, 10) === g.work_date));
       const allFail = [...failRows, ...gapRows, ...neverRows];
+      const warnIds = [...new Set(allFail.map((r: any) => r.job_id))];
+      const warnInvs = warnIds.length ? norm(await sql`SELECT job_id, kind, number, amount, qb_id, qb_sync FROM invoices WHERE kind = 'placeholder' AND job_id = ANY(${warnIds}::int[])`) : [];
+      const legacyByJob = new Map();
+      for (const jid of warnIds) {
+        const text = QB.legacyPlaceholderWarning(warnInvs.filter((p: any) => p.job_id === jid));
+        if (text) legacyByJob.set(jid, text);
+      }
       const missingIds = allFail.map((r: any) => r.job_id).filter((jid: number) => !owedJobs.some((j: any) => j.id === jid));
       const extraJobs = missingIds.length ? norm(await sql`${JOB_COLS(sql)} WHERE j.id = ANY(${missingIds}::int[])`) : [];
       const jobById = new Map([...owedJobs, ...extraJobs].map((j: any) => [j.id, j]));
@@ -1392,12 +1408,24 @@ export default async function handler(req: Request) {
         const matCost = (mat || []).filter((x: any) => x.job_id === j.id && x.inv_date === d).reduce((a: number, x: any) => a + Number(x.line_total), 0);
         const priced = labor.length > 0 && labor.every((l: any) => l.amount != null);
         const suggested = priced ? M.round2(labor.reduce((a: number, l: any) => a + l.amount, 0) + M.billMaterial(matCost, j.tag)) : null;
-        return { job: j, work_date: d, labor, material_cost: M.round2(matCost), suggested, qb_error: r.qb_error, invoice_id: r.invoice_id || null };
+        return { job: j, work_date: d, labor, material_cost: M.round2(matCost), suggested, qb_error: r.qb_error, invoice_id: r.invoice_id || null, legacy_warning: legacyByJob.get(j.id) || "" };
       }).filter(Boolean);
       // Ready to bill — fills itself (green day not billed yet; scope and pictures never hold it, 10/2/26), dollars from the rules
       const allMat = jobIds.length ? norm(await sql`SELECT l.job_id, l.line_total, s.inv_date FROM supply_lines l JOIN supply_invoices s ON s.id = l.invoice_id WHERE l.job_id = ANY(${jobIds}::int[])`) : [];
       const readyInvs = jobIds.length ? norm(await sql`SELECT * FROM invoices WHERE job_id = ANY(${jobIds}::int[])`) : [];
-      const ready = owedJobs.map((j: any) => { const mine = readyInvs.filter((i: any) => i.job_id === j.id); const r = M.readyToBill(j, shares, allMat, mine); return r ? { ...r, job: j, invoice: M.writeRealInvoice(j, r, mine, today(), j.bill_price) } : null; }).filter(Boolean);
+      const ready = owedJobs.map((j: any) => {
+        const mine = readyInvs.filter((i: any) => i.job_id === j.id);
+        let r = M.readyToBill(j, shares, allMat, mine);
+        if (!r) return null;
+        let use = mine;
+        if (j.tag === "CO") {
+          const split = QB.coBillSplit(j, r, mine, claims.filter((c: any) => c.job_id === j.id), allMat);
+          if (!split.ready) return null;
+          r = split.ready;
+          use = split.invoices;
+        }
+        return { ...r, job: j, legacy_warning: j.tag === "CO" ? QB.legacyPlaceholderWarning(mine) : "", invoice: M.writeRealInvoice(j, r, use, today(), j.tag === "CO" ? null : j.bill_price) };
+      }).filter(Boolean);
       // Billed a trip at a time — still working: open tickets with a bill that isn't paid (old board drawTickets)
       const openJobs = norm(await sql`${JOB_COLS(sql)} WHERE j.tag <> 'BID' AND (j.done_at IS NULL OR j.tag IN ('JC','UC')) AND j.tabled_at IS NULL AND EXISTS
         (SELECT 1 FROM invoices i WHERE i.job_id = j.id AND i.kind IN ('real','draw') AND i.paid_at IS NULL)`);
@@ -1454,7 +1482,7 @@ export default async function handler(req: Request) {
       if (!job) return refuse("That ticket doesn't exist.", 404);
       // A change order this sync already opened stays that one invoice. Older QuickBooks invoices are not folded in or zeroed here.
       const legacyRows = job.tag === "CO" ? norm(await sql`SELECT kind, number, amount, qb_id, qb_sync FROM invoices WHERE job_id = ${id} AND kind = 'placeholder'`) : [];
-      const legacy_warning = QB.legacyPlaceholderWarning(legacyRows);
+      let legacy_warning = QB.legacyPlaceholderWarning(legacyRows);
       if (job.tag === "CO" && job.qb_co_invoice_id) {
         const [have] = norm(await sql`SELECT * FROM invoices WHERE qb_id = ${job.qb_co_invoice_id} AND qb_sync ORDER BY id LIMIT 1`);
         if (have) return json({ invoice_id: have.id, amount: Number(have.amount), through: have.covers_through, inv_date: have.inv_date, memo: have.memo, zeroed: 0, already_open: true, qb: { number: have.number, customer: job.qb_subcustomer_name || "" }, qb_error: "", missing: [], legacy_warning }, 201);
@@ -1464,9 +1492,18 @@ export default async function handler(req: Request) {
       const crew = norm(await sql`SELECT * FROM crew`);
       const shares = M.stopShares({ stops, crew, crewDays });
       const mat = norm(await sql`SELECT l.job_id, l.line_total, s.inv_date FROM supply_lines l JOIN supply_invoices s ON s.id = l.invoice_id WHERE l.job_id = ${id}`);
-      const invs = norm(await sql`SELECT * FROM invoices WHERE job_id = ${id}`);
-      const r = M.readyToBill(job, shares, mat, invs);
+      let invs = norm(await sql`SELECT * FROM invoices WHERE job_id = ${id}`);
+      let r = M.readyToBill(job, shares, mat, invs);
       if (!r) return refuse("That ticket isn't ready to bill — it needs a green day not billed yet.");
+      if (job.tag === "CO") {
+        const coClaims = norm(await sql`SELECT job_id, work_date, state, qb_id FROM qb_sync_claims WHERE job_id = ${id}`);
+        const split = QB.coBillSplit(job, r, invs, coClaims, mat);
+        legacy_warning = split.warning || legacy_warning;
+        if (!split.ready) return refuse(split.warning || "Those days are already on a QuickBooks invoice. Nothing new was written.");
+        r = split.ready;
+        invs = split.invoices;
+        if (b.amount === "" || b.amount == null) job.bill_price = null;
+      }
       const w = M.writeRealInvoice(job, r, invs, today(), b.amount === "" || b.amount == null ? job.bill_price : b.amount);
       // IT WRITES EITHER WAY. No price yet and no scope typed yet are notes on the invoice, not a wall.
       const billMiss = [...(w.amount > 0 ? [] : ["the dollar amount"]), ...(w.scope.trim() ? [] : ["the scope of work — it goes on the invoice word for word"])];
@@ -1478,6 +1515,11 @@ export default async function handler(req: Request) {
           [id, w.name, Number(w.amount) || 0, w.inv_date, w.covers_through, w.memo, w.scope]);
         // NO zeroing here (his law 9/28): the placeholders it replaces go to $0 only after this invoice is in QuickBooks — see zeroReplacedPlaceholders
         ins_id = ins.rows[0].id;
+        if (job.tag === "CO") for (const d of r.days) {
+          await client.query(`INSERT INTO qb_sync_claims (job_id, work_date, state, invoice_id) VALUES ($1, $2, 'done', $3)
+            ON CONFLICT (job_id, work_date) DO UPDATE SET state = 'done', invoice_id = $3, updated_at = NOW()
+            WHERE qb_sync_claims.state IS DISTINCT FROM 'done'`, [id, d.date, ins_id]);
+        }
         await client.query(`UPDATE jobs SET bill_price = NULL WHERE id = $1`, [id]);   // his price was for this invoice only
         await client.query("COMMIT");
       } catch (e) { await client.query("ROLLBACK"); throw e; } finally { client.release(); }
