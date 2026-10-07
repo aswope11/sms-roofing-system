@@ -1,6 +1,6 @@
 // The ticket's life, drawn inside the job file page. Money (invoices + general ledger) lives on its own page: jobCostPage.
 import { esc, $app, call, doAndProve, crumbs, fail, ask, toast } from './ui.js';
-import { money, round2, isWork, canPlaceholder, isBill, inAR, shortDate, costSoFar, LANES, invoicingLane, ticketName, drawAging } from './money.js';
+import { money, round2, isWork, canPlaceholder, isBill, inAR, shortDate, costSoFar, LANES, invoicingLane, ticketName, drawAging, placeholderDays } from './money.js';
 
 export async function renderTicket(jobId, mount) {
   const L = await call(`/w/job/${jobId}`);
@@ -76,7 +76,7 @@ export async function renderTicket(jobId, mount) {
   if (q('#scopeNote')) q('#scopeNote').onchange = () => run(() => act(`/w/job/${jobId}/scope-note`, { value: q('#scopeNote').checked }, b => b.job.scope_note === q('#scopeNote').checked));
   q('#picsOk').onchange = () => run(() => act(`/w/job/${jobId}/check`, { which: 'pics', value: q('#picsOk').checked }, b => b.job.pics_ok === q('#picsOk').checked));
   q('#nocharge').onchange = () => run(() => act(`/w/job/${jobId}/no-charge`, { value: q('#nocharge').checked }, b => b.job.no_charge === q('#nocharge').checked));
-  const seatedDays = new Set(L.invoices.filter(i => i.kind === 'placeholder' && i.work_date && Number(i.amount) > 0).map(i => String(i.work_date).slice(0, 10)));
+  const seatedDays = new Set(L.invoices.filter(i => i.kind === 'placeholder' && Number(i.amount) > 0).flatMap(placeholderDays)); // one placeholder can seat many days (10/7/26)
   const green = new Set((L.green_dates || []).map(d => String(d).slice(0, 10)));
   const loggedDays = [...new Set((L.shares || []).map(s => String(s.work_date).slice(0, 10)))];
   const notGreen = loggedDays.filter(d => !green.has(d) && (!coveredThrough || d > String(coveredThrough).slice(0, 10)));
