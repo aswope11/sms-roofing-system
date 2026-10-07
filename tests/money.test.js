@@ -497,6 +497,9 @@ test('DELETE: every delete lives in one place, asks first, and never calls Quick
   assert.ok(!reopen.includes('phs.length === 1'), 'reopen never guesses a placeholder price from the invoice total');
   assert.ok(reopen.includes('has no saved price') && reopen.includes('qbAlreadySentOrPaid') && w.includes('EmailStatus'));
   assert.ok(reopen.includes('invoice_archive') && reopen.includes('ticket NOT reopened'));
+  const arc = readFileSync('netlify/database/migrations/036_invoice-archive/migration.sql', 'utf8');
+  assert.ok(arc.includes('CREATE TABLE IF NOT EXISTS invoice_archive'), '036 can be applied twice');
+  assert.ok(!/CREATE INDEX(?! IF NOT EXISTS)/.test(arc), '036 has no unguarded index');
   assert.ok(w.includes('applyRebalance') && w.includes('He already has that job on that day.'));
   assert.ok(w.includes('already marked paid') && w.includes('Nothing was changed.'));
   assert.ok(del.includes('rebalancePcts') && del.includes('The split was not changed.') && del.includes('That placeholder will not update.'));
