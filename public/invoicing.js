@@ -101,12 +101,16 @@ export async function invoicingPage() {
       const back = await call(`/w/job/${r.job.id}`);
       const inv = back.invoices.find(i => i.id === w.invoice_id);
       const ph = back.invoices.filter(i => i.kind === 'placeholder' && r.invoice.zero.some(z => z.id === i.id));
-      const ok = inv && Number(inv.amount) === Number(w.amount) && inv.name === r.invoice.name && inv.memo === w.memo && inv.scope === r.job.scope && inv.inv_date > back.today
-        && ph.every(p => Number(p.amount) === 0 && /^Job Cost \d+$/.test(p.name) && p.memo === w.memo);
+      const kept = r.job.tag === 'CO' ? ph.filter(p => !p.qb_sync) : [];
+      const zeroed = ph.filter(p => !kept.includes(p));
+      const sameOpen = w.already_open && w.zeroed === 0 && inv && Number(inv.amount) === Number(w.amount) && inv.memo === w.memo;
+      const ok = sameOpen || (inv && Number(inv.amount) === Number(w.amount) && inv.name === r.invoice.name && inv.memo === w.memo && inv.scope === r.job.scope && inv.inv_date > back.today
+        && zeroed.every(p => Number(p.amount) === 0 && /^Job Cost \d+$/.test(p.name) && p.memo === w.memo));
       if (!ok) throw new Error('That did not stick — the read-back does not match (name, memo, scope, date or the placeholder). Nothing was assumed.');
-      const said = `Invoice written — ${inv.name} ${money(inv.amount)}, memo "${inv.memo}", dated ${shortDate(inv.inv_date)}${ph.length ? ` · ${ph.length} placeholder${ph.length === 1 ? '' : 's'} → $0` : ''} (read back and it matches)${stillMissing(w)}`;
-      if (w.qb && inv.qb_id && inv.number === w.qb.number) toast(`${said} · In QuickBooks as #${w.qb.number} for ${w.qb.customer}`);
-      else toast(`${said} · NOT in QuickBooks: ${w.qb_error || 'no QuickBooks number came back'} — press Send to QuickBooks on it`, false);
+      const said = `Invoice written — ${inv.name} ${money(inv.amount)}, memo "${inv.memo}", dated ${shortDate(inv.inv_date)}${zeroed.length ? ` · ${zeroed.length} placeholder${zeroed.length === 1 ? '' : 's'} → $0` : ''} (read back and it matches)${stillMissing(w)}`;
+      const warn = w.legacy_warning ? ` · ${w.legacy_warning}` : '';
+      if (w.qb && inv.qb_id && inv.number === w.qb.number) toast(`${said} · In QuickBooks as #${w.qb.number} for ${w.qb.customer}${warn}`, !w.legacy_warning);
+      else toast(`${said} · NOT in QuickBooks: ${w.qb_error || 'no QuickBooks number came back'} — press Send to QuickBooks on it${warn}`, false);
     });
   });
   $app().querySelectorAll('.chk').forEach(c => c.onclick = () => {

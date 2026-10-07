@@ -118,21 +118,15 @@ test('no parent match does not create a customer', async () => {
   assert.equal(calls.filter(c => c.method === 'POST').length, 0);
 });
 
-test('a missing property sub-customer is created under the parent, once', async () => {
-  const customers = [wortham, mulberry];
-  const { calls, run } = harness({ customers }, [
+test('a green day does not create a sub-customer when the property is not linked', async () => {
+  const h = harness({ customers: [wortham, mulberry] }, [
     { job: job({ id: 70, tag: 'UC', title: 'Counter flashing' }), work_date: '2026-10-06', labor, material_cost: 0, amount: 400 },
-    { job: job({ id: 71, tag: 'R', title: 'Pipe boot', property_id: 8 }), work_date: '2026-10-06', labor, material_cost: 0, amount: 250 },
   ]);
-  const out = await run();
-  assert.equal(out.errors.length, 0);
-  const created = calls.filter(c => c.method === 'POST' && c.path === 'customer');
-  assert.equal(created.length, 1);
-  assert.equal(created[0].payload.ParentRef.value, '10');
-  assert.equal(created[0].payload.Job, true);
-  assert.match(created[0].payload.DisplayName, /10914 Strait Lane/);
-  assert.equal(calls.filter(c => c.method === 'POST' && c.path === 'invoice').length, 2);
-  assert.ok(calls.filter(c => c.path === 'invoice' && c.payload && !c.payload.Id).every(c => c.payload.CustomerRef.value !== '10'));
+  const out = await h.run();
+  assert.match(out.errors[0], /Link this property to QuickBooks/);
+  assert.equal(h.calls.filter(c => c.method === 'POST').length, 0);
+  const owed = QB.owedRows({ attempts: h.store.state.attempts, claims: [...h.store.state.claims.values()], invoices: h.store.state.invoices });
+  assert.match(owed[0].qb_error, /Link this property to QuickBooks/);
 });
 
 test('an existing sub-customer is used by id and not created again', async () => {
@@ -217,7 +211,7 @@ test('a change order is one labeled invoice, and the next day adds a line', asyn
   const first = await h.run({ slots: [day('2026-10-06', 330)] });
   assert.equal(first.errors.length, 0, first.errors.join(' | '));
   assert.equal(h.invoices.length, 1);
-  assert.equal(h.invoices[0].PrivateNote, 'Change order gravel stop and reflash posts');
+  assert.equal(h.invoices[0].PrivateNote, QB.syncNote('Change order gravel stop and reflash posts', 39, '2026-10-06', 'co'));
   assert.equal(h.invoices[0].CustomerMemo.value, 'Change order gravel stop and reflash posts');
   assert.equal(h.invoices[0].CustomerRef.value, '12');
   assert.equal(h.invoices[0].Line[0].SalesItemLineDetail.ClassRef.value, '7');
@@ -283,4 +277,164 @@ test('the customer map reads QuickBooks before saving an id and does not touch i
   assert.ok(map.includes("qb_bucket_customer_id = ''"));
   assert.equal(map.includes('qb_co_invoice_id'), false);
   assert.ok(map.includes('ParentRef'));
+  assert.ok(map.indexOf('if (!b.confirm) return') < map.indexOf('POST", "customer"'));
+});
+
+test('W and West, St and Street, match; a different suffix does not', () => {
+  const west = { Id: '51', DisplayName: '216 West Mulberry Street, Denton - MKOA Studio', FullyQualifiedName: 'Wortham Bros., Inc.:216 West Mulberry Street, Denton - MKOA Studio', Job: true, ParentRef: { value: '10' } };
+  const hit = QB.matchSub(job({ address: '216 W. Mulberry St', city: 'Denton', tenant: 'MKOA Studio' }), wortham, [wortham, west]);
+  assert.equal(hit.customer.Id, '51');
+  const ave = { ...west, Id: '52', DisplayName: '216 West Mulberry Avenue', FullyQualifiedName: 'Wortham Bros., Inc.:216 West Mulberry Avenue' };
+  assert.equal(QB.matchSub(job({ address: '216 W. Mulberry St', city: 'Denton', tenant: '' }), wortham, [wortham, ave]).customer, null);
+});
+
+test('a tenant on the QuickBooks sub-customer has to match, and city breaks a tie', () => {
+  const a = { Id: '40', DisplayName: '5913 Quality Hill - Tenant A', FullyQualifiedName: 'Wortham Bros., Inc.:5913 Quality Hill - Tenant A', Job: true, ParentRef: { value: '10' } };
+  const miss = QB.matchSub(job({ address: '5913 Quality Hill', city: 'Dallas', tenant: 'Tenant B' }), wortham, [wortham, a]);
+  assert.equal(miss.customer, null);
+  const dallas = { Id: '61', DisplayName: '100 Main St, Dallas', FullyQualifiedName: 'Wortham Bros., Inc.:100 Main St, Dallas', Job: true, ParentRef: { value: '10' } };
+  const denton = { Id: '62', DisplayName: '100 Main St, Denton', FullyQualifiedName: 'Wortham Bros., Inc.:100 Main St, Denton', Job: true, ParentRef: { value: '10' } };
+  const hit = QB.matchSub(job({ address: '100 Main St', city: 'Dallas', tenant: '' }), wortham, [wortham, dallas, denton]);
+  assert.equal(hit.customer.Id, '61');
+});
+
+test('the match preview lists match, create, and skip, and creates only when asked', async () => {
+  const parent = wortham;
+  const linked = QB.previewProperty({ address: '10914 Strait Lane', city: 'Dallas', tenant: '', work_count: 1, qb_subcustomer_id: '' }, parent, [wortham, strait]);
+  assert.equal(linked.action, 'match');
+  assert.equal(linked.qb_subcustomer_id, '12');
+  const missing = QB.previewProperty({ address: '500 New St', city: 'Dallas', tenant: '', work_count: 2, qb_subcustomer_id: '' }, parent, [wortham]);
+  assert.equal(missing.action, 'create');
+  const bid = QB.previewProperty({ address: '500 New St', city: 'Dallas', tenant: '', work_count: 0, qb_subcustomer_id: '' }, parent, [wortham]);
+  assert.equal(bid.action, 'skip');
+  const api = mockQb({ customers: [wortham] });
+  const store = QB.makeMemoryStore();
+  const made = await QB.resolveCustomer({
+    qb: api.qb, store, cache: {}, createSub: true,
+    job: job({ address: '500 New St', city: 'Dallas', tenant: 'Cafe' }),
+  });
+  assert.equal(made.createdSub, true);
+  assert.equal(api.calls.filter(c => c.path === 'customer').length, 1);
+  assert.equal(api.calls.find(c => c.path === 'customer').payload.ParentRef.value, '10');
+});
+
+test('clearing the claim lets the same job and day be created again', async () => {
+  const slot = { job: job({ id: 38, tag: 'UC' }), work_date: '2026-10-06', labor, material_cost: 0, amount: 675 };
+  const h = harness({ customers: [wortham, strait] }, [slot]);
+  await h.run();
+  assert.equal(h.invoices.length, 1);
+  const again = await h.run();
+  assert.equal(again.results.length, 0);
+  assert.equal(h.invoices.length, 1);
+  h.store.state.claims.clear();
+  h.store.state.invoices = [];
+  h.invoices.splice(0, h.invoices.length);
+  const third = await h.run();
+  assert.equal(third.results.length, 1);
+  assert.equal(h.invoices.length, 1);
+  const work = readFileSync('netlify/functions/work.mts', 'utf8');
+  const gone = work.slice(work.indexOf('deleted in QuickBooks by hand'), work.indexOf('ONE TICKET'));
+  assert.equal((gone.match(/DELETE FROM qb_sync_claims/g) || []).length, 4);
+});
+
+test('a sent change order starts a new invoice and the sent one is not edited', async () => {
+  const co = job({ id: 39, tag: 'CO', title: 'Gravel stop and reflash the posts' });
+  const h = harness({ customers: [wortham, strait] }, []);
+  const day = (work_date, amount) => ({ job: co, work_date, labor, material_cost: 0, amount });
+  await h.run({ slots: [day('2026-10-06', 330)] });
+  h.store.state.invoices[0].sent_at = '2026-10-08';
+  const first = h.invoices[0];
+  const next = await h.run({ slots: [day('2026-10-09', 50)] });
+  assert.equal(next.errors.length, 0, next.errors.join(' | '));
+  assert.equal(h.invoices.length, 2);
+  assert.equal(first.Line.length, 1);
+  assert.equal(first.TotalAmt, 330);
+  assert.ok(h.calls.filter(c => c.payload && c.payload.Id).every(c => c.payload.Id !== first.Id));
+});
+
+test('appending a change-order day keeps discounts and notes and drops the subtotal', async () => {
+  const co = job({ id: 39, tag: 'CO', title: 'Gravel stop and reflash the posts' });
+  const h = harness({ customers: [wortham, strait] }, []);
+  await h.run({ slots: [{ job: co, work_date: '2026-10-06', labor, material_cost: 0, amount: 330 }] });
+  h.invoices[0].Line.push(
+    { Id: 'd', DetailType: 'DiscountLineDetail', Amount: -10, Description: 'Adam discount', DiscountLineDetail: { PercentBased: false } },
+    { Id: 'n', DetailType: 'DescriptionOnly', Amount: 0, Description: 'Adam note' },
+    { DetailType: 'SubTotalLineDetail', Amount: 330 },
+  );
+  await h.run({ slots: [{ job: co, work_date: '2026-10-07', labor, material_cost: 0, amount: 200 }] });
+  const posted = h.calls.filter(c => c.payload && c.payload.Id && c.payload.Line).pop();
+  assert.ok(posted.payload.Line.some(l => l.Description === 'Adam discount'));
+  assert.ok(posted.payload.Line.some(l => l.Description === 'Adam note'));
+  assert.equal(posted.payload.Line.some(l => l.DetailType === 'SubTotalLineDetail'), false);
+  assert.ok(posted.payload.Line.some(l => String(l.Description).includes('Date: 10/6/26')));
+  assert.ok(posted.payload.Line.some(l => String(l.Description).includes('Date: 10/7/26')));
+});
+
+test('a shared memo does not adopt another job invoice unless the crm key and customer match', async () => {
+  const marker = QB.syncNote('UC-10/8/26', 38, '2026-10-08', 'placeholder');
+  const foreign = { Id: '999', DocNumber: '6001', PrivateNote: 'UC-10/8/26', CustomerRef: { value: '12' }, SyncToken: '0', TotalAmt: 400, Line: [{ DetailType: 'SalesItemLineDetail', Amount: 400, Description: 'Date: 10/8/26', SalesItemLineDetail: { ItemRef: { value: '1' } } }] };
+  const h = harness({ customers: [wortham, strait], invoices: [foreign] }, [{
+    job: job({ id: 41, tag: 'UC' }), work_date: '2026-10-08', labor, material_cost: 0, amount: 900,
+  }]);
+  await h.run();
+  assert.equal(foreign.TotalAmt, 400);
+  assert.equal(foreign.Line.length, 1);
+  const made = h.invoices.find(i => i.Id !== '999');
+  assert.ok(made);
+  assert.notEqual(made.DocNumber, '6001');
+  assert.equal(made.CustomerRef.value, '12');
+  assert.notEqual(made.PrivateNote, marker);
+  const sameKeyWrongCustomer = { Id: '998', DocNumber: '6001', PrivateNote: QB.syncNote('UC-10/8/26', 41, '2026-10-08', 'placeholder'), CustomerRef: { value: '99' }, SyncToken: '0', TotalAmt: 900, Line: [] };
+  const h2 = harness({ customers: [wortham, strait], invoices: [sameKeyWrongCustomer] }, [{
+    job: job({ id: 41, tag: 'UC' }), work_date: '2026-10-08', labor, material_cost: 0, amount: 900,
+  }]);
+  await h2.run();
+  assert.equal(sameKeyWrongCustomer.TotalAmt, 900);
+  assert.notEqual(h2.invoices.find(i => i.Id !== '998').CustomerRef.value, '99');
+});
+
+test('reopen leaves the running change-order invoice, and a failed real push is not an owed row', () => {
+  const invs = [
+    { id: 1, kind: 'real', qb_id: 'run', sent_at: null, paid_at: null, number: '4900', amount: 530 },
+    { id: 2, kind: 'real', qb_id: 'other', sent_at: null, paid_at: null, number: '4901', amount: 100 },
+  ];
+  const undo = QB.invoicesToUndo(invs, 'run');
+  assert.deepEqual(undo.map(i => i.id), [2]);
+  const rows = QB.owedRows({
+    attempts: [{ id: 1, job_id: 7, work_date: null, kind: 'real', ok: false, qb_error: 'QuickBooks said: no' }],
+    claims: [], invoices: [],
+  });
+  assert.equal(rows.length, 0);
+  const open = [{ job_id: 39, work_date: '2026-10-06' }, { job_id: 38, work_date: '2026-10-05' }];
+  const failed = [{ job_id: 38, work_date: '2026-10-05', qb_error: 'no' }];
+  assert.equal(QB.keepVisible(failed, [{ job_id: 39, work_date: '2026-10-06' }]).length, 0);
+  assert.equal(QB.neverSentRows(open, [], [])[0].qb_error, 'never sent');
+  assert.equal(QB.neverSentRows(open, [{ job_id: 39, work_date: '2026-10-06', kind: 'co_line', ok: false, qb_error: 'x' }], []).some(r => r.job_id === 39), false);
+});
+
+test('legacy change-order placeholders are named in the warning and not edited', () => {
+  const warn = QB.legacyPlaceholderWarning([
+    { kind: 'placeholder', qb_sync: false, number: '4817', amount: 400, qb_id: '1' },
+    { kind: 'placeholder', qb_sync: false, number: '4845', amount: 180, qb_id: '2' },
+    { kind: 'placeholder', qb_sync: false, number: '4865', amount: 1050, qb_id: '3' },
+    { kind: 'placeholder', qb_sync: true, number: '4900', amount: 50, qb_id: '4' },
+  ]);
+  assert.match(warn, /#4817/);
+  assert.match(warn, /#4845/);
+  assert.match(warn, /#4865/);
+  assert.equal(warn.includes('#4900'), false);
+  const lines = QB.linesForUpdate([
+    { DetailType: 'SalesItemLineDetail', Amount: 400, Description: 'Date: 9/30/26' },
+    { DetailType: 'DiscountLineDetail', Amount: -5, Description: 'keep me' },
+    { DetailType: 'SubTotalLineDetail', Amount: 395 },
+  ], '2026-09-30');
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].Description, 'keep me');
+  const sql = readFileSync('netlify/database/migrations/038_qb-customer-map/migration.sql', 'utf8');
+  assert.equal((sql.match(/ON DELETE CASCADE/g) || []).length, 2);
+  assert.equal(readFileSync('netlify/functions/delete.mts', 'utf8').includes('DELETE FROM qb_sync_claims'), true);
+  const work = readFileSync('netlify/functions/work.mts', 'utf8');
+  assert.ok(work.includes('QB.invoicesToUndo(invs, job.qb_co_invoice_id)'));
+  assert.ok(work.includes("That day isn't owed a placeholder"));
+  assert.ok(work.includes('customerFromPlaceholder'));
 });

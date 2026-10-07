@@ -1,6 +1,7 @@
 -- QuickBooks customer map (10/7/26). Ids only — nothing here reads or writes QuickBooks.
 -- Parent customer on the company, property sub-customer on the property.
 -- Bucket (UC / CO / R) is not a new QuickBooks customer; it is a label, or an existing class / deeper sub-customer found later.
+-- Numbered 038 because 036 and 037 belong to other pull requests. Netlify rejects a number at or below one already applied.
 ALTER TABLE customers ADD COLUMN qb_customer_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE customers ADD COLUMN qb_customer_name TEXT NOT NULL DEFAULT '';
 ALTER TABLE properties ADD COLUMN qb_subcustomer_id TEXT NOT NULL DEFAULT '';
@@ -13,7 +14,7 @@ ALTER TABLE invoices ADD COLUMN qb_sync BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE TABLE qb_sync_attempts (
   id SERIAL PRIMARY KEY,
-  job_id INTEGER NOT NULL REFERENCES jobs(id),
+  job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
   work_date DATE,
   kind TEXT NOT NULL,
   ok BOOLEAN NOT NULL DEFAULT FALSE,
@@ -24,7 +25,7 @@ CREATE TABLE qb_sync_attempts (
 
 -- One claim per job per work day, so two green-day runs cannot both create an invoice.
 CREATE TABLE qb_sync_claims (
-  job_id INTEGER NOT NULL REFERENCES jobs(id),
+  job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
   work_date DATE NOT NULL,
   state TEXT NOT NULL DEFAULT 'working',
   doc_number TEXT NOT NULL DEFAULT '',

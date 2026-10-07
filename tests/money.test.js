@@ -198,10 +198,10 @@ test('no invoice ever carries terms — there is no terms field anywhere', () =>
   assert.ok(!/terms/i.test(sql));
 });
 
-test('nothing is deleted — the work API only removes a stop (a man moved off a day), rewrites the lines of an invoice being corrected, or deletes a priced placeholder when its day is taken back (step 2 locked rule)', () => {
+test('nothing is deleted — the work API only removes a stop (a man moved off a day), rewrites the lines of an invoice being corrected, deletes a priced placeholder when its day is taken back, or clears that day\'s sync claim so it can be sent again (step 2 locked rule)', () => {
   const api = readFileSync('netlify/functions/work.mts', 'utf8');
   const dels = api.match(/DELETE\s+FROM\s+(\w+)/gi) || [];
-  assert.deepEqual([...new Set(dels.map(d => d.split(/\s+/).pop().toLowerCase()))].sort(), ['bid_options', 'bid_systems', 'invoices', 'stops', 'supply_lines']);
+  assert.deepEqual([...new Set(dels.map(d => d.split(/\s+/).pop().toLowerCase()))].sort(), ['bid_options', 'bid_systems', 'invoices', 'qb_sync_claims', 'stops', 'supply_lines']);
   assert.equal((api.match(/DELETE FROM invoices/g) || []).length, 3);   // un-green, stale QuickBooks copy, reopen undo — every one tied to QuickBooks
   assert.ok(api.includes("SELECT * FROM invoices WHERE kind = 'placeholder' AND work_date = ${b.work_date} AND amount > 0"));
 });

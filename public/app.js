@@ -100,7 +100,7 @@ async function customer(id) {
     </div>
     <div class="card">
       <h2>QuickBooks</h2>
-      <p class="help">Match looks up customers already in QuickBooks, including a parent whose name is not spelled the same here. If a property is not there yet, it adds that property under the parent. It does not change invoices already in QuickBooks. A blank id clears the link in this app only.</p>
+      <p class="help">Match looks up customers already in QuickBooks, including a parent whose name is not spelled the same here. It shows a list first. Nothing is added until you confirm, and only a property that already has work is added. It does not change bills already in QuickBooks. A blank id clears the link in this app only.</p>
       <div class="row"><span>Parent</span><span>${esc(c.qb_customer_name || 'not matched')}${c.qb_customer_id ? ' · ' + esc(c.qb_customer_id) : ''}</span></div>
       <label>QuickBooks parent id<input id="qbParent" value="${esc(c.qb_customer_id || '')}" placeholder="blank clears it"></label>
       <div class="actions"><button type="button" class="ghost" id="qbParentSave">Save parent id</button><button type="button" id="qbMatch">Match existing QuickBooks customers</button></div>
@@ -108,6 +108,7 @@ async function customer(id) {
         <span>${esc(p.address)}${p.city ? ', ' + esc(p.city) : ''}<br><span class="mute">${esc(p.qb_subcustomer_name || 'not matched')}</span></span>
         <span><input data-qb-sub="${p.id}" value="${esc(p.qb_subcustomer_id || '')}" placeholder="sub-customer id, blank clears it"> <button type="button" class="ghost qbSubSave" data-pid="${p.id}">Save</button></span>
       </div>`).join('')}
+      <div id="qbPreview"></div>
       <div class="err" id="qbe"></div>
     </div>
     <div class="card">
@@ -173,13 +174,28 @@ async function customer(id) {
       toast('QuickBooks parent saved'); route();
     } catch (e) { fail(e, document.getElementById('qbe')); btn.disabled = false; }
   };
+  const drawPreview = lines => {
+    const box = document.getElementById('qbPreview');
+    const word = { match: 'match', create: 'will add', ambiguous: 'needs a pick', skip: 'skipped' };
+    box.innerHTML = (lines || []).map(l => `<div class="ps">${esc(l.address || 'property')} — ${esc(word[l.action] || l.action)}${l.qb_subcustomer_name ? ': ' + esc(l.qb_subcustomer_name) : ''}${l.error ? ' — ' + esc(l.error) : ''}</div>`).join('')
+      + ((lines || []).some(l => l.action === 'match' || l.action === 'create') ? '<div class="actions"><button type="button" id="qbConfirm">Confirm</button></div>' : '');
+    const go = document.getElementById('qbConfirm');
+    if (go) go.onclick = async () => {
+      go.disabled = true;
+      try {
+        await call(`/w/qb-map/${id}`, { method: 'POST', body: { confirm: true } });
+        toast('QuickBooks customers saved');
+        route();
+      } catch (e) { fail(e, document.getElementById('qbe')); go.disabled = false; }
+    };
+  };
   document.getElementById('qbMatch').onclick = async () => {
     const btn = document.getElementById('qbMatch'); btn.disabled = true;
     try {
       const out = await call(`/w/qb-map/${id}`, { method: 'POST', body: {} });
-      const bad = (out.lines || []).filter(l => l.error);
-      toast(bad.length ? `Matched. Still needs a pick: ${bad.map(l => (l.address || 'property') + ' — ' + l.error).join(' · ')}` : 'Matched — QuickBooks customers saved', !bad.length);
-      route();
+      drawPreview(out.lines || []);
+      toast('Look over the list, then confirm');
+      btn.disabled = false;
     } catch (e) { fail(e, document.getElementById('qbe')); btn.disabled = false; }
   };
   document.querySelectorAll('.qbSubSave').forEach(b => b.onclick = async () => {

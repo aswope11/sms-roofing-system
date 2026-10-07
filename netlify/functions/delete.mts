@@ -57,6 +57,8 @@ export default async (req: Request) => {
       await q(`DELETE FROM material_category WHERE job_id = ANY($1::int[])`, [ids]);
       await q(`UPDATE supply_lines SET job_id = NULL WHERE job_id = ANY($1::int[])`, [ids]);
       await q(`DELETE FROM files WHERE job_id = ANY($1::int[])`, [ids]);
+      await q(`DELETE FROM qb_sync_attempts WHERE job_id = ANY($1::int[])`, [ids]);
+      await q(`DELETE FROM qb_sync_claims WHERE job_id = ANY($1::int[])`, [ids]);
       await q(`DELETE FROM jobs WHERE id = ANY($1::int[])`, [ids]);
       return files.map((f: any) => blobKeys(f)).flat();
     };
