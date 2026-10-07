@@ -1,7 +1,6 @@
 -- A copy of an unsent invoice at the moment Work is done is undone (reopen).
 -- Adds a table only. No existing invoice, stop, or payment row is changed.
--- Safe to run again: if the table is already there, this does nothing.
-CREATE TABLE IF NOT EXISTS invoice_archive (
+CREATE TABLE invoice_archive (
   id SERIAL PRIMARY KEY,
   invoice_id INTEGER,
   job_id INTEGER,
