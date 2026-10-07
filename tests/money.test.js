@@ -547,10 +547,11 @@ test('LAW: the app reads the mail and files it — it never sends. It may take a
   assert.ok(api.includes('kind === "gmail"') && api.includes('gmail.modify'));
   assert.ok(!/gmail\.send|gmail\.compose|mail\.google\.com\/"/.test(api), 'never send');
   const w = readFileSync('netlify/functions/work.mts', 'utf8');
-  for (const s of ['kind === "mail"', 'drawerFor', "'needs_you'", 'action === "assign"', 'action === "place"', 'removeLabelIds']) assert.ok(w.includes(s), s);
+  for (const s of ['kind === "mail"', 'drawerFor', "'needs_you'", 'action === "assign"', 'action === "place"', 'removeLabelIds', 'addLabelIds', 'CRM imported', 'label_kept', 'gmail_message_id', 'mail_import_log']) assert.ok(w.includes(s), s);
   assert.ok(!/users\/me\/messages\/send|\/drafts/.test(w), 'no send path');
+  assert.ok(!w.includes('for (const x of inLabels.filter(x => seen.get(x.id) === "filed"'), 'a filed email is not unlabeled on the next run');
   const page = readFileSync('public/mail.js', 'utf8');
-  for (const s of ['Check the labels now', "Who's it for?", 'Put it on a job', 'Not ours', 'it can never send']) assert.ok(page.includes(s), s);
+  for (const s of ['Check the labels now', "Who's it for?", 'Put it on a job', 'Not ours', 'it can never send', 'Import problems', 'import_problems']) assert.ok(page.includes(s), s);
 });
 
 test('Supply Houses, the old board way: owed by due date, credits under the bill they come off, one payment over many bills, nothing unapplied, one-click paid', () => {
@@ -591,6 +592,7 @@ test('LAW: the app reads only the five SMS labels on its own — no whole-inbox 
   for (const l of ['!SMS/BID', '!SMS/R', '!SMS/CO', '!SMS/JC', '!SMS/UC']) assert.ok(work.includes(`"${l}"`), l);
   assert.ok(!work.includes('newer_than:14d -in:chats'), 'the whole-inbox sweep is back');
   assert.ok(sched.includes('schedule: "*/15 * * * *"'), 'the label check is not on a 15-minute schedule');
+  assert.ok(sched.includes('20000'), 'the label check stops around 20 seconds and resumes next run');
   assert.ok(!/messages\/send|drafts|\/send"/.test(work), 'the app can send mail');
   // Claude is only asked after the "nothing in the labels" return
   assert.ok(work.indexOf('if (!todo.length) return') < work.indexOf('await claudeRead('), 'Claude is called before the empty-label check');
