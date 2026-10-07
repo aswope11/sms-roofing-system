@@ -225,13 +225,37 @@ export async function schedulePage(start) {
   $app().querySelectorAll('button[data-act]').forEach(b => b.onclick = ev => { ev.stopPropagation(); activeDay = b.dataset.act === w.today ? null : b.dataset.act; schedulePage(w.start); });
   $app().querySelectorAll('th[data-green]').forEach(th => th.onclick = () => {
     const d = th.dataset.green, green = !isGreen(d);
+    if (window._smsGreenBusy) { toast('Still talking to QuickBooks. Wait for it to finish.', false); return; }
+    window._smsGreenBusy = true;
+    th.style.opacity = '.5';
     run(async () => {
-      const { result } = await doAndProve('/w/green', { method: 'PUT', body: { work_date: d, green } }, weekUrl,
-        back => back.green.some(g => g.work_date === d && g.green) === green,
-        green ? `${dayHead(d)} is green — good to bill (read back and it matches)` : `${dayHead(d)} taken back — not accounted for (read back and it matches)`);
-      const done = result.qb_done || [], errs = result.qb_errors || [];
-      if (errs.length) toast(`QuickBooks: ${[...done, ...errs.map(e => 'NOT DONE — ' + e)].join(' · ')}`, false);
-      else if (done.length) toast(`${green ? 'Placeholders in QuickBooks' : 'Placeholders deleted from QuickBooks'}: ${done.join(' · ')}`);
+      try {
+        const done = [], errs = [];
+        const first = await doAndProve('/w/green', { method: 'PUT', body: { work_date: d, green } }, weekUrl,
+          back => back.green.some(g => g.work_date === d && g.green) === green,
+          green ? `${dayHead(d)} is green — good to bill (read back and it matches)` : `${dayHead(d)} taken back — not accounted for (read back and it matches)`);
+        let result = first.result;
+        done.push(...(result.qb_done || []));
+        errs.push(...(result.qb_errors || []));
+        while (green && result.pending) {
+          result = await call('/w/green', { method: 'PUT', body: { work_date: d, green: true, resume: true } });
+          done.push(...(result.qb_done || []));
+          errs.push(...(result.qb_errors || []));
+        }
+        const left = result.qb_left || [];
+        const removed = done.filter(x => !String(x).startsWith('left in QuickBooks'));
+        if (!green && left.length) {
+          const parts = [];
+          if (removed.length) parts.push(removed.join(' · '));
+          parts.push(`left in QuickBooks: ${left.map(n => '#' + n).join(', ')} — those were already there and were not changed`);
+          if (errs.length) parts.push(...errs.map(e => 'NOT DONE — ' + e));
+          toast(parts.join(' · '), !errs.length);
+        } else if (errs.length) toast(`QuickBooks: ${[...done, ...errs.map(e => 'NOT DONE — ' + e)].join(' · ')}`, false);
+        else if (done.length) toast(`${green ? 'Placeholders in QuickBooks' : 'Placeholders deleted from QuickBooks'}: ${done.join(' · ')}`);
+      } finally {
+        window._smsGreenBusy = false;
+        th.style.opacity = '';
+      }
     });
   });
 

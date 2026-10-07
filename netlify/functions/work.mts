@@ -10,6 +10,7 @@ import { getDatabase } from "@netlify/database";
 import { getStore } from "@netlify/blobs";
 import type { Config } from "@netlify/functions";
 import * as M from "../../lib/money.js";
+import * as QB from "../../lib/qbsync.js";
 import * as TALK from "../../lib/bidtalk.js";
 import { addressKey, chunkCount, CHUNK_BYTES } from "../../lib/rules.js";
 import zlib from "node:zlib";
@@ -33,7 +34,7 @@ function norm(v: any): any {
 const today = () => new Date(Date.now() - 5 * 3600 * 1000).toISOString().slice(0, 10); // Central time
 
 const JOB_COLS = (sql: any) => sql`
-  SELECT j.*, p.address, p.city, COALESCE(NULLIF(j.tenant_name, ''), p.tenant) AS tenant, p.gc, p.customer_id, p.contract_amount, p.bill_name, p.bill_addr, p.ship_addr, c.name AS customer_name, pj.title AS parent_title, pj.tag AS parent_tag
+  SELECT j.*, p.address, p.city, COALESCE(NULLIF(j.tenant_name, ''), p.tenant) AS tenant, p.gc, p.customer_id, p.contract_amount, p.bill_name, p.bill_addr, p.ship_addr, p.qb_subcustomer_id, p.qb_subcustomer_name, c.name AS customer_name, c.qb_customer_id, c.qb_customer_name, pj.title AS parent_title, pj.tag AS parent_tag
   FROM jobs j JOIN properties p ON p.id = j.property_id JOIN customers c ON c.id = p.customer_id LEFT JOIN jobs pj ON pj.id = j.parent_job_id`;
 
 // ================= QUICKBOOKS =================
@@ -69,36 +70,6 @@ async function qb(method: string, path: string, payload?: any) {
 }
 const qbQuery = (q: string) => qb("GET", `query?query=${encodeURIComponent(q)}`).then((d: any) => d.QueryResponse || {});
 const qEsc = (s: string) => String(s || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
-// QuickBooks customer = the property. Find it by address; none → create it named "address - city - tenant"; more than one → stop and name them.
-async function qbCustomerFor(job: any) {
-  const addr = String(job.address || "").trim();
-  const found = (await qbQuery(`SELECT Id, DisplayName FROM Customer WHERE DisplayName LIKE '${qEsc(addr)}%' AND Active = true`)).Customer || [];
-  if (found.length === 1) return found[0];
-  if (found.length > 1) {
-    // WHOLE PROPERTY (10/1/26): no tenant on the ticket → the customer named exactly the address
-    if (!String(job.tenant || "").trim()) { const whole = found.filter((c: any) => c.DisplayName.trim().toLowerCase() === addr.toLowerCase()); if (whole.length === 1) return whole[0]; }
-    // several customers at one address (e.g. Building 1-4): pick the one named for this job's building — the CO's parent job, or the job itself
-    let pool = found;
-    const city = String(job.city || "").trim().toLowerCase();
-    const byCity = city ? pool.filter((c: any) => c.DisplayName.toLowerCase().includes(city)) : [];
-    if (byCity.length === 1) return byCity[0];
-    if (byCity.length) pool = byCity;
-    for (const name of [job.tenant, job.parent_title, job.title]) {   // TENANT IS THE ANSWER (10/1/26): the ticket's tenant picks the QB customer first
-      const n = String(name || "").trim().toLowerCase();
-      if (!n) continue;
-      const hit = pool.filter((c: any) => { const d = c.DisplayName.toLowerCase(); return d.endsWith(" - " + n) || d.includes(" - " + n + " -") || d.includes(" " + n); });
-      const exact = hit.filter((c: any) => c.DisplayName.toLowerCase().endsWith(" - " + n));
-      if (exact.length === 1) return exact[0];
-      if (hit.length === 1) return hit[0];
-    }
-    // no QB customer has this ticket's tenant yet -> fall through and make "address - city - tenant" under the company
-    if (!String(job.tenant || "").trim()) throw new Error(`QuickBooks has ${found.length} customers at ${addr}: ${found.map((c: any) => c.DisplayName).join(" / ")} — fix the names in QuickBooks, then Send to QuickBooks.`);
-  }
-  const name = [addr, job.city, job.tenant].map((x: any) => String(x || "").trim()).filter(Boolean).join(" - ");
-  // A new property never lands loose: it goes UNDER its company (Four Corners, Wortham…) — his AR rolls up by company.
-  const parent = ((await qbQuery(`SELECT Id FROM Customer WHERE DisplayName = '${qEsc(String(job.customer_name || "").trim())}' AND Active = true`)).Customer || [])[0];
-  return (await qb("POST", "customer", { DisplayName: name, ...(parent ? { ParentRef: { value: parent.Id }, Job: true, BillWithParent: false } : {}) })).Customer;
-}
 async function qbNextNumber() {
   const rows = (await qbQuery("SELECT DocNumber FROM Invoice ORDERBY MetaData.CreateTime DESC MAXRESULTS 100")).Invoice || [];
   const nums = rows.map((r: any) => Number(r.DocNumber)).filter((n: number) => Number.isFinite(n) && n > 0);
@@ -130,28 +101,28 @@ async function pushInvoiceToQB(sql: any, invoiceId: number, job: any) {
   try {
     // Four Corners bill-to (LLC + address) gets checked BEFORE the invoice goes to the customer.
     // 10/6/26, his order: it can NEVER hold up work complete — the QB invoice always gets written and the placeholder always zeroed.
-    // SAME CUSTOMER AS ITS PLACEHOLDER (10/4/26): the real invoice goes to the QuickBooks customer its placeholder is already on.
-    // A name lookup could miss a spelling (6101 Windhaven Pkwy vs Parkway) and make a duplicate customer; the placeholder never lies.
-    let cust: any = null;
-    const [phRow] = norm(await sql`SELECT qb_id FROM invoices WHERE job_id = ${inv.job_id} AND kind = 'placeholder' AND COALESCE(qb_id, '') <> '' ORDER BY id DESC LIMIT 1`);
-    if (phRow?.qb_id) {
-      try { const phInv = (await qb('GET', `invoice/${phRow.qb_id}`)).Invoice; if (phInv?.CustomerRef?.value) cust = { Id: phInv.CustomerRef.value, DisplayName: phInv.CustomerRef.name || '' }; } catch (e: any) { /* fall back to the lookup */ }
-    }
-    if (!cust) cust = await qbCustomerFor(job);
+    // NEW SYNCS GO BY THE SAVED QUICKBOOKS ID (10/7/26). Nothing already in QuickBooks is moved or re-sent.
+    const store = QB.makeSqlStore(sql, norm);
+    const resolved = await QB.resolveCustomer({ qb, store, job, cache: { customers: null, classes: null } });
+    if (resolved.error) throw new Error(resolved.error);
+    const cust = { Id: resolved.customerId, DisplayName: resolved.displayName };
     const DocNumber = await qbNextNumber();
     const made = (await qb("POST", "invoice", {
       CustomerRef: { value: cust.Id }, DocNumber, TxnDate: inv.inv_date, DueDate: inv.inv_date, PrivateNote: inv.memo, ...billTo(job),
       ...(scopeInNote(job) ? { CustomerMemo: { value: scopeNote(inv.scope, inv.covers_through) } } : {}),
       Line: [{ DetailType: "SalesItemLineDetail", Amount: Number(inv.amount), Description: scopeInNote(job) ? "" : inv.scope,
-        SalesItemLineDetail: { ItemRef: { value: "1" }, Qty: 1, UnitPrice: Number(inv.amount) } }],
+        SalesItemLineDetail: { ItemRef: { value: "1" }, Qty: 1, UnitPrice: Number(inv.amount), ...(resolved.classId ? { ClassRef: { value: resolved.classId } } : {}) } }],
     })).Invoice;
     const back = (await qb("GET", `invoice/${made.Id}`)).Invoice;
     if (!back || Number(back.TotalAmt) !== Number(inv.amount) || back.DocNumber !== DocNumber) throw new Error("QuickBooks read-back doesn't match — check invoice #" + DocNumber + " in QuickBooks.");
     await sql`UPDATE invoices SET qb_id = ${made.Id}, number = ${DocNumber}, qb_error = '' WHERE id = ${invoiceId}`;
+    await sql`INSERT INTO qb_sync_attempts (job_id, work_date, kind, ok, qb_error, qb_id) VALUES (${inv.job_id}, ${inv.work_date || null}, 'real', TRUE, '', ${made.Id})`;
     const zeroErr = await zeroReplacedPlaceholders(sql, inv, job);
     return { number: DocNumber, customer: cust.DisplayName, zero_error: zeroErr.join(" · ") };
   } catch (e: any) {
-    await sql`UPDATE invoices SET qb_error = ${String(e?.message || e)} WHERE id = ${invoiceId}`;
+    const msg = String(e?.message || e);
+    await sql`UPDATE invoices SET qb_error = ${msg} WHERE id = ${invoiceId}`;
+    await sql`INSERT INTO qb_sync_attempts (job_id, work_date, kind, ok, qb_error, qb_id) VALUES (${inv.job_id}, ${inv.work_date || null}, 'real', FALSE, ${msg}, '')`;
     throw e;
   }
 }
@@ -194,28 +165,7 @@ async function qbSetDate(qbId: string, date: string) {
   await qb("POST", "invoice", { Id: qbId, SyncToken: cur.SyncToken, sparse: true, TxnDate: date, DueDate: date });
 }
 
-// Step 2 placeholder into QuickBooks: dated 2 weeks after the day worked, due the same day, memo = type + day, one "Services Rendered - Roof" line.
 const mdyy = (iso: string) => { const [y, mo, d] = String(iso).slice(0, 10).split("-"); return `${Number(mo)}/${Number(d)}/${y.slice(2)}`; };
-async function pushPlaceholderToQB(sql: any, o: any, amount: number) {
-  if (!(amount > 0)) throw new Error("Can't do that yet — missing: a price — a $0 placeholder puts nothing in AR");
-  const [seated] = norm(await sql`SELECT id FROM invoices WHERE kind = 'placeholder' AND job_id = ${o.job.id} AND work_date = ${o.work_date}`);
-  if (seated) throw new Error("That day already has a placeholder.");
-  const cust = await qbCustomerFor(o.job);
-  const DocNumber = await qbNextNumber();
-  const inv_date = M.addDays(o.work_date, 14);
-  const memo = M.placeholderMemo(o.job, o.work_date);
-  const desc = [`Date: ${mdyy(o.work_date)}`, ...o.labor.map((l: any) => l.how + (l.amount != null ? ` = ${M.money(l.amount)}` : "")),
-    ...(o.material_cost ? [`Material ${M.money(o.material_cost)}${o.job.tag === "JC" ? "" : " × 1.2"} = ${M.money(M.billMaterial(o.material_cost, o.job.tag))}`] : [])].join("\n\n");
-  const made = (await qb("POST", "invoice", {
-    CustomerRef: { value: cust.Id }, DocNumber, TxnDate: inv_date, DueDate: inv_date, PrivateNote: memo,
-    Line: [{ DetailType: "SalesItemLineDetail", Amount: amount, Description: desc, SalesItemLineDetail: { ItemRef: { value: "1" }, Qty: 1, UnitPrice: amount } }],
-  })).Invoice;
-  const back = (await qb("GET", `invoice/${made.Id}`)).Invoice;
-  if (!back || Number(back.TotalAmt) !== amount || back.DocNumber !== DocNumber) throw new Error("QuickBooks read-back doesn't match — check placeholder #" + DocNumber + " in QuickBooks.");
-  const [r] = norm(await sql`INSERT INTO invoices (job_id, kind, name, number, amount, inv_date, work_date, memo, qb_id)
-    VALUES (${o.job.id}, 'placeholder', '', ${DocNumber}, ${amount}, ${inv_date}, ${o.work_date}, ${memo}, ${made.Id}) RETURNING *`);
-  return { number: DocNumber, customer: cust.DisplayName, amount, invoice: r };
-}
 // Real invoice written → the QuickBooks placeholder it replaces goes to $0 and is renamed Job Cost N, memo kept.
 async function qbZeroPlaceholder(qbId: string, name: string) {
   const cur = (await qb("GET", `invoice/${qbId}`)).Invoice;
@@ -597,7 +547,7 @@ export default async function handler(req: Request) {
           owed.push({ job: j, work_date: d, labor, material_cost: M.round2(matCost), suggested });
         }
       }
-      return { owed, greens, shares, jobIds, owedJobs };
+      return { owed, greens, shares, jobIds, owedJobs, mat };
   };
 
   try {
@@ -893,27 +843,33 @@ export default async function handler(req: Request) {
       const [row] = await sql`INSERT INTO green_days (work_date, green, changed_at) VALUES (${b.work_date}, ${!!b.green}, NOW())
         ON CONFLICT (work_date) DO UPDATE SET green = EXCLUDED.green, changed_at = NOW() RETURNING *`;
       // Step 2: day goes green → a priced placeholder in QuickBooks for every R / CO / UC ticket that day. Taken back → those placeholders are deleted.
+      // QB SYNC (10/7/26): one job at a time, and only rows this sync created. Invoices already in QuickBooks are left alone.
       const qbDone: string[] = [], qbErrors: string[] = [];
+      let pending = false;
       if (b.green) {
-        // a placeholder he deleted in QuickBooks by hand is gone — clear the app's copy so the day can go in again
-        for (const p of norm(await sql`SELECT * FROM invoices WHERE kind = 'placeholder' AND work_date = ${b.work_date} AND amount > 0 AND qb_id <> ''`)) {
+        // a placeholder this sync made, which he deleted in QuickBooks by hand, can go in again. Older ones are not cleared and not re-sent.
+        for (const p of norm(await sql`SELECT * FROM invoices WHERE kind = 'placeholder' AND work_date = ${b.work_date} AND amount > 0 AND qb_id <> '' AND qb_sync`)) {
           try { await qb("GET", `invoice/${p.qb_id}`); } catch (e: any) { if (qbGone(e)) await sql`DELETE FROM invoices WHERE id = ${p.id}`; }
         }
         const { owed } = await owedList();
-        for (const o of owed.filter((x: any) => x.work_date === b.work_date)) {
-          const label = `${M.ticketName(o.job)}`;
-          if (o.suggested == null) { qbErrors.push(`${label}: not priced (5+ stops) — use Send to QuickBooks on Invoicing`); continue; }
-          try { const r = await pushPlaceholderToQB(sql, o, o.suggested); qbDone.push(`#${r.number} ${label} ${M.money(r.amount)}`); }
-          catch (e: any) { qbErrors.push(`${label}: ${String(e?.message || e)}`); }
-        }
+        const slots = owed.filter((x: any) => x.work_date === b.work_date).map((o: any) => ({
+          job: o.job, work_date: o.work_date, labor: o.labor, material_cost: o.material_cost, amount: o.suggested, allowRetry: false,
+        }));
+        const out = await QB.syncSlots({ qb, store: QB.makeSqlStore(sql, norm), slots, budgetMs: 6000, nextNumber: () => qbNextNumber() });
+        qbDone.push(...out.done);
+        qbErrors.push(...out.errors);
+        pending = out.pending;
       } else {
-        const gone = norm(await sql`SELECT * FROM invoices WHERE kind = 'placeholder' AND work_date = ${b.work_date} AND amount > 0`);
+        const gone = norm(await sql`SELECT * FROM invoices WHERE kind = 'placeholder' AND work_date = ${b.work_date} AND amount > 0 AND qb_sync`);
         for (const p of gone) {
           try { const how = p.qb_id ? await qbDeleteInvoice(p.qb_id) : ""; await sql`DELETE FROM invoices WHERE id = ${p.id}`; qbDone.push(`deleted #${p.number}${how ? " (" + how + " in QuickBooks)" : ""}`); }
           catch (e: any) { qbErrors.push(`#${p.number}: ${String(e?.message || e)}`); }
         }
+        const left = norm(await sql`SELECT number FROM invoices WHERE kind = 'placeholder' AND work_date = ${b.work_date} AND amount > 0 AND qb_sync = FALSE AND COALESCE(qb_id, '') <> ''`);
+        if (left.length) qbDone.push(`left in QuickBooks: ${left.map((p: any) => "#" + p.number).join(", ")}`);
+        return json({ ...norm(row), qb_done: qbDone, qb_errors: qbErrors, pending, qb_left: left.map((p: any) => p.number) });
       }
-      return json({ ...norm(row), qb_done: qbDone, qb_errors: qbErrors });
+      return json({ ...norm(row), qb_done: qbDone, qb_errors: qbErrors, pending, qb_left: [] });
     }
 
     // ================= ONE TICKET: its ledger and its life =================
@@ -1043,6 +999,7 @@ export default async function handler(req: Request) {
         const after = { ...job, scope_note: !!b.value };
         let qb_error = '';
         if (String(r.scope || '').trim()) for (const inv of norm(await sql`SELECT * FROM invoices WHERE job_id = ${id} AND kind = 'real' AND sent_at IS NULL AND COALESCE(qb_id, '') <> ''`)) {
+          if (inv.qb_id === job.qb_co_invoice_id) continue;   // the running change-order invoice keeps its day lines
           try { await qbSetScope(inv.qb_id, String(r.scope), scopeInNote(after), inv.covers_through); } catch (e: any) { qb_error = String(e?.message || e); }
         }
         return json({ ...norm(r), qb_error });
@@ -1056,7 +1013,7 @@ export default async function handler(req: Request) {
         let qb_error = '';
         for (const inv of openInvs) {
           await sql`UPDATE invoices SET scope = ${scopeWords} WHERE id = ${inv.id}`;
-          if (inv.qb_id) { try { await qbSetScope(inv.qb_id, scopeWords, scopeInNote(job), inv.covers_through); } catch (e: any) { qb_error = String(e?.message || e); } }
+          if (inv.qb_id && inv.qb_id !== job.qb_co_invoice_id) { try { await qbSetScope(inv.qb_id, scopeWords, scopeInNote(job), inv.covers_through); } catch (e: any) { qb_error = String(e?.message || e); } }
         }
         return json({ ...norm(r), qb_error });
       }
@@ -1074,7 +1031,7 @@ export default async function handler(req: Request) {
             const open = norm(await sql`SELECT * FROM invoices WHERE job_id = ${id} AND kind = 'real' AND sent_at IS NULL`);
             for (const inv of open) {
               await sql`UPDATE invoices SET scope = ${String(row.scope)} WHERE id = ${inv.id}`;
-              if (inv.qb_id) { try { await qbSetScope(inv.qb_id, String(row.scope), scopeInNote(job), inv.covers_through); } catch (e: any) { /* the scope still saved in the app */ } }
+              if (inv.qb_id && inv.qb_id !== job.qb_co_invoice_id) { try { await qbSetScope(inv.qb_id, String(row.scope), scopeInNote(job), inv.covers_through); } catch (e: any) { /* the scope still saved in the app */ } }
             }
           }
           return row;
@@ -1153,9 +1110,11 @@ export default async function handler(req: Request) {
         if (b.kind === "placeholder" && !M.canPlaceholder(job.tag)) return refuse("A JC never goes to QuickBooks — its draw schedule bills it. No placeholder on a JC.");
         // NO DOLLAR AMOUNT IS NOT A REASON TO REFUSE. It saves at $0 and says the price is missing.
         const miss = b.kind === "placeholder" ? M.missingOnPlaceholder(b) : (Number(b.amount) > 0 ? [] : ["the dollar amount"]);
+        const number = String(b.number || "").trim();
         const [r] = await sql`INSERT INTO invoices (job_id, kind, name, number, amount, inv_date, work_date)
-          VALUES (${job.id}, ${b.kind}, ${String(b.name || "").trim()}, ${String(b.number || "").trim()}, ${Number(b.amount) || 0}, ${b.inv_date || null}, ${b.work_date || null})
+          VALUES (${job.id}, ${b.kind}, ${String(b.name || "").trim()}, ${number}, ${Number(b.amount) || 0}, ${b.inv_date || null}, ${b.work_date || null})
           RETURNING *`;
+        if (b.kind === "placeholder" && number) await sql`UPDATE qb_sync_claims SET state = 'done', doc_number = ${number}, updated_at = NOW() WHERE job_id = ${job.id} AND work_date = ${b.work_date} AND COALESCE(qb_id, '') = ''`;
         return json({ ...norm(r), missing: miss }, 201);
       }
       const [inv] = id ? norm(await sql`SELECT * FROM invoices WHERE id = ${id}`) : [];
@@ -1164,8 +1123,13 @@ export default async function handler(req: Request) {
       if (m === "PUT" && !action) {
         if (inv.paid_at && Number(b.amount) !== Number(inv.amount)) return refuse("It's marked paid — un-mark paid before changing the amount.");
         const miss = inv.kind !== "placeholder" && !(Number(b.amount) > 0) ? ["the dollar amount"] : [];
-        const [r] = await sql`UPDATE invoices SET number = ${String(b.number || "").trim()}, amount = ${Number(b.amount) || 0},
-          inv_date = ${b.inv_date || null}, name = ${String(b.name ?? inv.name)} WHERE id = ${id} RETURNING *`;
+        const number = String(b.number || "").trim();
+        // A number he types himself (no QuickBooks id yet) is his invoice. It leaves the owed list and is never sent or edited from here.
+        const handSeat = inv.kind === "placeholder" && number && !String(inv.qb_id || "").trim();
+        const [r] = await sql`UPDATE invoices SET number = ${number}, amount = ${Number(b.amount) || 0},
+          inv_date = ${b.inv_date || null}, name = ${String(b.name ?? inv.name)},
+          qb_error = ${handSeat ? "" : inv.qb_error}, qb_sync = ${handSeat ? false : !!inv.qb_sync} WHERE id = ${id} RETURNING *`;
+        if (handSeat) await sql`UPDATE qb_sync_claims SET state = 'done', doc_number = ${number}, updated_at = NOW() WHERE job_id = ${inv.job_id} AND work_date = ${inv.work_date} AND COALESCE(qb_id, '') = ''`;
         return json({ ...norm(r), missing: miss });
       }
       if (m === "POST" && action === "zero") {
@@ -1248,6 +1212,75 @@ export default async function handler(req: Request) {
       return json(norm(r));
     }
 
+    // ================= QUICKBOOKS CUSTOMER MAP =================
+    // Read existing customers, save their ids, create a property sub-customer only when none matches.
+    // Never creates a parent. Never changes a bill already in QuickBooks.
+    if (kind === "qb-map") {
+      const store = QB.makeSqlStore(sql, norm);
+      if (m === "POST" && id) {
+        const [c] = norm(await sql`SELECT * FROM customers WHERE id = ${id}`);
+        if (!c) return refuse("That customer doesn't exist.", 404);
+        const props = norm(await sql`SELECT * FROM properties WHERE customer_id = ${id} ORDER BY id`);
+        const customers = await QB.listActiveCustomers(qb);
+        const hit = QB.matchParent(c.name, customers);
+        if (hit.error) return refuse(hit.error);
+        await store.saveParent(c.id, hit.customer);
+        const lines: any[] = [];
+        for (const p of props) {
+          const where = [p.address, p.city].filter(Boolean).join(", ");
+          if (p.qb_subcustomer_id) {
+            lines.push({ property_id: p.id, address: where, qb_subcustomer_id: p.qb_subcustomer_id, qb_subcustomer_name: p.qb_subcustomer_name, created: false });
+            continue;
+          }
+          const subHit = QB.matchSub({ address: p.address, city: p.city, tenant: p.tenant }, hit.customer, customers);
+          if (subHit.error) { lines.push({ property_id: p.id, address: where, error: subHit.error }); continue; }
+          let sub = subHit.customer;
+          let created = false;
+          if (!sub) {
+            const display = QB.subDisplayName({ address: p.address, city: p.city, tenant: p.tenant });
+            if (!display) { lines.push({ property_id: p.id, address: where, error: "No address on this property, so no QuickBooks sub-customer was created." }); continue; }
+            sub = (await qb("POST", "customer", { DisplayName: display, ParentRef: { value: String(hit.customer.Id) }, Job: true, BillWithParent: false })).Customer;
+            customers.push(sub);
+            created = true;
+          }
+          await store.saveSub(p.id, sub);
+          lines.push({ property_id: p.id, address: where, qb_subcustomer_id: String(sub.Id), qb_subcustomer_name: sub.DisplayName || sub.FullyQualifiedName || "", created });
+        }
+        return json({ qb_customer_id: String(hit.customer.Id), qb_customer_name: hit.customer.DisplayName || "", lines });
+      }
+      if (m === "PUT") {
+        const b = await body();
+        if (b.customer_id) {
+          const cid = Number(b.customer_id);
+          const qid = String(b.qb_customer_id ?? "").trim();
+          if (!qid) {
+            await sql`UPDATE customers SET qb_customer_id = '', qb_customer_name = '' WHERE id = ${cid}`;
+            return json({ customer_id: cid, qb_customer_id: "", qb_customer_name: "" });
+          }
+          const cust = (await qb("GET", `customer/${encodeURIComponent(qid)}`)).Customer;
+          if (!cust?.Id) return refuse("QuickBooks has no customer with that id.");
+          const name = cust.DisplayName || cust.FullyQualifiedName || "";
+          await sql`UPDATE customers SET qb_customer_id = ${String(cust.Id)}, qb_customer_name = ${name} WHERE id = ${cid}`;
+          return json({ customer_id: cid, qb_customer_id: String(cust.Id), qb_customer_name: name });
+        }
+        if (b.property_id) {
+          const pid = Number(b.property_id);
+          const qid = String(b.qb_subcustomer_id ?? "").trim();
+          await sql`UPDATE jobs SET qb_bucket_customer_id = '', qb_class_id = '' WHERE property_id = ${pid}`;
+          if (!qid) {
+            await sql`UPDATE properties SET qb_subcustomer_id = '', qb_subcustomer_name = '' WHERE id = ${pid}`;
+            return json({ property_id: pid, qb_subcustomer_id: "", qb_subcustomer_name: "" });
+          }
+          const cust = (await qb("GET", `customer/${encodeURIComponent(qid)}`)).Customer;
+          if (!cust?.Id) return refuse("QuickBooks has no customer with that id.");
+          const name = cust.FullyQualifiedName || cust.DisplayName || "";
+          await sql`UPDATE properties SET qb_subcustomer_id = ${String(cust.Id)}, qb_subcustomer_name = ${name} WHERE id = ${pid}`;
+          return json({ property_id: pid, qb_subcustomer_id: String(cust.Id), qb_subcustomer_name: name });
+        }
+        return refuse("Say which customer or property.");
+      }
+    }
+
     // ================= INVOICING PAGE =================
     // INVOICE PDF (10/4/26): the QuickBooks PDF of one invoice (by its QuickBooks id), so it can go into an email draft he sends himself.
     if (kind === "qb-pdf" && id && m === "GET") {
@@ -1289,8 +1322,32 @@ export default async function handler(req: Request) {
       const invs = ids.length ? norm(await sql`SELECT * FROM invoices WHERE job_id = ANY(${ids}::int[])`) : [];
       const tickets = done.map((j: any) => ({ ...j, invoices: invs.filter((i: any) => i.job_id === j.id) }))
         .filter((j: any) => M.inInvoicing(j, j.invoices) || (j.tabled_at && !j.no_charge));
-      // Placeholders owed: every stop on a GREEN day on an R / CO / UC ticket with no priced seat for that day. JC never.
-      const { owed, greens, shares, jobIds, owedJobs } = await owedList();
+      // Placeholders owed (10/7/26): a saved QuickBooks failure, or a job a started run never reached. A green day that was never attempted is not listed.
+      const pack = await owedList();
+      const { shares, jobIds, owedJobs, mat } = pack;
+      const attempts = norm(await sql`SELECT * FROM qb_sync_attempts`);
+      const claims = norm(await sql`SELECT * FROM qb_sync_claims`);
+      const failIds = [...new Set([...attempts.map((a: any) => a.job_id), ...claims.map((c: any) => c.job_id)])];
+      const failInvs = failIds.length ? norm(await sql`SELECT id, job_id, work_date, kind, qb_id, number, qb_error, qb_sync FROM invoices WHERE job_id = ANY(${failIds}::int[])`) : [];
+      const failRows = QB.owedRows({ attempts, claims, invoices: failInvs, now: Date.now() });
+      const gapRows = QB.gapsOnStartedDay(pack.owed.map((o: any) => ({ job_id: o.job.id, work_date: o.work_date })), claims, attempts)
+        .filter((g: any) => !failRows.some((f: any) => f.job_id === g.job_id && f.work_date === String(g.work_date).slice(0, 10)))
+        .map((g: any) => ({ ...g, qb_error: "QuickBooks sync stopped before this job. Nothing was sent for it. Press Send to QuickBooks to retry.", invoice_id: null }));
+      const allFail = [...failRows, ...gapRows];
+      const missingIds = allFail.map((r: any) => r.job_id).filter((jid: number) => !owedJobs.some((j: any) => j.id === jid));
+      const extraJobs = missingIds.length ? norm(await sql`${JOB_COLS(sql)} WHERE j.id = ANY(${missingIds}::int[])`) : [];
+      const jobById = new Map([...owedJobs, ...extraJobs].map((j: any) => [j.id, j]));
+      const owed = allFail.map((r: any) => {
+        const j = jobById.get(r.job_id);
+        if (!j) return null;
+        const d = String(r.work_date).slice(0, 10);
+        const lines = shares.filter((s: any) => s.job_id === j.id && s.work_date === d);
+        const labor = lines.map((s: any) => ({ ...M.billLabor(s), man: s.shows_as }));
+        const matCost = (mat || []).filter((x: any) => x.job_id === j.id && x.inv_date === d).reduce((a: number, x: any) => a + Number(x.line_total), 0);
+        const priced = labor.length > 0 && labor.every((l: any) => l.amount != null);
+        const suggested = priced ? M.round2(labor.reduce((a: number, l: any) => a + l.amount, 0) + M.billMaterial(matCost, j.tag)) : null;
+        return { job: j, work_date: d, labor, material_cost: M.round2(matCost), suggested, qb_error: r.qb_error, invoice_id: r.invoice_id || null };
+      }).filter(Boolean);
       // Ready to bill — fills itself (green day not billed yet; scope and pictures never hold it, 10/2/26), dollars from the rules
       const allMat = jobIds.length ? norm(await sql`SELECT l.job_id, l.line_total, s.inv_date FROM supply_lines l JOIN supply_invoices s ON s.id = l.invoice_id WHERE l.job_id = ANY(${jobIds}::int[])`) : [];
       const readyInvs = jobIds.length ? norm(await sql`SELECT * FROM invoices WHERE job_id = ANY(${jobIds}::int[])`) : [];
@@ -1318,11 +1375,27 @@ export default async function handler(req: Request) {
     // ================= PLACEHOLDER → QUICKBOOKS (button on Placeholders owed) =================
     if (kind === "placeholder-qb" && m === "POST") {
       const b = await body();
-      const { owed } = await owedList();
-      const o = owed.find((x: any) => x.job.id === Number(b.job_id) && x.work_date === b.work_date);
-      if (!o) return refuse("That day isn't owed a placeholder — it's not green, already seated, or covered by a real invoice.");
-      const amount = b.amount === "" || b.amount == null ? o.suggested : Number(b.amount);
-      return json(await pushPlaceholderToQB(sql, o, M.round2(Number(amount))), 201);
+      const job = norm(await loadJob(Number(b.job_id)));
+      if (!job) return refuse("That ticket doesn't exist.", 404);
+      if (!M.canPlaceholder(job.tag)) return refuse("A JC never goes to QuickBooks — its draw schedule bills it. No placeholder on a JC.");
+      const [synced] = norm(await sql`SELECT id, number FROM invoices WHERE job_id = ${job.id} AND kind = 'placeholder' AND work_date = ${b.work_date} AND COALESCE(qb_id, '') <> '' LIMIT 1`);
+      if (synced) return refuse(`Already in QuickBooks as #${synced.number}.`);
+      const { stops, crewDays } = await shareRowsFor([b.work_date]);
+      const crew = norm(await sql`SELECT * FROM crew`);
+      const shares = M.stopShares({ stops, crew, crewDays });
+      const matRows = norm(await sql`SELECT l.line_total FROM supply_lines l JOIN supply_invoices s ON s.id = l.invoice_id WHERE l.job_id = ${job.id} AND s.inv_date = ${b.work_date}`);
+      const lines = shares.filter((s: any) => s.job_id === job.id && s.work_date === b.work_date);
+      const labor = lines.map((s: any) => ({ ...M.billLabor(s), man: s.shows_as }));
+      const matCost = matRows.reduce((a: number, x: any) => a + Number(x.line_total), 0);
+      const priced = labor.length > 0 && labor.every((l: any) => l.amount != null);
+      const suggested = priced ? M.round2(labor.reduce((a: number, l: any) => a + l.amount, 0) + M.billMaterial(matCost, job.tag)) : null;
+      const amount = b.amount === "" || b.amount == null ? suggested : M.round2(Number(b.amount));
+      const out = await QB.syncSlots({
+        qb, store: QB.makeSqlStore(sql, norm), budgetMs: 20000, nextNumber: () => qbNextNumber(),
+        slots: [{ job, work_date: b.work_date, labor, material_cost: M.round2(matCost), amount, allowRetry: true }],
+      });
+      if (!out.results.length) return refuse(out.errors[0] || "QuickBooks did not take it.");
+      return json(out.results[0], 201);
     }
 
     // ================= WRITE THE INVOICE FROM "READY TO BILL" (his button, never automatic) =================
@@ -1330,6 +1403,11 @@ export default async function handler(req: Request) {
       const b = await body();
       const job = norm(await loadJob(id));
       if (!job) return refuse("That ticket doesn't exist.", 404);
+      // A change order this sync already opened stays that one invoice. Older QuickBooks invoices are not folded in or zeroed here.
+      if (job.tag === "CO" && job.qb_co_invoice_id) {
+        const [have] = norm(await sql`SELECT * FROM invoices WHERE qb_id = ${job.qb_co_invoice_id} AND qb_sync ORDER BY id LIMIT 1`);
+        if (have) return json({ invoice_id: have.id, amount: Number(have.amount), through: have.covers_through, inv_date: have.inv_date, memo: have.memo, zeroed: 0, qb: { number: have.number, customer: job.qb_subcustomer_name || "" }, qb_error: "", missing: [] }, 201);
+      }
       const greens = norm(await sql`SELECT work_date FROM green_days WHERE green`).map((g: any) => g.work_date);
       const { stops, crewDays } = await shareRowsFor(greens);
       const crew = norm(await sql`SELECT * FROM crew`);

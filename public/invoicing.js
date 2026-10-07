@@ -50,7 +50,8 @@ export async function invoicingPage() {
   // PLACEHOLDERS OWED
   html += grp('var(--bad)', 'Placeholders owed in QuickBooks', d.owed.length, d.owed.map((o, k) => `<div class="prow" style="border-left-color:var(--bad)">
       <a class="pmain" ${open(o.job.id)}><div class="pt">${shortDate(o.work_date)} · ${esc(ticketName(o.job))}</div>
-        <div class="ps">${esc(who(o.job))} · ${o.suggested != null ? money(o.suggested) : '<span class="redtxt">not priced</span>'}</div></a>
+        <div class="ps">${esc(who(o.job))} · ${o.suggested != null ? money(o.suggested) : '<span class="redtxt">not priced</span>'}</div>
+        ${o.qb_error ? `<div class="ps redtxt">${esc(o.qb_error)}</div>` : ''}</a>
       <div class="lanebtns"><button class="lb send phqb" data-k="${k}">Send to QuickBooks${o.suggested != null ? ' ' + money(o.suggested) : ''}</button><button class="lb seat" data-k="${k}">Put the QB number on</button></div></div>`).join(''));
   // READY TO BILL (10/4/26): invoice written, scope AND pictures checked — all that's left is emailing the customer
   // 10/4/26: no 'Real invoice owed' section. The app writes the invoice itself (work complete / both boxes ticked); if one ever didn't land, it shows here.
@@ -153,6 +154,12 @@ export async function invoicingPage() {
     run(async () => {
       const out = await call('/w/placeholder-qb', { method: 'POST', body: { job_id: o.job.id, work_date: o.work_date, amount: Number(amount) } });
       const back = await call(`/w/job/${o.job.id}`);
+      if (out.kind === 'co') {
+        const inv = back.invoices.find(i => i.id === out.invoice_id);
+        if (!inv || !inv.qb_id || inv.number !== out.number) throw new Error('That did not stick — the read-back does not show the change order invoice. Nothing was assumed.');
+        toast(`Change order in QuickBooks as #${out.number} — ${inv.name} for ${out.customer} ${money(out.amount)} (read back and it matches)`);
+        return;
+      }
       const p = back.invoices.find(i => i.kind === 'placeholder' && i.work_date === o.work_date);
       if (!p || !p.qb_id || p.number !== out.number || Number(p.amount) !== Number(out.amount)) throw new Error('That did not stick — the read-back does not show the placeholder. Nothing was assumed.');
       toast(`Placeholder in QuickBooks as #${out.number} for ${out.customer} ${money(out.amount)} (read back and it matches)`);
@@ -162,7 +169,8 @@ export async function invoicingPage() {
     const o = d.owed[Number(b.dataset.k)];
     const number = ask('QuickBooks placeholder number (blank if not in QuickBooks yet)'); if (number === null) return;
     const amount = ask('Price on it — never $0', o.suggested != null ? String(o.suggested) : ''); if (amount === null) return;
-    run(() => prove('/w/invoices', 'POST', { job_id: o.job.id, kind: 'placeholder', number, amount, inv_date: null, work_date: o.work_date },
-      bk => !bk.owed.some(x => x.job.id === o.job.id && x.work_date === o.work_date), 'Seated — read back, that day is off the owed list'));
+    const off = bk => !bk.owed.some(x => x.job.id === o.job.id && x.work_date === o.work_date);
+    if (o.invoice_id) run(() => prove(`/w/invoices/${o.invoice_id}`, 'PUT', { number, amount, inv_date: null }, off, 'Seated — read back, that day is off the owed list'));
+    else run(() => prove('/w/invoices', 'POST', { job_id: o.job.id, kind: 'placeholder', number, amount, inv_date: null, work_date: o.work_date }, off, 'Seated — read back, that day is off the owed list'));
   });
 }

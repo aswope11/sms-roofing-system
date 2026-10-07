@@ -1,5 +1,5 @@
 import { TAGS, DRAWERS, CHUNK_BYTES } from './rules.js';
-import { setTab, delBtn, delX } from './ui.js';
+import { setTab, delBtn, delX, call } from './ui.js';
 import { schedulePage } from './schedule.js';
 import { invoicingPage } from './invoicing.js';
 import { renderBid } from './bid.js';
@@ -99,6 +99,18 @@ async function customer(id) {
       })()}
     </div>
     <div class="card">
+      <h2>QuickBooks</h2>
+      <p class="help">Match looks up customers already in QuickBooks, including a parent whose name is not spelled the same here. If a property is not there yet, it adds that property under the parent. It does not change invoices already in QuickBooks. A blank id clears the link in this app only.</p>
+      <div class="row"><span>Parent</span><span>${esc(c.qb_customer_name || 'not matched')}${c.qb_customer_id ? ' · ' + esc(c.qb_customer_id) : ''}</span></div>
+      <label>QuickBooks parent id<input id="qbParent" value="${esc(c.qb_customer_id || '')}" placeholder="blank clears it"></label>
+      <div class="actions"><button type="button" class="ghost" id="qbParentSave">Save parent id</button><button type="button" id="qbMatch">Match existing QuickBooks customers</button></div>
+      ${(c.properties || []).map(p => `<div class="row">
+        <span>${esc(p.address)}${p.city ? ', ' + esc(p.city) : ''}<br><span class="mute">${esc(p.qb_subcustomer_name || 'not matched')}</span></span>
+        <span><input data-qb-sub="${p.id}" value="${esc(p.qb_subcustomer_id || '')}" placeholder="sub-customer id, blank clears it"> <button type="button" class="ghost qbSubSave" data-pid="${p.id}">Save</button></span>
+      </div>`).join('')}
+      <div class="err" id="qbe"></div>
+    </div>
+    <div class="card">
       <h2>Pinned</h2>
       ${(c.files || []).map(f => `<div class="row"><a href="/api/files/${f.id}" target="_blank">${esc(f.name)}</a><span class="mute">${new Date(f.created_at).toLocaleDateString()}</span></div>`).join('') || '<div class="empty">Nothing pinned.</div>'}
       <div class="drop" id="pindrop" style="margin-top:10px">Drop a file to pin it to ${esc(c.name)} — or click to pick<input type="file" hidden multiple></div><div class="mute" id="pinprog"></div>
@@ -152,6 +164,35 @@ async function customer(id) {
     try { await saveAndProve(`customers/${id}`, 'PUT', formData(ev.target), () => `customers/${id}`, ['name', 'phone', 'email', 'notes']); route(); }
     catch (e) { fail(e, document.getElementById('ee')); btn.disabled = false; }
   };
+  document.getElementById('qbParentSave').onclick = async () => {
+    const btn = document.getElementById('qbParentSave'); btn.disabled = true;
+    try {
+      await call('/w/qb-map', { method: 'PUT', body: { customer_id: Number(id), qb_customer_id: document.getElementById('qbParent').value.trim() } });
+      const back = await api(`customers/${id}`);
+      if (String(back.qb_customer_id || '') !== document.getElementById('qbParent').value.trim()) throw new Error('That QuickBooks id did not stick.');
+      toast('QuickBooks parent saved'); route();
+    } catch (e) { fail(e, document.getElementById('qbe')); btn.disabled = false; }
+  };
+  document.getElementById('qbMatch').onclick = async () => {
+    const btn = document.getElementById('qbMatch'); btn.disabled = true;
+    try {
+      const out = await call(`/w/qb-map/${id}`, { method: 'POST', body: {} });
+      const bad = (out.lines || []).filter(l => l.error);
+      toast(bad.length ? `Matched. Still needs a pick: ${bad.map(l => (l.address || 'property') + ' — ' + l.error).join(' · ')}` : 'Matched — QuickBooks customers saved', !bad.length);
+      route();
+    } catch (e) { fail(e, document.getElementById('qbe')); btn.disabled = false; }
+  };
+  document.querySelectorAll('.qbSubSave').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    const input = document.querySelector(`[data-qb-sub="${b.dataset.pid}"]`);
+    try {
+      await call('/w/qb-map', { method: 'PUT', body: { property_id: Number(b.dataset.pid), qb_subcustomer_id: input.value.trim() } });
+      const back = await api(`customers/${id}`);
+      const p = (back.properties || []).find(x => x.id === Number(b.dataset.pid));
+      if (!p || String(p.qb_subcustomer_id || '') !== input.value.trim()) throw new Error('That QuickBooks id did not stick.');
+      toast('QuickBooks property saved'); route();
+    } catch (e) { fail(e, document.getElementById('qbe')); b.disabled = false; }
+  });
   // Pinned on the company: same pieces-upload as job files, then read the company back to prove it stuck.
   const pin = document.getElementById('pindrop'), pinIn = pin.querySelector('input'), pinProg = document.getElementById('pinprog');
   const pinUp = async files => {
