@@ -10,13 +10,25 @@ export async function mailStrip(mount) {
       <div class="row"><a href="/api/gmail/connect">Connect Gmail — it reads only your five SMS labels, and it can never send</a></div></details>`;
     return;
   }
-  // 9/28/26: Sent is no longer read — any old "Sent invoice" misses stay in the database but never show here.
-  const need = (d.needs_you || []).filter(r => !/^Sent invoice/.test(r.what || '')), filed = d.filed || [];
-  mount.innerHTML = `<details class="card bidstrip"${need.length ? ' open' : ''}>
-    <summary><b>Mail</b>${need.length ? ` <span class="lanen">${need.length}</span> <span class="redtxt">need you</span>` : ' <span class="mute">nothing waiting</span>'}</summary>
+  // 9/28/26: Sent is no longer read — those old rows stay out of the action list.
+  // Import problems shows every needs-you row, including those, plus a re-push or a label that does not match.
+  const need = (d.needs_you || []).filter(r => !/^Sent invoice/.test(r.what || '') && !/^Import problem/.test(r.what || ''));
+  const filed = d.filed || [];
+  const held = (d.needs_you || []).filter(r => /^Sent invoice/.test(r.what || '') || /^Import problem/.test(r.what || ''));
+  const problems = [
+    ...held.map(r => ({ kind: 'mail', id: r.id, what: r.what, subject: r.subject, job_id: r.job_id, tag: r.tag, title: r.title, address: r.address, city: r.city })),
+    ...(d.import_problems || []).map(r => ({ kind: 'log', id: r.id, what: r.reason, subject: '', job_id: r.job_id, tag: r.tag, title: r.title, address: r.address, city: r.city })),
+  ];
+  const jobLink = r => r.job_id ? ` <a href="#/job/${r.job_id}">${esc([r.tag, r.address].filter(Boolean).join(' - ') || 'Open the job')}</a>` : '';
+  mount.innerHTML = `<details class="card bidstrip"${need.length || problems.length ? ' open' : ''}>
+    <summary><b>Mail</b>${problems.length ? ` <span class="lanen">${problems.length}</span> <span class="redtxt">Import problems</span>` : ''}${need.length ? ` <span class="lanen">${need.length}</span> <span class="redtxt">need you</span>` : ''}${!need.length && !problems.length ? ' <span class="mute">nothing waiting</span>' : ''}</summary>
     <div class="btnrow" style="padding:0 14px 8px"><button class="small ghost" id="mailScan">Check the labels now</button></div>
-    ${st.can_label ? '' : `<div class="row"><a href="/api/gmail/connect" class="redtxt">Reconnect Gmail once so it can take the label off an email when it is done</a></div>`}
-    <div class="row"><span class="mute">It reads ONLY emails you put in !SMS/BID, !SMS/R, !SMS/CO, !SMS/JC or !SMS/UC — every 15 minutes on its own. Each one is matched to its property by address, a ticket with that tag is made, the email and attachments go in that job file, and the label comes off. Nothing else in your inbox is read.</span></div>
+    ${st.can_label ? '' : `<div class="row"><a href="/api/gmail/connect" class="redtxt">Reconnect Gmail once so a filed email can get the CRM imported label. The import still runs without it.</a></div>`}
+    <div class="row"><span class="mute">It reads ONLY emails you put in !SMS/BID, !SMS/R, !SMS/CO, !SMS/JC or !SMS/UC — every 15 minutes on its own. Each one is matched to its property by address, a ticket with that tag is made, and the email and attachments go in that job file. Your label stays. A reply on a thread already filed goes on that same job, and it can never send.</span></div>
+    ${problems.length ? `<div class="row"><b>Import problems</b></div>` + problems.map(r => `<div class="row">
+      <span>${r.subject ? `<b>${esc(r.subject)}</b><br>` : ''}<span class="mute">${esc(r.what || '')}</span>${jobLink(r)}</span>
+      <span class="lanebtns">${r.kind === 'mail' && r.job_id ? `<button class="lb send fileanyway" data-id="${r.id}">File it on this job</button>` : ''}${r.kind === 'mail' ? `<button class="lb dismiss-mail" data-id="${r.id}">Dismiss</button>` : ''}${r.kind === 'log' ? `<button class="lb dismiss" data-prob="${r.id}">Dismiss</button>` : ''}</span>
+    </div>`).join('') : ''}
     ${need.map(r => `<div class="row">
       <span><b>${esc(r.subject || '(no subject)')}</b><br><span class="mute">${esc(r.from_addr)}${r.sent_at ? ' · ' + shortDateYY(String(r.sent_at).slice(0, 10)) : ''} — ${esc(r.what)}</span></span>
       <span class="lanebtns">${/^!?SMS\//.test(r.what || '') ? `<button class="lb send place" data-id="${r.id}">Who's it for?</button>` : `<button class="lb send put" data-id="${r.id}">Put it on a job</button>`}<button class="lb skip" data-id="${r.id}">Not ours</button></span>
@@ -70,4 +82,10 @@ export async function mailStrip(mount) {
   });
   mount.querySelectorAll('.skip').forEach(b => b.onclick = () => run(() => doAndProve(`/w/mail/${b.dataset.id}/skip`, { method: 'POST', body: {} }, '/w/mail',
     bk => !bk.needs_you.some(r => r.id === Number(b.dataset.id)), 'Off the list')));
+  mount.querySelectorAll('.dismiss').forEach(b => b.onclick = () => run(() => doAndProve(`/w/mail/problem/${b.dataset.prob}`, { method: 'POST', body: {} }, '/w/mail',
+    bk => !(bk.import_problems || []).some(r => r.id === Number(b.dataset.prob)), 'Off the import problems list')));
+  mount.querySelectorAll('.fileanyway').forEach(b => b.onclick = () => run(() => doAndProve(`/w/mail/${b.dataset.id}/file-anyway`, { method: 'POST', body: {} }, '/w/mail',
+    bk => !(bk.needs_you || []).some(r => r.id === Number(b.dataset.id)), 'Filed on the job already on that problem')));
+  mount.querySelectorAll('.dismiss-mail').forEach(b => b.onclick = () => run(() => doAndProve(`/w/mail/${b.dataset.id}/dismiss`, { method: 'POST', body: {} }, '/w/mail',
+    bk => !(bk.needs_you || []).some(r => r.id === Number(b.dataset.id)), 'Off the import problems list')));
 }

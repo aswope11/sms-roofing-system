@@ -3,7 +3,7 @@
 // the hover that pops up what THIS man did HERE on THIS day, and the pills under the grid that move a ticket around.
 import { esc, $app, call, doAndProve, crumbs, setTab, fail, toast, askDelete } from './ui.js';
 import { subPayLedger } from './payledger.js';
-import { groupCrew, dispatchLine, shortDate, addDays, stopShares, daysFor, manDayPay, payFor, crewColor, ticketName, whyCantSplit } from './money.js';
+import { groupCrew, dispatchLine, shortDate, addDays, stopShares, daysFor, manDayPay, payFor, crewColor, ticketName, whyCantSplit, rebalancePcts } from './money.js';
 
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const dayHead = d => { const x = new Date(d + 'T12:00:00'); return `${DOW[x.getDay()]} - ${x.getMonth() + 1}/${x.getDate()}`; };
@@ -66,8 +66,8 @@ export async function schedulePage(start) {
   const stale = j => j.aging && j.aging.stale;
   const unpaidLine = j => stale(j) ? `<div class="js unpaidline">unpaid $${Math.round(j.aging.owed).toLocaleString()} · ${j.aging.days} days</div>` : '';
   const jobCardHTML = (j, row, day, stopId) => `<div class="jobcard${stale(j) ? ' stale' : ''}" style="border-left-color:${stale(j) ? 'var(--bad)' : typeColor(j.tag)}"
-      data-peek="${j.id}" data-row="${row || ''}" data-day="${day || ''}"${stopId ? ` data-stop="${stopId}" draggable="true"` : ''}>
-      ${stopId ? `<span class="kill" data-del="stop" data-id="${stopId}" title="Delete this entry">×</span>` : ''}
+      data-peek="${j.id}" data-row="${row || ''}" data-day="${day || ''}" draggable="true"${stopId ? ` data-stop="${stopId}"` : ` data-plan="${j.id}"`}>
+      ${stopId ? `<span class="kill miss" data-miss="${stopId}" title="Crew didn't go — takes him off this job for this day only">⊘</span><span class="kill" data-del="stop" data-id="${stopId}" title="Delete this entry">×</span>` : `<span class="kill" data-unplan="${j.id}" data-day="${day || ''}" title="Delete this pill. The job stays.">×</span>`}
       ${j.customer_name ? `<div class="js jcust">${esc(j.customer_name)}</div>` : ''}
       <div class="jt">${pfx(j)}${esc(j.address)}</div>
       ${j.tenant ? `<div class="js jwho">${esc(j.tenant)}</div>` : ''}
@@ -146,8 +146,7 @@ export async function schedulePage(start) {
           <div class="d">${dayName(d)}</div><div class="dt">${dayShort(d)}</div>
           <button type="button" data-act="${d}" style="margin:4px 0 2px;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;cursor:pointer;border:1px solid #ff7a3d;${d === act ? 'background:#ff7a3d;color:#111' : 'background:transparent;color:#ff7a3d'}">${d === act ? 'ACTIVE' : 'Active'}</button>
           <div class="dchk">${st === 'acct' ? '✓ good to bill' : st === 'late' ? 'not accounted' : 'tap when right'}</div></th>`; }).join('')}</tr>
-        <tr><th>Nobody on it yet</th>${dates.map(d => `<td class="cell">${nobody(d).map(j => `${jobCardHTML(j, '', d)}
-          <span class="delx" data-unplan="${j.id}" title="Take it off this day" style="cursor:pointer">✕</span>`).join('')}
+        <tr><th>Nobody on it yet</th>${dates.map(d => `<td class="cell" data-dropdate="${d}" data-dropcrew="">${nobody(d).map(j => jobCardHTML(j, '', d)).join('')}
           <div class="plus ${nobody(d).length ? 'has' : ''}" data-nobody="1" data-date="${d}">+</div></td>`).join('')}</tr>
         ${crew.map((c, i) => `${i === 0 || (crew[i - 1].group === 'employee') !== (c.group === 'employee') ? `<tr class="grouphead"><th colspan="${dates.length + 1}">${c.group === 'employee' ? 'SMS employees' : 'Subs'}</th></tr>` : ''}<tr><th style="border-left:4px solid ${crewColor(c, w.crew)}">${c.group.startsWith('under-') ? '<span class="mute">↳ </span>' : ''}<span class="manledger" data-ledger="${c.boss_id || c.id}" data-lname="${c.boss_id ? '' : esc(c.name)}" title="Open his pay ledger" style="cursor:pointer;text-decoration:underline dotted">${esc(c.name)}</span>${c.group !== 'employee' && !workedMen.has(c.id) ? ` <span class="delx" data-drop="${c.id}" title="Take him off this week" style="cursor:pointer">✕</span>` : ''}</th>${dates.map(d => {
           const mine = w.stops.filter(s => s.crew_id === c.id && s.work_date === d);
@@ -292,11 +291,39 @@ export async function schedulePage(start) {
 
   // put a job on a day with nobody on it / take it back off — saves ONLY the job's scheduled_date, read back from the week
   const planJob = (id, date) => { logBack.style.display = 'none'; run(() => doAndProve(`/w/job/${id}/plan`, { method: 'PUT', body: { scheduled_date: date } }, weekUrl,
-    back => back.jobs.some(j => j.id === id && j.scheduled_date === date), date ? `On ${dayHead(date)} — read back and it is there` : 'Taken off the day — read back and it is gone')); };
-  $app().querySelectorAll('[data-unplan]').forEach(x => x.onclick = ev => { ev.stopPropagation();
-    const id = Number(x.dataset.unplan); logBack.style.display = 'none';
+    back => back.jobs.some(j => j.id === id && j.scheduled_date === date), date ? `On ${dayHead(date)} — read back and it is there` : 'Taken off the day — the job is still there')); };
+  $app().querySelectorAll('[data-unplan]').forEach(x => x.onclick = ev => { ev.preventDefault(); ev.stopPropagation();
+    const id = Number(x.dataset.unplan), j = jobsById[id];
+    if (!confirm(`Delete this pill?\n\n${j ? ticketName(j) : 'This job'} comes off ${dayHead(x.dataset.day)}. The job itself stays.`)) return;
+    logBack.style.display = 'none';
     run(() => doAndProve(`/w/job/${id}/plan`, { method: 'PUT', body: { scheduled_date: null } }, weekUrl,
-      back => back.jobs.some(j => j.id === id && !j.scheduled_date), 'Taken off the day — read back and it is gone')); });
+      back => back.jobs.some(row => row.id === id && !row.scheduled_date), 'Taken off the day — the job is still there')); });
+  // Crew didn't go: this man off this job for this day only. The job stays. His pay day comes off if it was his only job.
+  const dayOf = v => String(v || '').slice(0, 10);
+  const placeholderWarn = (day, jobIds) => {
+    if (!(w.green || []).some(g => g.green && dayOf(g.work_date) === dayOf(day))) return '';
+    const hit = [...new Set((jobIds || []).filter(Boolean))].some(id => (w.seated || []).some(row => Number(row.job_id) === Number(id) && dayOf(row.work_date) === dayOf(day)));
+    return hit ? `\n\nHEADS UP: ${dayHead(day)} is green and already has a QuickBooks placeholder. That placeholder will not update.` : '';
+  };
+  const offJobAsk = s => {
+    const man = w.crew.find(c => c.id === s.crew_id), j = jobsById[s.job_id];
+    const others = w.stops.filter(row => row.crew_id === s.crew_id && dayOf(row.work_date) === dayOf(s.work_date) && row.id !== s.id);
+    const who = man ? man.name : 'He';
+    return `${who} didn't go to ${j ? ticketName(j) : 'that job'} on ${dayHead(s.work_date)}?\n\nTakes him off that job for that day only. The job stays.${others.length ? '' : '\n\nIt was his only job that day, so that pay day comes off Payroll too.'}${placeholderWarn(s.work_date, [s.job_id])}`;
+  };
+  $app().querySelectorAll('[data-miss]').forEach(x => x.onclick = async ev => { ev.preventDefault(); ev.stopPropagation(); hidePeek();
+    const id = Number(x.dataset.miss), s = w.stops.find(row => row.id === id); if (!s) return;
+    const man = w.crew.find(c => c.id === s.crew_id), j = jobsById[s.job_id];
+    if (!confirm(offJobAsk(s))) return;
+    try {
+      await call(`/d/stop/${id}`, { method: 'DELETE' });
+      const back = await call(weekUrl);
+      if (back.stops.some(row => row.id === id)) throw new Error('That did not come off — it is still on the board.');
+      if (j && !back.jobs.some(row => row.id === j.id)) throw new Error('The job was removed. It should have stayed.');
+      toast(`${who} is off ${j ? ticketName(j) : 'that job'} for ${dayHead(s.work_date)} — the job is still there${others.length ? '' : ', and that pay day is off Payroll'}`);
+      reload();
+    } catch (e) { fail(e); }
+  });
 
   // the popup, step 2: full/half day (what he's PAID), what he did, change order, and how his day splits by percent
   function openLogForm(jobId) {
@@ -333,6 +360,7 @@ export async function schedulePage(start) {
         <div class="lfsrow"><span id="lfThisName">${esc(j.tag)} - ${esc(j.address)}</span><input class="lfpct" data-key="this" type="number" min="0" max="100" step="1" value="${pctVal(existing)}"><span>%</span></div>
         ${others.map(s => { const o = jobsById[s.job_id] || {}; return `<div class="lfsrow"><span>${esc(o.tag || '')} - ${esc(o.address || 'job ' + s.job_id)}</span><input class="lfpct" data-key="${s.job_id}" type="number" min="0" max="100" step="1" value="${pctVal(s)}"><span>%</span></div>`; }).join('')}
       </div>
+      <div class="help" id="lfNote"></div>
       <div class="err" id="lfErr"></div>
       <div class="btnrow"><button class="ghost small" id="lfBack">‹ Back</button><button id="lfSave">Log it</button></div>`;
     document.getElementById('lPick').style.display = 'none'; f.style.display = '';
@@ -379,12 +407,25 @@ export async function schedulePage(start) {
       const blank = ins.filter(i => i.value === '');
       blank.forEach(i => { i.placeholder = blank.length ? String(Math.round(Math.max(0, 100 - used) / blank.length * 10) / 10) : ''; });
     };
+    // A new job on a day whose percents already make 100 used to land at 0%. Fill the rebalanced split so he can see it and change it before Log it.
+    if (!existing) {
+      const ins = [...f.querySelectorAll('.lfpct')];
+      const fix = rebalancePcts(ins.map(i => ({ key: i.dataset.key, pct: i.value === '' ? null : Number(i.value) })));
+      if (fix) {
+        const even = ins.every(i => fix[i.dataset.key] == null);
+        ins.forEach(i => { const v = fix[i.dataset.key]; i.value = v == null ? '' : v; });
+        document.getElementById('lfNote').textContent = even
+          ? 'Leave the boxes blank for an even share of his day.'
+          : 'His other jobs already used the whole day, so the split was rebalanced to make room. Change any of them if that is wrong. A blank box is an even share.';
+      }
+    }
     f.querySelectorAll('.lfpct').forEach(i => i.oninput = evenHint); evenHint();
     document.getElementById('lfBack').onclick = () => { f.style.display = 'none'; document.getElementById('lPick').style.display = ''; };
     document.getElementById('lfSave').onclick = async () => {
       const err = document.getElementById('lfErr'); err.textContent = '';
       const split = {}; f.querySelectorAll('.lfpct').forEach(i => { split[i.dataset.key] = i.value === '' ? null : Number(i.value); });
-      const miss = whyCantSplit(Object.values(split));
+      // "would get 0%" is the full-day case the server rebalances. Over 100, or every box filled and not 100, still stops here.
+      const miss = whyCantSplit(Object.values(split)).filter(x => !/would get 0%/.test(x));
       if (miss.length) { err.textContent = miss.join('; '); return; }
       const scopes = lib.filter(n => picked.has(n));
       const scope_split = Object.fromEntries(scopes.map(n => [n, scopes.length > 1 && scopePct[n] != null ? scopePct[n] : null]));
@@ -393,18 +434,27 @@ export async function schedulePage(start) {
       const body = { crew_id: crewId, work_date: day, job_id: j.id, days: Number(f.querySelector('input[name=lfDays]:checked').value),
         scopes, scope_split, also_crew: [...also], co: co.checked, co_title: document.getElementById('lfCoTitle').value.trim(), split };
       if (body.co && !body.co_title) { err.textContent = "Say what the change order is."; return; }
+      const warn = placeholderWarn(day, [j.id, ...others.map(s => s.job_id)]);
+      if (warn && !confirm(`Log this day?${warn}`)) return;
       const btn = document.getElementById('lfSave'); btn.disabled = true;
       try {
         const saved = await call('/w/log', { method: 'POST', body });
         const back = await call(weekUrl);
         const want = scopes.join(' · ');
+        const sameDay = (v, d) => String(v || '').slice(0, 10) === String(d || '').slice(0, 10);
         const menOk = [crewId, ...also].every(cid => {
-          const st = back.stops.find(s => s.crew_id === cid && s.work_date === day && s.job_id === saved.job_id);
-          const cd = back.crewDays.find(d => d.crew_id === cid && d.work_date === day);
+          const st = back.stops.find(s => s.crew_id === cid && sameDay(s.work_date, day) && s.job_id === saved.job_id);
+          const cd = back.crewDays.find(d => d.crew_id === cid && sameDay(d.work_date, day));
           return st && st.day_scope === want && cd && Number(cd.days) === body.days;
         });
-        const st = back.stops.find(s => s.crew_id === crewId && s.work_date === day && s.job_id === saved.job_id);
-        const pctOk = st && (split.this == null ? st.pct == null : Number(st.pct) === split.this);
+        const st = back.stops.find(s => s.crew_id === crewId && sameDay(s.work_date, day) && s.job_id === saved.job_id);
+        // The server may rebalance a full day so the new job is not 0%. Prove the saved percents, not the blanks he left.
+        const dayStops = back.stops.filter(s => s.crew_id === crewId && sameDay(s.work_date, day));
+        const submitted = dayStops.map(s => ({ key: s.id, pct: s.job_id === saved.job_id ? split.this : split[s.job_id] }));
+        const fixed = rebalancePcts(submitted);
+        const expectPct = s => fixed ? fixed[s.id] : (s.job_id === saved.job_id ? split.this : split[s.job_id]);
+        const wantPct = st ? expectPct(st) : null;
+        const pctOk = st && (wantPct == null || wantPct === '' ? st.pct == null : Number(st.pct) === Number(wantPct));
         const splitOk = st && scopes.every(n => ((st.scope_split || {})[n] == null ? null : Number(st.scope_split[n])) === scope_split[n]);
         const libOk = scopes.every(n => (back.scopes || []).some(x => x.job_id === saved.job_id && x.name === n));
         if (!menOk || !pctOk || !libOk || !splitOk) throw new Error('That did not stick — the read-back does not show it. Nothing was assumed.');
@@ -489,35 +539,90 @@ export async function schedulePage(start) {
       });
     };
   });
-  // DRAG A PILL (10/1/26): grab a man's job card and drop it in another man's cell or another day.
-  // The same entry moves — its scope split and % go with it. Nothing is deleted and re-made.
-  // Drop it above or below another card in the same day to change the order — the order is saved.
-  let dragStop = 0;
-  $app().querySelectorAll('.jobcard[data-stop]').forEach(c => {
-    c.ondragstart = e => { dragStop = Number(c.dataset.stop); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', c.dataset.stop); hidePeek(); };
-    c.ondragend = () => { dragStop = 0; $app().querySelectorAll('td[data-dropcrew]').forEach(t => t.style.outline = ''); };
+  // DRAG A PILL onto a man or onto Nobody, including a different day.
+  // An assigned pill keeps its stop (scope stays on it). An unassigned pill ("Nobody on it yet") moves the plan date,
+  // or lands on a man. The day it leaves and the day it lands rebalance that man's percents on the server.
+  let dragStop = 0, dragPlan = 0;
+  $app().querySelectorAll('.jobcard[draggable="true"]').forEach(c => {
+    c.ondragstart = e => {
+      if (e.target.closest('.kill')) { e.preventDefault(); return; }
+      dragStop = Number(c.dataset.stop) || 0;
+      dragPlan = dragStop ? 0 : Number(c.dataset.plan) || 0;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', dragStop ? `stop:${dragStop}` : `plan:${dragPlan}`);
+      hidePeek();
+    };
+    c.ondragend = () => { dragStop = 0; dragPlan = 0; $app().querySelectorAll('td[data-dropdate]').forEach(t => t.style.outline = ''); };
   });
-  $app().querySelectorAll('td[data-dropcrew]').forEach(td => {
-    td.ondragover = e => { if (!dragStop) return; e.preventDefault(); td.style.outline = '2px dashed #ff7a3d'; };
+  $app().querySelectorAll('td[data-dropdate]').forEach(td => {
+    td.ondragover = e => { if (!dragStop && !dragPlan) return; e.preventDefault(); td.style.outline = '2px dashed #ff7a3d'; };
     td.ondragleave = e => { if (!td.contains(e.relatedTarget)) td.style.outline = ''; };
     td.ondrop = e => {
       e.preventDefault(); td.style.outline = '';
-      const id = dragStop; dragStop = 0;
-      const crew_id = Number(td.dataset.dropcrew), work_date = td.dataset.dropdate;
+      const raw = e.dataTransfer.getData('text/plain') || '';
+      const id = dragStop || (raw.startsWith('stop:') ? Number(raw.slice(5)) : 0);
+      const planId = dragPlan || (raw.startsWith('plan:') ? Number(raw.slice(5)) : 0);
+      dragStop = 0; dragPlan = 0;
+      const crew_id = Number(td.dataset.dropcrew) || 0, work_date = td.dataset.dropdate;
+      if (planId && !crew_id) {
+        if (!work_date) return;
+        const j = jobsById[planId];
+        if (j && dayOf(j.scheduled_date) === work_date) return;
+        return run(() => doAndProve(`/w/job/${planId}/plan`, { method: 'PUT', body: { scheduled_date: work_date } }, weekUrl,
+          back => back.jobs.some(row => row.id === planId && dayOf(row.scheduled_date) === work_date),
+          `Moved to ${dayHead(work_date)} — the job is still there`));
+      }
+      if (planId && crew_id) {
+        return run(async () => {
+          await call('/w/stops', { method: 'POST', body: { crew_id, job_id: planId, work_date } });
+          await call(`/w/job/${planId}/plan`, { method: 'PUT', body: { scheduled_date: work_date } });
+          const back = await call(weekUrl);
+          const onMan = back.stops.some(row => Number(row.crew_id) === crew_id && row.job_id === planId && dayOf(row.work_date) === work_date);
+          const jobOk = back.jobs.some(row => row.id === planId);
+          if (!onMan || !jobOk) throw new Error('That did not land on him — read it back and it is not there. The job was not deleted.');
+          toast(`On his day ${dayHead(work_date)} — read back and it matches`);
+        });
+      }
       const s = w.stops.find(x => x.id === id);
-      if (!s) return;
-      const same = s.crew_id === crew_id && s.work_date === work_date;
-      // where it landed: above the first card whose middle is below the pointer, else last
+      if (!s || !work_date) return;
+      if (!crew_id) {
+        // Onto Nobody: he comes off the job, the pill stays on that day with nobody on it. Same confirm as crew-didn't-go.
+        if (!confirm(offJobAsk(s))) return;
+        return run(async () => {
+          await call(`/d/stop/${id}`, { method: 'DELETE' });
+          await call(`/w/job/${s.job_id}/plan`, { method: 'PUT', body: { scheduled_date: work_date } });
+          const back = await call(weekUrl);
+          if (back.stops.some(row => row.id === id)) throw new Error('He is still on that job.');
+          const job = back.jobs.find(row => row.id === s.job_id);
+          if (!job || dayOf(job.scheduled_date) !== work_date) throw new Error('The job did not move to that day. ' + (job ? 'It is still on the book.' : 'The job is missing.'));
+          toast(`Nobody on it ${dayHead(work_date)} — the job is still there`);
+        });
+      }
+      const same = Number(s.crew_id) === crew_id && dayOf(s.work_date) === work_date;
+      if (!same) {
+        const srcJobs = w.stops.filter(row => row.crew_id === s.crew_id && dayOf(row.work_date) === dayOf(s.work_date)).map(row => row.job_id);
+        const destJobs = w.stops.filter(row => Number(row.crew_id) === crew_id && dayOf(row.work_date) === work_date).map(row => row.job_id);
+        const warn = placeholderWarn(s.work_date, srcJobs) + placeholderWarn(work_date, [...destJobs, s.job_id]);
+        if (warn && !confirm(`Move this pill?${warn}`)) return;
+      }
       const cards = [...td.querySelectorAll('.jobcard[data-stop]')].filter(c => Number(c.dataset.stop) !== id);
       let at = cards.findIndex(c => { const r = c.getBoundingClientRect(); return e.clientY < r.top + r.height / 2; });
       if (at < 0) at = cards.length;
       const ids = cards.map(c => Number(c.dataset.stop)); ids.splice(at, 0, id);
       run(async () => {
-        if (!same) await doAndProve(`/w/stops/${id}`, { method: 'PUT', body: { crew_id, work_date } }, weekUrl,
-          back => back.stops.some(x => x.id === id && x.crew_id === crew_id && x.work_date === work_date), 'Moved — read back and it matches');
-        await doAndProve('/w/stop-order', { method: 'PUT', body: { ids } }, weekUrl,
-          back => back.stops.filter(x => x.crew_id === crew_id && x.work_date === work_date && ids.includes(x.id)).map(x => x.id).join() === ids.join(),
-          same ? 'Order saved — read back and it matches' : 'Moved — read back and it matches');
+        if (!same) {
+          let moved;
+          try { moved = await call(`/w/stops/${id}`, { method: 'PUT', body: { crew_id, work_date } }); }
+          catch (err) { throw new Error(err.message || 'The schedule did not move.'); }
+          const back = await call(weekUrl);
+          const hit = back.stops.find(x => x.id === id);
+          if (!hit || Number(hit.crew_id) !== crew_id || dayOf(hit.work_date) !== work_date)
+            throw new Error((moved && moved.error) || 'The entry is still on the old day.');
+        }
+        try {
+          await call('/w/stop-order', { method: 'PUT', body: { ids } });
+        } catch (err) { toast('Moved, but the order did not save: ' + err.message, false); }
+        toast(same ? 'Order saved — read back and it matches' : 'Moved — read back and it matches');
       });
     };
   });
