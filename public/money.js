@@ -483,9 +483,18 @@ export function readyToBill(job, greenShares, materialLines, invoices) {
 // 4 placeholders it replaces → $0 and renamed Job Cost N, same moment. Price = the placeholders' price unless he gave one.
 const mdyy = iso => { const [y, m, d] = String(iso).slice(0, 10).split('-'); return `${Number(m)}/${Number(d)}/${y.slice(2)}`; };
 export const placeholderMemo = (job, workDate) => `${job.tag}-${mdyy(workDate)}`;
+// ONE PLACEHOLDER, MANY DAYS (10/7/26): a placeholder holds every green day added to it ({"2026-10-05": 1050, …});
+// an older one holds just its work_date. These are the days it seats.
+export function placeholderDays(inv) {
+  let d = inv && inv.days;
+  if (typeof d === 'string') { try { d = JSON.parse(d); } catch { d = null; } }
+  const out = d && typeof d === 'object' ? Object.keys(d).map(k => String(k).slice(0, 10)) : [];
+  if (inv && inv.work_date) { const w = String(inv.work_date).slice(0, 10); if (!out.includes(w)) out.push(w); }
+  return out.sort();
+}
 export function writeRealInvoice(job, ready, invoices, today, priceGiven) {
-  const covered = invoices.filter(i => i.kind === 'placeholder' && Number(i.amount) > 0 && i.work_date && ready.days.some(d => d.date === i.work_date));
-  const seatedDays = new Set(covered.map(p => p.work_date));
+  const covered = invoices.filter(i => i.kind === 'placeholder' && Number(i.amount) > 0 && placeholderDays(i).some(pd => ready.days.some(d => d.date === pd)));
+  const seatedDays = new Set(covered.flatMap(placeholderDays));
   const fromPlaceholders = round2(covered.reduce((a, p) => a + Number(p.amount), 0));
   const unseated = ready.days.filter(d => !seatedDays.has(d.date));
   const computedRest = round2(unseated.reduce((a, d) => a + d.labor_total, 0) + (covered.length ? 0 : ready.material));
