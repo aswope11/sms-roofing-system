@@ -184,6 +184,11 @@ export default async (req: Request) => {
         run: async () => {
           await q(`DELETE FROM stops WHERE id = $1`, [s.id]);
           if (!others) await q(`DELETE FROM crew_days WHERE work_date = $1 AND crew_id = $2`, [d, s.crew_id]);
+          else {
+            const left = await q(`SELECT id, pct FROM stops WHERE work_date = $1 AND crew_id = $2 ORDER BY seq NULLS LAST, id`, [d, s.crew_id]);
+            const fix = M.rebalancePcts(left.map((r: any) => ({ key: r.id, pct: r.pct })));
+            if (fix) for (const r of left) await q(`UPDATE stops SET pct = $1 WHERE id = $2`, [fix[r.id], r.id]);
+          }
           return [];
         } };
     }

@@ -559,6 +559,23 @@ export default async function handler(req: Request) {
     const crewDays = await sql`SELECT * FROM crew_days WHERE work_date = ANY(${dates}::date[])`;
     return norm({ stops, crewDays });
   };
+  // Calendar day as YYYY-MM-DD. A DATE at UTC midnight must not slip to the day before in Central time.
+  const ymd = (v: any) => {
+    if (v == null || v === "") return "";
+    if (v instanceof Date) {
+      if (v.getUTCHours() === 0 && v.getUTCMinutes() === 0 && v.getUTCSeconds() === 0) return v.toISOString().slice(0, 10);
+      return new Date(v.getTime() - v.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    }
+    return String(v).slice(0, 10);
+  };
+  // Write a man's day back to 100 after a job is added or taken off. Same connection as the caller's transaction.
+  // Blank days are left blank (rebalancePcts returns null) so an untouched day is never rewritten.
+  const applyRebalance = async (q: (text: string, vals?: any[]) => Promise<any[]>, date: any, crewId: number) => {
+    const rows = await q(`SELECT id, pct FROM stops WHERE work_date = $1::date AND crew_id = $2 ORDER BY seq NULLS LAST, id`, [ymd(date), Number(crewId)]);
+    const fix = M.rebalancePcts(rows.map((r: any) => ({ key: r.id, pct: r.pct })));
+    if (!fix) return;
+    for (const r of rows) await q(`UPDATE stops SET pct = $1 WHERE id = $2`, [fix[r.id], r.id]);
+  };
   // What each ticket has cost so far: labor shares + supply lines applied to it.
   const costFor = async (ids: number[]) => {
     const out: Record<number, number> = {};
@@ -795,26 +812,61 @@ export default async function handler(req: Request) {
         if (!job) return refuse("That ticket doesn't exist.", 404);
         if (!M.isWork(job.tag)) return refuse("A bid is not work — it can't go on a day. It gets a ticket when it's awarded.");
         if (!b.work_date || !b.crew_id) return refuse("A stop is a man on a day — that one came in with no cell behind it.", 400);
-        const [row] = await sql`INSERT INTO stops (work_date, crew_id, job_id) VALUES (${b.work_date}, ${Number(b.crew_id)}, ${job.id})
+        const [row] = await sql`INSERT INTO stops (work_date, crew_id, job_id) VALUES (${b.work_date}::date, ${Number(b.crew_id)}, ${job.id})
           ON CONFLICT (work_date, crew_id, job_id) DO UPDATE SET work_date = EXCLUDED.work_date RETURNING *`;
+        const client = await db.pool.connect();
+        try { await applyRebalance((text, vals) => client.query(text, vals).then((r: any) => r.rows), b.work_date, Number(b.crew_id)); }
+        finally { client.release(); }
         return json(norm(row), 201);
       }
-      // MOVE A PILL (10/1/26): drag a man's job card to another man / another day — the same stop row moves,
-      // so its scope split and % stay with it. Nothing is deleted and re-made.
+      // MOVE A PILL: drag a man's job card to another man or another day. The same stop row moves
+      // (scope and what he did stay on it). The % is then rebalanced on the day it left and the day it landed,
+      // because a percent is how HIS day splits across HIS jobs. The job is not deleted.
       if (m === "PUT" && id) {
         const b = await body();
-        if (!b.work_date || !b.crew_id) return refuse("A move needs a man and a day.");
-        const [cur] = await sql`SELECT * FROM stops WHERE id = ${id}`;
-        if (!cur) return refuse("That entry isn't on the board anymore.", 404);
-        const [clash] = await sql`SELECT id FROM stops WHERE work_date = ${b.work_date} AND crew_id = ${Number(b.crew_id)} AND job_id = ${cur.job_id} AND id <> ${id}`;
-        if (clash) return refuse("He already has that job on that day.");
-        const [row] = await sql`UPDATE stops SET work_date = ${b.work_date}, crew_id = ${Number(b.crew_id)} WHERE id = ${id} RETURNING *`;
-        return json(norm(row));
+        const workDate = ymd(b.work_date), crewId = Number(b.crew_id);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(workDate) || !(crewId > 0)) return refuse("A move needs a man and a day.");
+        const client = await db.pool.connect();
+        const q = (text: string, vals?: any[]) => client.query(text, vals).then((r: any) => r.rows);
+        try {
+          await client.query("BEGIN");
+          const [cur] = await q(`SELECT * FROM stops WHERE id = $1`, [id]);
+          if (!cur) { await client.query("ROLLBACK"); return refuse("That entry isn't on the board anymore.", 404); }
+          const oldDate = ymd(cur.work_date), oldCrew = Number(cur.crew_id);
+          const [clash] = await q(`SELECT id FROM stops WHERE work_date = $1::date AND crew_id = $2 AND job_id = $3 AND id <> $4`, [workDate, crewId, cur.job_id, id]);
+          if (clash) { await client.query("ROLLBACK"); return refuse("He already has that job on that day."); }
+          const [row] = await q(`UPDATE stops SET work_date = $1::date, crew_id = $2 WHERE id = $3 RETURNING *`, [workDate, crewId, id]);
+          if (!row) { await client.query("ROLLBACK"); return refuse("That entry isn't on the board anymore.", 404); }
+          // His pay day follows the stop when this was his only job. It is never left behind (that would pay the old day and the new one).
+          const left = await q(`SELECT id FROM stops WHERE work_date = $1::date AND crew_id = $2`, [oldDate, oldCrew]);
+          if (!left.length && (oldDate !== workDate || oldCrew !== crewId)) {
+            const [oldPay] = await q(`SELECT days, pay FROM crew_days WHERE work_date = $1::date AND crew_id = $2`, [oldDate, oldCrew]);
+            const [newPay] = await q(`SELECT 1 AS n FROM crew_days WHERE work_date = $1::date AND crew_id = $2`, [workDate, crewId]);
+            if (oldPay && !newPay) await q(`INSERT INTO crew_days (work_date, crew_id, days, pay) VALUES ($1::date, $2, $3, $4)`, [workDate, crewId, oldPay.days, oldPay.pay]);
+            if (oldPay) await q(`DELETE FROM crew_days WHERE work_date = $1::date AND crew_id = $2`, [oldDate, oldCrew]);
+          }
+          if (oldDate !== workDate || oldCrew !== crewId) await applyRebalance(q, oldDate, oldCrew);
+          await applyRebalance(q, workDate, crewId);
+          await client.query("COMMIT");
+          return json({ ...norm(row), work_date: workDate, crew_id: crewId });
+        } catch (e: any) {
+          try { await client.query("ROLLBACK"); } catch { /* already closed */ }
+          const msg = String(e?.message || e);
+          if (/duplicate key|unique/i.test(msg)) return refuse("He already has that job on that day.");
+          return json({ error: msg }, 500);
+        } finally { client.release(); }
       }
       if (m === "DELETE" && id) {
+        const [cur] = await sql`SELECT work_date, crew_id FROM stops WHERE id = ${id}`;
         await sql`DELETE FROM stops WHERE id = ${id}`;
         const [left] = await sql`SELECT id FROM stops WHERE id = ${id}`;
-        return left ? refuse("The stop is still there.", 500) : json({ removed: id });
+        if (left) return refuse("The stop is still there.", 500);
+        if (cur) {
+          const client = await db.pool.connect();
+          try { await applyRebalance((text, vals) => client.query(text, vals).then((r: any) => r.rows), cur.work_date, Number(cur.crew_id)); }
+          finally { client.release(); }
+        }
+        return json({ removed: id });
       }
     }
 
@@ -859,13 +911,24 @@ export default async function handler(req: Request) {
         const mine = (await client.query(`SELECT id, job_id FROM stops WHERE work_date = $1 AND crew_id = $2`, [date, crewId])).rows;
         const split = b.split || {};
         const pctFor = (jid: number) => { const v = jid === jobId ? split.this : split[jid]; return v === "" || v == null ? null : Number(v); };
-        const miss = M.whyCantSplit(mine.map((r: any) => pctFor(r.job_id)));
+        // "would get 0%" is not a wall — the rebalance below makes room. A day over 100, or every box filled and not 100, still refuses.
+        const miss = M.whyCantSplit(mine.map((r: any) => pctFor(r.job_id))).filter((x: string) => !/would get 0%/.test(x));
         if (miss.length) { await client.query("ROLLBACK"); return refuse(miss); }
         for (const r of mine) await client.query(`UPDATE stops SET pct = $1 WHERE id = $2`, [pctFor(r.job_id), r.id]);
+        const q = (text: string, vals?: any[]) => client.query(text, vals).then((r: any) => r.rows);
+        await applyRebalance(q, date, crewId);
+        // Anybody else on it that day used to be saved with no percent, so his day fell back to an even split
+        // even when this man typed one. Same jobs → same typed split. Different jobs → rebalance HIS day.
+        const mineNow = await q(`SELECT id, job_id, pct FROM stops WHERE work_date = $1::date AND crew_id = $2`, [date, crewId]);
         for (const man of men.filter(x => x !== crewId)) {
-          const rows = (await client.query(`SELECT s.pct, s.job_id, c.name FROM stops s JOIN crew c ON c.id = s.crew_id WHERE s.work_date = $1 AND s.crew_id = $2`, [date, man])).rows;
-          const set = rows.filter((r: any) => r.pct != null).reduce((a: number, r: any) => a + Number(r.pct), 0);
-          if (rows.length > 1 && set >= 100) { await client.query("ROLLBACK"); return refuse(`${rows[0].name}'s day is already split 100% on his other jobs — open his cell and redo his split.`); }
+          const rows = await q(`SELECT id, job_id, pct FROM stops WHERE work_date = $1::date AND crew_id = $2`, [date, man]);
+          const same = rows.length === mineNow.length && rows.every((r: any) => mineNow.some((m: any) => m.job_id === r.job_id));
+          if (same) {
+            for (const r of rows) {
+              const src = mineNow.find((m: any) => m.job_id === r.job_id);
+              await client.query(`UPDATE stops SET pct = $1 WHERE id = $2`, [src ? src.pct : null, r.id]);
+            }
+          } else await applyRebalance(q, date, man);
         }
         await client.query("COMMIT");
         return json({ job_id: jobId, co: !!b.co }, 201);
@@ -1011,8 +1074,9 @@ export default async function handler(req: Request) {
         const propJobs = norm(await sql`SELECT id, tag FROM jobs WHERE property_id = ${job.property_id}`);
         const propInvs = norm(await sql`SELECT i.* FROM invoices i JOIN jobs j ON j.id = i.job_id WHERE j.property_id = ${job.property_id}`);
         const contract = M.contractFor(job, propJobs, propInvs);
+        const greenDates = myDates.length ? norm(await sql`SELECT work_date FROM green_days WHERE green AND work_date = ANY(${myDates}::date[])`).map((r: any) => r.work_date) : [];
         return json({ job, invoices, shares, material, contract, bidSystems, bidOptions, places: M.whereIs(job, invoices),
-          lastWorkDate: M.workDate(id, stops), today: today() });
+          lastWorkDate: M.workDate(id, stops), green_dates: greenDates, today: today() });
       }
 
       const b = await body();
@@ -1105,26 +1169,64 @@ export default async function handler(req: Request) {
         return json({ ...norm(r), billed });
       }
       if (m === "POST" && action === "reopen") {
-        // Reopen = back to the schedule, off Invoicing. Any real invoice not sent yet is undone here AND in QuickBooks,
-        // and the placeholders it zeroed get their price back. A sent or paid invoice is never touched — he fixes that one by hand.
+        // Reopen = back to the schedule, off Invoicing. Any real invoice not sent yet is undone here AND in QuickBooks.
+        // The placeholder money is put back in QuickBooks BEFORE the real invoice is removed. If that restore fails,
+        // nothing is deleted and the ticket stays done. A sent or paid invoice is never touched.
         const invs = norm(await sql`SELECT * FROM invoices WHERE job_id = ${id}`);
         const sent = invs.filter((i: any) => M.isBill(i) && (i.sent_at || i.paid_at));
         const undo = invs.filter((i: any) => i.kind === "real" && !i.sent_at && !i.paid_at);
         const qbDone: string[] = [], qbErrors: string[] = [];
+        const plan: { inv: any; phs: { p: any; amt: number }[] }[] = [];
         for (const inv of undo) {
-          try {
-            if (inv.qb_id) await qbDeleteInvoice(inv.qb_id);
-            for (const p of invs.filter((x: any) => x.zeroed_by === inv.id)) {
-              if (p.qb_id) await qbRestorePlaceholder(p.qb_id, Number(p.zeroed_from));
-              await sql`UPDATE invoices SET amount = ${p.zeroed_from}, name = '', zeroed_from = NULL, zeroed_by = NULL WHERE id = ${p.id}`;
-            }
-            await sql`DELETE FROM invoices WHERE id = ${inv.id}`;
-            qbDone.push(`invoice ${inv.number ? "#" + inv.number + " " : ""}${M.money(inv.amount)} undone`);
-          } catch (e: any) { qbErrors.push(`invoice #${inv.number}: ${String(e?.message || e)} — ticket NOT reopened`); }
+          const phs = invs.filter((x: any) => x.kind === "placeholder" && x.zeroed_by === inv.id);
+          const ready: { p: any; amt: number }[] = [];
+          for (const p of phs) {
+            const amt = p.zeroed_from != null && p.zeroed_from !== "" ? Number(p.zeroed_from) : (phs.length === 1 ? Number(inv.amount) : NaN);
+            if (!(amt > 0) && amt !== 0) {
+              qbErrors.push(`placeholder #${p.number || p.id} has no saved price — ticket NOT reopened`);
+            } else ready.push({ p, amt });
+          }
+          plan.push({ inv, phs: ready });
         }
-        if (qbErrors.length) return json({ error: "QuickBooks: " + qbErrors.join(" · ") }, 502);
+        if (qbErrors.length) return json({ error: "QuickBooks: " + qbErrors.join(" · "), qb_errors: qbErrors }, 502);
+        const restored: { p: any; amt: number }[] = [];
+        const putBack = async () => {
+          const undoErr: string[] = [];
+          for (const r of restored) {
+            try { if (r.p.qb_id) await qbZeroPlaceholder(r.p.qb_id, r.p.name || "Job Cost"); }
+            catch (e: any) { undoErr.push(`placeholder #${r.p.number}: ${String(e?.message || e)}`); }
+          }
+          return undoErr;
+        };
+        try {
+          for (const item of plan) for (const ph of item.phs) {
+            if (ph.p.qb_id) await qbRestorePlaceholder(ph.p.qb_id, ph.amt);
+            restored.push(ph);
+          }
+        } catch (e: any) {
+          const undoErr = await putBack();
+          const msg = `placeholder money was not restored (${String(e?.message || e)}) — the invoice was NOT removed and the ticket was NOT reopened` + (undoErr.length ? ` · could not put QuickBooks back: ${undoErr.join("; ")}` : "");
+          return json({ error: "QuickBooks: " + msg, qb_errors: [msg] }, 502);
+        }
+        try {
+          for (const item of plan) if (item.inv.qb_id) await qbDeleteInvoice(item.inv.qb_id);
+        } catch (e: any) {
+          const undoErr = await putBack();
+          const msg = `the invoice was NOT removed (${String(e?.message || e)}) — ticket NOT reopened` + (undoErr.length ? ` · placeholders may still show the restored price in QuickBooks: ${undoErr.join("; ")}` : " · placeholders were put back to $0 in QuickBooks");
+          return json({ error: "QuickBooks: " + msg, qb_errors: [msg] }, 502);
+        }
+        for (const item of plan) {
+          const inv = item.inv;
+          await sql`INSERT INTO invoice_archive (invoice_id, job_id, kind, name, number, amount, qb_id, memo, scope, work_date, inv_date, covers_through, why)
+            VALUES (${inv.id}, ${inv.job_id}, ${inv.kind}, ${inv.name || ""}, ${inv.number || ""}, ${Number(inv.amount) || 0}, ${inv.qb_id || ""}, ${inv.memo || ""}, ${inv.scope || ""}, ${inv.work_date || null}, ${inv.inv_date || null}, ${inv.covers_through || null}, ${"reopen"})`;
+          for (const ph of item.phs) {
+            await sql`UPDATE invoices SET amount = ${ph.amt}, name = '', zeroed_from = NULL, zeroed_by = NULL WHERE id = ${ph.p.id}`;
+          }
+          await sql`DELETE FROM invoices WHERE id = ${inv.id}`;
+          qbDone.push(`invoice ${inv.number ? "#" + inv.number + " " : ""}${M.money(inv.amount)} undone`);
+        }
         const [r] = await sql`UPDATE jobs SET done_at = NULL, tabled_at = NULL, tabled_why = '' WHERE id = ${id} RETURNING *`;
-        return json({ ...norm(r), qb_done: qbDone, sent_left: sent.map((i: any) => `#${i.number} ${M.money(i.amount)}`) });
+        return json({ ...norm(r), qb_done: qbDone, qb_errors: qbErrors, sent_left: sent.map((i: any) => `#${i.number} ${M.money(i.amount)}`) });
       }
       if (m === "POST" && action === "table") {
         // it tables with no reason written — the screen says the reason is still missing
