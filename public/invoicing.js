@@ -29,7 +29,7 @@ export async function invoicingPage() {
       <a class="pmain" ${open(t.id)}>
         <div class="pt">${esc(ticketName(t))}</div>
         <div class="ps">${esc(who(t))}${t.last_work_date ? ' · ' + shortDate(t.last_work_date) : ''}${amt(t) ? ` · <b class="greentxt">${money(amt(t))}</b>` : ''}${t.cost ? ` · cost so far ${money(t.cost)}` : ''}</div>
-        ${billsOf(t).map(i => `<div class="ps">${i.kind === 'draw' ? 'Draw' : 'Invoice'} ${esc(i.number) || 'no number'} · ${money(i.amount)} · ${i.sent_at ? 'sent ' + shortDate(i.sent_at) : '<span class="ambertxt">not sent</span>'}${i.kind === 'real' ? (i.qb_id ? ' · in QuickBooks' : ' · <span class="redtxt">not in QuickBooks</span>') : ''}</div>${i.kind === 'real' && !i.qb_id && i.qb_error ? `<div class="ps redtxt">${esc(i.qb_error)}</div>` : ''}`).join('')}
+        ${billsOf(t).map(i => `<div class="ps">${i.kind === 'draw' ? 'Draw' : 'Invoice'} ${esc(i.number) || 'no number'} · ${money(i.amount)} · ${i.sent_at ? 'sent ' + shortDate(i.sent_at) : '<span class="ambertxt">not sent</span>'}${i.kind === 'real' ? (i.qb_id ? ' · in QuickBooks' : ' · <span class="redtxt">not in QuickBooks</span>') : ''}</div>${i.kind === 'real' && !i.qb_id && i.qb_error ? `<div class="ps redtxt">${esc(i.qb_error)}</div>` : ''}${i.check_problems ? `<div class="ps redtxt">Checker: ${esc(i.check_problems)}</div>` : ''}`).join('')}
       </a>
       <div class="lanebtns">
         ${billsOf(t).filter(i => i.kind === 'real' && i.qb_id).map(i => qbPdfLink(i)).join('')}

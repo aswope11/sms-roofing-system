@@ -35,7 +35,7 @@ function norm(v: any): any {
 const today = () => new Date(Date.now() - 5 * 3600 * 1000).toISOString().slice(0, 10); // Central time
 
 const JOB_COLS = (sql: any) => sql`
-  SELECT j.*, p.address, p.city, COALESCE(NULLIF(j.tenant_name, ''), p.tenant) AS tenant, p.gc, p.customer_id, p.contract_amount, p.bill_name, p.bill_addr, p.ship_addr, c.name AS customer_name, pj.title AS parent_title, pj.tag AS parent_tag
+  SELECT j.*, p.address, p.city, COALESCE(NULLIF(j.tenant_name, ''), p.tenant) AS tenant, p.gc, p.customer_id, p.contract_amount, p.bill_name, p.bill_addr, p.ship_addr, c.name AS customer_name, c.bill_name AS c_bill_name, c.bill_addr AS c_bill_addr, c.no_pay AS c_no_pay, pj.title AS parent_title, pj.tag AS parent_tag
   FROM jobs j JOIN properties p ON p.id = j.property_id JOIN customers c ON c.id = p.customer_id LEFT JOIN jobs pj ON pj.id = j.parent_job_id`;
 
 // ================= QUICKBOOKS =================
@@ -149,16 +149,20 @@ async function qbNextNumber() {
 // NO "VIEW AND PAY" (10/8/26, his order, every ticket): Wortham, Standridge and Four Corners pay by check/ACH on their own —
 // their invoices never carry QuickBooks' online-pay button (cards, bank transfer, PayPal all off).
 const NO_PAY_CUSTOMERS = /wortham|standridge|four corners/i;
-const noPay = (job: any) => NO_PAY_CUSTOMERS.test(String(job?.customer_name || ""))
+const noPay = (job: any) => (NO_PAY_CUSTOMERS.test(String(job?.customer_name || "")) || !!job?.c_no_pay)
   ? { AllowOnlinePayment: false, AllowOnlineCreditCardPayment: false, AllowOnlineACHPayment: false, AllowIPNPayment: false } : {};
+// BILL TO / SHIP TO (10/8/26): the building's own bill name wins (Four Corners' owner LLCs), else the company's billing card.
+// Ship To ALWAYS goes on — tenant on line 1, job address under it — even when no Bill To is on file.
 function billTo(job: any) {
-  const name = String(job.bill_name || "").trim();
-  if (!name) return {};
+  const own = String(job.bill_name || "").trim();
+  const name = own || String(job.c_bill_name || "").trim();
+  const addr = own ? String(job.bill_addr || "") : String(job.c_bill_addr || "");
   const lines = (arr: string[]) => Object.fromEntries(arr.filter(Boolean).slice(0, 5).map((l, i) => [`Line${i + 1}`, l]));
-  const billLines = [name, ...String(job.bill_addr || "").split(/\n/).map(s => s.trim())];
   const shipAddr = String(job.ship_addr || "").trim() || [job.address, job.city].filter(Boolean).join(", ");
   const shipLines = [String(job.tenant || "").trim(), ...shipAddr.split(/\n/).map(s => s.trim())];
-  return { BillAddr: lines(billLines), ShipAddr: lines(shipLines) };
+  const out: any = { ShipAddr: lines(shipLines) };
+  if (name) out.BillAddr = lines([name, ...addr.split(/\n/).map(s => s.trim())]);
+  return out;
 }
 // WHERE THE SCOPE GOES (10/4/26, his rule): Standridge and Four Corners ALWAYS get the scope in the Note to customer
 // (bottom left): "Date: <day worked>", then Scope of work, then Roof Assessment. Everybody else: his switch on the ticket.
@@ -168,6 +172,54 @@ const scopeNote = (scope: string, date?: string) => (date ? `Date: ${mdyy(date)}
 // QuickBooks caps the customer note at 1,000 characters (10/8/26: Lake Highlands Cafe's scope + assessment ran 1,064 and never landed).
 // Too long for the note → the scope goes on the invoice line instead, the note keeps just the date. Never both places.
 const noteFits = (job: any, scope: string, date?: string) => scopeInNote(job) && scopeNote(scope, date).length <= 1000;
+// ================= THE INVOICE CHECKER (10/8/26) =================
+// His rules, checked by the app instead of remembered by Claude. Reads the invoice back from QuickBooks, fixes what it can
+// on the spot, and returns what it fixed + what still needs him. Runs after every push, before Mark sent, and nightly.
+//   1. invoice date = due date                       (fixed: due date set to the invoice date)
+//   2. no "View and pay" for no-pay companies         (fixed: card/bank/PayPal off)
+//   3. Bill To = the company + mailing address        (fixed from the building / billing card; flagged if none on file)
+//   4. Ship To = tenant, then job address             (fixed)
+//   5. the same scope never in both the line and the bottom-left note (flagged)
+//   6. the QuickBooks customer is this building       (flagged — never moved by the checker)
+async function checkInvoiceQB(qbId: string, job: any, kind = "real") {
+  const fixed: string[] = [], problems: string[] = [];
+  const cur = (await qb("GET", `invoice/${qbId}`)).Invoice;
+  if (!cur) return { fixed, problems: ["not found in QuickBooks"] };
+  const patch: any = {};
+  if (cur.DueDate !== cur.TxnDate) { patch.DueDate = cur.TxnDate; fixed.push(`due date ${cur.DueDate} → ${cur.TxnDate} (same as invoice date)`); }
+  if (Object.keys(noPay(job)).length) {
+    const np = noPay(job);
+    if (cur.AllowOnlineCreditCardPayment || cur.AllowOnlineACHPayment || cur.AllowOnlinePayment) { Object.assign(patch, np); fixed.push("View and pay turned off"); }
+  }
+  if (kind === "real") {
+    const want = billTo(job);
+    const l1 = (a: any) => String(a?.Line1 || "").trim().toLowerCase();
+    if (want.BillAddr) {
+      if (l1(cur.BillAddr) !== l1(want.BillAddr)) {
+        patch.BillAddr = want.BillAddr; fixed.push(`Bill To → ${want.BillAddr.Line1}`);
+      }
+    } else problems.push(`no Bill To on file for ${job.customer_name || "this customer"} — fill the billing card on the customer page`);
+    if (l1(cur.ShipAddr) !== l1(want.ShipAddr)) {
+      patch.ShipAddr = want.ShipAddr; fixed.push(`Ship To → ${want.ShipAddr.Line1}`);
+    }
+    const memo = String(cur.CustomerMemo?.value || "");
+    const memoLines = new Set(memo.split("\n").map((x: string) => x.replace(/^[\s•\-*]+/, "").trim().toLowerCase()).filter((x: string) => x.length > 12));
+    const dup = (cur.Line || []).some((ln: any) => String(ln.Description || "").split("\n").some((x: string) => memoLines.has(x.replace(/^[\s•\-*]+/, "").trim().toLowerCase())));
+    if (dup) problems.push("the same scope is in the line AND the bottom-left note — take it out of one");
+  }
+  const addrKey = String(job.address || "").trim().toLowerCase().split(/[\s,.#]+/).slice(0, 2).join(" ");
+  const custName = String(cur.CustomerRef?.name || "").toLowerCase().replace(/[,.#]/g, " ").replace(/\s+/g, " ");
+  if (addrKey && !custName.includes(addrKey)) problems.push(`QuickBooks customer "${cur.CustomerRef?.name}" doesn't look like ${job.address}`);
+  if (Object.keys(patch).length) await qb("POST", "invoice", { Id: cur.Id, SyncToken: cur.SyncToken, sparse: true, ...patch });
+  return { fixed, problems };
+}
+async function checkAndRecord(sql: any, inv: any, job: any) {
+  if (!inv?.qb_id) return { fixed: [], problems: [] };
+  let r: any;
+  try { r = await checkInvoiceQB(String(inv.qb_id), job, inv.kind); } catch (e: any) { r = { fixed: [], problems: [`couldn't check: ${String(e?.message || e)}`] }; }
+  await sql`UPDATE invoices SET check_problems = ${r.problems.join(" · ")}, checked_at = NOW() WHERE id = ${inv.id}`;
+  return r;
+}
 async function pushInvoiceToQB(sql: any, invoiceId: number, job: any) {
   const [inv] = norm(await sql`SELECT * FROM invoices WHERE id = ${invoiceId}`);
   if (!inv) throw new Error("That invoice doesn't exist.");
@@ -197,7 +249,8 @@ async function pushInvoiceToQB(sql: any, invoiceId: number, job: any) {
     if (!back || Number(back.TotalAmt) !== Number(inv.amount) || back.DocNumber !== DocNumber) throw new Error("QuickBooks read-back doesn't match — check invoice #" + DocNumber + " in QuickBooks.");
     await sql`UPDATE invoices SET qb_id = ${made.Id}, number = ${DocNumber}, qb_error = '' WHERE id = ${invoiceId}`;
     const zeroErr = await zeroReplacedPlaceholders(sql, inv, job);
-    return { number: DocNumber, customer: cust.DisplayName, zero_error: zeroErr.join(" · ") };
+    const chk = await checkAndRecord(sql, { ...inv, qb_id: made.Id }, job);   // the checker reads it back and fixes before he ever sees it
+    return { number: DocNumber, customer: cust.DisplayName, zero_error: zeroErr.join(" · "), check_fixed: chk.fixed, check_problems: chk.problems };
   } catch (e: any) {
     await sql`UPDATE invoices SET qb_error = ${String(e?.message || e)} WHERE id = ${invoiceId}`;
     throw e;
@@ -1625,6 +1678,11 @@ export default async function handler(req: Request) {
             } catch (e: any) { if (!b.anyway) return refuse("No sent email found — couldn't look in Gmail: " + String(e?.message || e)); }
           }
           if (!sentMsg && !b.anyway) return refuse(`No sent email with "${num || "this invoice's number"}" in the subject — not marked sent.`);
+          // THE CHECKER GATE (10/8/26): fix what it can, and anything it can't fix stops Mark sent until he says "I know, it's ok".
+          if (inv.qb_id) {
+            const chk = await checkAndRecord(sql, inv, norm(await loadJob(inv.job_id)));
+            if (chk.problems.length && !b.anyway) return refuse(`Not marked sent — invoice ${num} still has: ${chk.problems.join(" · ")}`);
+          }
           if (sentMsg) sentDay = new Date(Number(sentMsg.internalDate || Date.now()) - 5 * 3600 * 1000).toISOString().slice(0, 10); // Central time
           // MARK SENT = APP TOTAL MATCHES THE FINAL SENT INVOICE (his rule 10/6/26): read this invoice's total from QuickBooks
           // and the app's saved total becomes that number before it moves to AR.
@@ -1682,6 +1740,30 @@ export default async function handler(req: Request) {
       return json(norm(r));
     }
 
+    // ================= INVOICE CHECKER (10/8/26) =================
+    // POST /w/invoice-check/:id → check one invoice (app id) now.  POST /w/invoice-sweep → every open invoice in QuickBooks,
+    // as many as fit in the time budget, oldest-checked first; the nightly sweep calls this until it's done.
+    if (kind === "invoice-check" && id && m === "POST") {
+      const [inv] = norm(await sql`SELECT * FROM invoices WHERE id = ${id}`);
+      if (!inv) return refuse("That invoice doesn't exist.", 404);
+      const r = await checkAndRecord(sql, inv, norm(await loadJob(inv.job_id)));
+      return json({ number: inv.number, ...r });
+    }
+    if (kind === "invoice-sweep" && m === "POST") {
+      const started = Date.now();
+      const rows = norm(await sql`SELECT * FROM invoices WHERE COALESCE(qb_id, '') <> '' AND paid_at IS NULL
+        AND (kind <> 'placeholder' OR amount > 0) AND (checked_at IS NULL OR checked_at < NOW() - INTERVAL '20 hours')
+        ORDER BY checked_at NULLS FIRST, id LIMIT 40`);
+      const out: any[] = [];
+      for (const inv of rows) {
+        if (Date.now() - started > 20000) break;
+        const r = await checkAndRecord(sql, inv, norm(await loadJob(inv.job_id)));
+        if (r.fixed.length || r.problems.length) out.push({ number: inv.number, fixed: r.fixed, problems: r.problems });
+      }
+      const [left] = norm(await sql`SELECT COUNT(*)::int AS n FROM invoices WHERE COALESCE(qb_id, '') <> '' AND paid_at IS NULL
+        AND (kind <> 'placeholder' OR amount > 0) AND (checked_at IS NULL OR checked_at < NOW() - INTERVAL '20 hours')`);
+      return json({ checked: rows.length, results: out, left: left.n });
+    }
     // ================= INVOICING PAGE =================
     // INVOICE PDF (10/4/26): the QuickBooks PDF of one invoice (by its QuickBooks id), so it can go into an email draft he sends himself.
     if (kind === "qb-pdf" && id && m === "GET") {

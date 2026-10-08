@@ -122,6 +122,9 @@ async function customer(id) {
         <label>Phone<input name="phone" value="${esc(c.phone)}"></label>
         <label>Email<input name="email" value="${esc(c.email)}"></label>
         <label class="full">Notes<textarea name="notes">${esc(c.notes)}</textarea></label>
+        <label>Bill To name (every invoice)<input name="bill_name" value="${esc(c.bill_name || '')}"></label>
+        <label>Online "View and pay"<select name="no_pay"><option value="">Allowed</option><option value="1"${c.no_pay ? ' selected' : ''}>Never — they pay by check/ACH</option></select></label>
+        <label class="full">Bill To mailing address<textarea name="bill_addr">${esc(c.bill_addr || '')}</textarea></label>
         <div class="actions"><button class="ghost">Save changes</button></div>
         <div class="err full" id="ee"></div>
       </form>
@@ -148,7 +151,7 @@ async function customer(id) {
   };
   document.getElementById('ec').onsubmit = async ev => {
     ev.preventDefault(); const btn = ev.submitter; btn.disabled = true;
-    try { await saveAndProve(`customers/${id}`, 'PUT', formData(ev.target), () => `customers/${id}`, ['name', 'phone', 'email', 'notes']); route(); }
+    try { await saveAndProve(`customers/${id}`, 'PUT', formData(ev.target), () => `customers/${id}`, ['name', 'phone', 'email', 'notes', 'bill_name', 'bill_addr']); route(); }
     catch (e) { fail(e, document.getElementById('ee')); btn.disabled = false; }
   };
   // Pinned on the company: same pieces-upload as job files, then read the company back to prove it stuck.

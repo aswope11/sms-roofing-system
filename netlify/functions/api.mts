@@ -45,8 +45,13 @@ export default async (req: Request, context: Context) => {
         return note(c, miss);
       }
       if (m === "PUT" && id) {
+        // BILLING CARD (10/8/26): Bill To name + mailing address + "never View and pay" — sent → saved; left out → kept.
         const [c] = await sql`UPDATE customers SET name=${cname}, phone=${b.phone || ""},
-          email=${b.email || ""}, notes=${b.notes || ""} WHERE id=${id} RETURNING *`;
+          email=${b.email || ""}, notes=${b.notes || ""},
+          bill_name=CASE WHEN ${"bill_name" in b}::boolean THEN ${String(b.bill_name || "").trim()} ELSE bill_name END,
+          bill_addr=CASE WHEN ${"bill_addr" in b}::boolean THEN ${String(b.bill_addr || "").trim()} ELSE bill_addr END,
+          no_pay=CASE WHEN ${"no_pay" in b}::boolean THEN ${!!b.no_pay && b.no_pay !== "0"} ELSE no_pay END
+          WHERE id=${id} RETURNING *`;
         return note(c, miss);
       }
     }
