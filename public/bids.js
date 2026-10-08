@@ -13,7 +13,9 @@ let dragBid = 0;       // DRAG A BID (10/8/26, his ask): the bid being dragged �
 export async function bidsPage() {
   setTab('bids'); crumbs([['Bids']]);
   const d = await call('/w/bids');
-  const owe = sortBids(d.owe, d.today);
+  // HIS ORDER (10/8/26): once he drags a bid up or down in Bids owed, that order sticks (saved on the server). New bids sit at the bottom until he moves them.
+  const owe = sortBids(d.owe, d.today).map((b, i) => ({ b, i }))
+    .sort((a, x) => ((a.b.sched_rank ?? 99999) - (x.b.sched_rank ?? 99999)) || (a.i - x.i)).map(o => o.b);
   const chase = owe.filter(b => ['late', 'today', 'tomorrow', 'soon'].includes(b.state.level));
   if (!calMonth) calMonth = d.today.slice(0, 7);
 
@@ -43,7 +45,7 @@ export async function bidsPage() {
     </div></div>`;
 
   // 2 — BIDS OWED: due date first, worst first. Each row opens that bid's job file.
-  const row = b => `<div class="prow" style="border-left-color:${LANE[b.state.level]}">
+  const row = b => `<div class="prow" data-bidrow="${b.id}" style="border-left-color:${LANE[b.state.level]}">
       <a class="pmain" href="#/job/${b.id}" draggable="true" data-bid="${b.id}" style="cursor:grab">
         <div class="pt">${esc(b.address)}${b.city ? ', ' + esc(b.city) : ''} — ${esc(b.title)}</div>
         <div class="ps">${esc(b.customer_name)}${b.gc ? ' · ' + esc(b.gc) : ''}${b.bid_amount != null ? ' · ' + money(b.bid_amount) : ''}</div>
@@ -87,7 +89,7 @@ export async function bidsPage() {
   const all = [...owe, ...d.sent];
   $app().querySelectorAll('[data-bid]').forEach(el => {
     el.ondragstart = e => { dragBid = Number(el.dataset.bid); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', 'bid:' + dragBid); el.style.opacity = '.4'; };
-    el.ondragend = () => { el.style.opacity = ''; $app().querySelectorAll('.bcday').forEach(c => c.style.outline = ''); };
+    el.ondragend = () => { el.style.opacity = ''; marks(); $app().querySelectorAll('.bcday').forEach(c => c.style.outline = ''); };
   });
   $app().querySelectorAll('.bcday[data-day]').forEach(cell => {
     cell.ondragover = e => { if (!dragBid) return; e.preventDefault(); cell.style.outline = '2px dashed #ff7a3d'; };
@@ -106,6 +108,28 @@ export async function bidsPage() {
     const btn = document.getElementById(bid); let t = null;
     btn.ondragover = e => { if (!dragBid) return; e.preventDefault(); if (!t) t = setTimeout(() => { t = null; shift(n); }, 700); };
     btn.ondragleave = () => { clearTimeout(t); t = null; };
+  });
+  // DRAG A BID UP OR DOWN IN BIDS OWED (10/8/26): drop it on another bid — it lands above or below that one, where the orange line shows.
+  const marks = () => $app().querySelectorAll('[data-bidrow]').forEach(r => r.style.boxShadow = '');
+  $app().querySelectorAll('[data-bidrow]').forEach(r => {
+    const below = e => e.clientY > r.getBoundingClientRect().top + r.offsetHeight / 2;
+    r.ondragover = e => { if (!dragBid || dragBid === Number(r.dataset.bidrow)) return; e.preventDefault(); marks(); r.style.boxShadow = below(e) ? '0 3px 0 #ff7a3d' : '0 -3px 0 #ff7a3d'; };
+    r.ondragleave = e => { if (!r.contains(e.relatedTarget)) r.style.boxShadow = ''; };
+    r.ondrop = e => {
+      e.preventDefault(); marks();
+      const id = dragBid; dragBid = 0;
+      const target = Number(r.dataset.bidrow);
+      if (!id || id === target || !owe.some(x => x.id === id)) return;
+      const ids = owe.map(x => x.id).filter(x => x !== id);
+      ids.splice(ids.indexOf(target) + (below(e) ? 1 : 0), 0, id);
+      run(async () => {
+        await call('/w/sched-order', { method: 'PUT', body: { ids } });
+        const back = await call('/w/bids');
+        const got = back.owe.filter(x => ids.includes(x.id)).sort((a, c) => (a.sched_rank ?? 99999) - (c.sched_rank ?? 99999)).map(x => x.id);
+        if (got.join(',') !== ids.join(',')) throw new Error('The order did not stick — the read-back shows a different order.');
+        toast('Order saved — read back from the server');
+      });
+    };
   });
 
   const go = document.getElementById('bsGo');
