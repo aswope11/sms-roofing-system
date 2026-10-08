@@ -38,7 +38,8 @@ export async function schedulePage(start) {
   // SHOP (9/28/26): Shop is only a pick when logging a man's day — never a row in the job lists below the grid.
   const listed = open.filter(j => j.customer_name !== 'SMS Shop');
   const shares = stopShares(w);
-  const nobody = d => open.filter(j => j.scheduled_date === d && !w.stops.some(s => s.job_id === j.id && s.work_date === d));
+  const nobody = d => open.filter(j => j.scheduled_date === d && !w.stops.some(s => s.job_id === j.id && s.work_date === d))
+    .sort((a, b) => (a.sched_rank == null ? 9999 : a.sched_rank) - (b.sched_rank == null ? 9999 : b.sched_rank)); // his drag order inside the Nobody box (10/8/26)
   // his rule 10/6/26: a job already on TODAY's board (Nobody on it yet, or a man on it) drops off the Ready to work list and the + box list. It comes back tomorrow; it stays open until it's done.
   const isAct = d => (activeDay.length ? activeDay : [w.today]).includes(d);
   const onToday = j => isAct(j.scheduled_date) || w.stops.some(s => s.job_id === j.id && isAct(s.work_date));
@@ -543,7 +544,20 @@ export async function schedulePage(start) {
       if (planId && !crew_id) {
         if (!work_date) return;
         const j = jobsById[planId];
-        if (j && dayOf(j.scheduled_date) === work_date) return;
+        // SAME DAY = REORDER (10/8/26, his ask): drag a pill up or down inside the Nobody box — it lands where you drop it.
+        if (j && dayOf(j.scheduled_date) === work_date) {
+          const cards = [...td.querySelectorAll('.jobcard[data-plan]')].filter(c => Number(c.dataset.plan) !== planId);
+          let at = cards.findIndex(c => { const r = c.getBoundingClientRect(); return e.clientY < r.top + r.height / 2; });
+          if (at < 0) at = cards.length;
+          const ids = cards.map(c => Number(c.dataset.plan)); ids.splice(at, 0, planId);
+          return run(async () => {
+            await call('/w/sched-order', { method: 'PUT', body: { ids } });
+            const back = await call(weekUrl);
+            const got = back.jobs.filter(x => ids.includes(x.id)).sort((a, c) => (a.sched_rank ?? 9999) - (c.sched_rank ?? 9999)).map(x => x.id);
+            if (got.join(',') !== ids.join(',')) throw new Error('The order did not stick — the read-back shows a different order.');
+            toast('Order saved — read back from the server');
+          });
+        }
         return run(() => doAndProve(`/w/job/${planId}/plan`, { method: 'PUT', body: { scheduled_date: work_date } }, weekUrl,
           back => back.jobs.some(row => row.id === planId && dayOf(row.scheduled_date) === work_date),
           `Moved to ${dayHead(work_date)} — the job is still there`));
