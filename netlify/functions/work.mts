@@ -132,7 +132,11 @@ async function qbCustomerFor(job: any, sql?: any) {
   const name = [addr, job.city, job.tenant].map((x: any) => String(x || "").trim()).filter(Boolean).join(" - ");
   // A new property never lands loose: it goes UNDER its company (Four Corners, Wortham…) — his AR rolls up by company.
   const parent = companyParent || ((await qbQuery(`SELECT Id FROM Customer WHERE DisplayName = '${qEsc(String(job.customer_name || "").trim())}' AND Active = true`)).Customer || [])[0];
-  return (await qb("POST", "customer", { DisplayName: name, ...(parent ? { ParentRef: { value: parent.Id }, Job: true, BillWithParent: false } : {}) })).Customer;
+  // No company parent in QuickBooks (Wortham's buildings are named "address - Wortham Brothers Roofing", no parent):
+  // the company name goes ON the customer name — the app's customer name, exactly — so it never lands with no company on it.
+  const company = String(job.customer_name || "").trim();
+  const named = parent || !company ? name : [addr, job.tenant, company].map((x: any) => String(x || "").trim()).filter(Boolean).join(" - ");
+  return (await qb("POST", "customer", { DisplayName: named, ...(parent ? { ParentRef: { value: parent.Id }, Job: true, BillWithParent: false } : {}) })).Customer;
 }
 async function qbNextNumber() {
   const rows = (await qbQuery("SELECT DocNumber FROM Invoice ORDERBY MetaData.CreateTime DESC MAXRESULTS 100")).Invoice || [];
