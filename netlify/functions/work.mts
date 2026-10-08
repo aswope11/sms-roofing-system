@@ -1686,7 +1686,8 @@ export default async function handler(req: Request) {
     // INVOICE PDF (10/4/26): the QuickBooks PDF of one invoice (by its QuickBooks id), so it can go into an email draft he sends himself.
     if (kind === "qb-pdf" && id && m === "GET") {
       const t = await qbToken();
-      const res = await fetch(`${QB_API}/${t.realm_id}/invoice/${id}/pdf?minorversion=75`, { headers: { authorization: `Bearer ${t.access_token}`, accept: "application/pdf" } });
+      const what = url.searchParams.get("type") === "estimate" ? "estimate" : "invoice";   // ?type=estimate → the estimate's PDF (10/8/26)
+      const res = await fetch(`${QB_API}/${t.realm_id}/${what}/${id}/pdf?minorversion=75`, { headers: { authorization: `Bearer ${t.access_token}`, accept: "application/pdf" } });
       if (!res.ok) return refuse("QuickBooks would not give the PDF (" + res.status + ").");
       return new Response(await res.arrayBuffer(), { headers: { "content-type": "application/pdf" } });
     }
