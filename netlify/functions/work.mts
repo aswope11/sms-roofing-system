@@ -83,8 +83,30 @@ async function qb(method: string, path: string, payload?: any) {
 const qbQuery = (q: string) => qb("GET", `query?query=${encodeURIComponent(q)}`).then((d: any) => d.QueryResponse || {});
 const qEsc = (s: string) => String(s || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 // QuickBooks customer = the property. Find it by address; none → create it named "address - city - tenant"; more than one → stop and name them.
-async function qbCustomerFor(job: any) {
+async function qbCustomerFor(job: any, sql?: any) {
   const addr = String(job.address || "").trim();
+  // SAME BUILDING, SAME TENANT → SAME QB CUSTOMER (10/8/26): White Lion and 1710 Greenville landed on the wrong customer because
+  // the name lookup missed "Reid Gormely - 4916 White Lion" / "Cook Children's Pediatrics-1710…". Whatever customer this
+  // building + tenant was already invoiced under in QuickBooks wins over any name lookup.
+  let companyParent: any = null;
+  if (sql) {
+    const tenant = String(job.tenant || "").trim().toLowerCase();
+    const prior = norm(await sql`SELECT i.qb_id, COALESCE(NULLIF(j.tenant_name, ''), p.tenant, '') AS tenant, j.property_id
+      FROM invoices i JOIN jobs j ON j.id = i.job_id JOIN properties p ON p.id = j.property_id
+      WHERE p.customer_id = ${job.customer_id} AND COALESCE(i.qb_id, '') <> '' AND j.id <> ${job.id} ORDER BY i.id DESC LIMIT 40`);
+    const same = prior.filter((r: any) => r.property_id === job.property_id && String(r.tenant || "").trim().toLowerCase() === tenant);
+    for (const r of same.slice(0, 3)) {
+      try { const c = (await qb("GET", `invoice/${r.qb_id}`)).Invoice?.CustomerRef; if (c?.value) return { Id: c.value, DisplayName: c.name || "" }; } catch { /* next */ }
+    }
+    // A brand-new building: its company parent is the parent his other buildings for this company already sit under (Wortham Bros., Inc. ≠ "Wortham Brothers Roofing").
+    for (const r of prior.filter((r: any) => r.property_id !== job.property_id).slice(0, 5)) {
+      try {
+        const cid = (await qb("GET", `invoice/${r.qb_id}`)).Invoice?.CustomerRef?.value;
+        const pr = cid ? (await qb("GET", `customer/${cid}`)).Customer?.ParentRef?.value : null;
+        if (pr) { companyParent = { Id: pr }; break; }
+      } catch { /* next */ }
+    }
+  }
   const found = (await qbQuery(`SELECT Id, DisplayName FROM Customer WHERE DisplayName LIKE '${qEsc(addr)}%' AND Active = true`)).Customer || [];
   if (found.length === 1) return found[0];
   if (found.length > 1) {
@@ -109,7 +131,7 @@ async function qbCustomerFor(job: any) {
   }
   const name = [addr, job.city, job.tenant].map((x: any) => String(x || "").trim()).filter(Boolean).join(" - ");
   // A new property never lands loose: it goes UNDER its company (Four Corners, Wortham…) — his AR rolls up by company.
-  const parent = ((await qbQuery(`SELECT Id FROM Customer WHERE DisplayName = '${qEsc(String(job.customer_name || "").trim())}' AND Active = true`)).Customer || [])[0];
+  const parent = companyParent || ((await qbQuery(`SELECT Id FROM Customer WHERE DisplayName = '${qEsc(String(job.customer_name || "").trim())}' AND Active = true`)).Customer || [])[0];
   return (await qb("POST", "customer", { DisplayName: name, ...(parent ? { ParentRef: { value: parent.Id }, Job: true, BillWithParent: false } : {}) })).Customer;
 }
 async function qbNextNumber() {
@@ -150,7 +172,7 @@ async function pushInvoiceToQB(sql: any, invoiceId: number, job: any) {
     if (phRow?.qb_id) {
       try { const phInv = (await qb('GET', `invoice/${phRow.qb_id}`)).Invoice; if (phInv?.CustomerRef?.value) cust = { Id: phInv.CustomerRef.value, DisplayName: phInv.CustomerRef.name || '' }; } catch (e: any) { /* fall back to the lookup */ }
     }
-    if (!cust) cust = await qbCustomerFor(job);
+    if (!cust) cust = await qbCustomerFor(job, sql);
     const DocNumber = await qbNextNumber();
     const made = (await qb("POST", "invoice", {
       CustomerRef: { value: cust.Id }, DocNumber, TxnDate: inv.inv_date, DueDate: inv.inv_date, PrivateNote: inv.memo, ...billTo(job),
@@ -302,7 +324,7 @@ async function pushPlaceholderToQB(sql: any, o: any, amount: number) {
   let cust: any = null;
   const [prev] = norm(await sql`SELECT qb_id FROM invoices WHERE job_id = ${o.job.id} AND kind = 'placeholder' AND COALESCE(qb_id, '') <> '' ORDER BY id DESC LIMIT 1`);
   if (prev?.qb_id) { try { const pi = (await qb("GET", `invoice/${prev.qb_id}`)).Invoice; if (pi?.CustomerRef?.value) cust = { Id: pi.CustomerRef.value, DisplayName: pi.CustomerRef.name || "" }; } catch { cust = null; } }
-  if (!cust) { try { cust = await qbCustomerFor(o.job); } catch (e: any) { throw new Error(`${label}: QuickBooks couldn't match a customer — ${String(e?.message || e)}`); } }
+  if (!cust) { try { cust = await qbCustomerFor(o.job, sql); } catch (e: any) { throw new Error(`${label}: QuickBooks couldn't match a customer — ${String(e?.message || e)}`); } }
   const DocNumber = await qbNextNumber();
   const inv_date = M.addDays(o.work_date, 14);
   const memo = M.placeholderMemo(o.job, o.work_date);
