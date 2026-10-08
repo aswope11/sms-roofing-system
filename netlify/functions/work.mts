@@ -10,6 +10,7 @@ import { getDatabase } from "@netlify/database";
 import { getStore } from "@netlify/blobs";
 import type { Config } from "@netlify/functions";
 import * as M from "../../lib/money.js";
+import * as Q from "../../lib/qb-pdf.js";
 import { repushReason } from "../../lib/mail-label.js";
 import * as TALK from "../../lib/bidtalk.js";
 import { addressKey, chunkCount, CHUNK_BYTES } from "../../lib/rules.js";
@@ -56,6 +57,17 @@ async function qbToken() {
   const next = { ...t, access_token: tok.access_token, refresh_token: tok.refresh_token || t.refresh_token, obtained_at: Date.now(), expires_at: Date.now() + (tok.expires_in || 3600) * 1000 };
   await store.setJSON("tokens", next);
   return next;
+}
+// QUICKBOOKS PDF (read only). One CRM invoice → its QuickBooks PDF, named "Invoice <number>.pdf".
+// GET only. QuickBooks is not created, updated, sent, voided, or deleted, and this invoice row is not written.
+async function invoiceQbPdf(sql: any, invoiceId: number) {
+  const [inv] = norm(await sql`SELECT id, kind, number, qb_id FROM invoices WHERE id = ${invoiceId}`);
+  const refused = Q.qbPdfRefusal(inv);
+  if (refused) return json({ error: refused.error }, refused.status);
+  let t: any;
+  try { t = await qbToken(); }
+  catch (e: any) { return json({ error: String(e?.message || e) }, 401); }
+  return Q.serveQbInvoicePdf({ invoice: inv, token: t, fetchImpl: fetch });
 }
 async function qb(method: string, path: string, payload?: any) {
   const t = await qbToken();
@@ -1523,6 +1535,8 @@ export default async function handler(req: Request) {
 
     // ================= CUSTOMER INVOICES =================
     if (kind === "invoices") {
+      // Same Netlify cookie as every other /w route. A plain GET, so curl -b <that cookie> gets the PDF too.
+      if (m === "GET" && id && action === "qb-pdf") return invoiceQbPdf(sql, id);
       if (m === "POST" && !id) {
         const b = await body();
         const job = norm(await loadJob(Number(b.job_id)));

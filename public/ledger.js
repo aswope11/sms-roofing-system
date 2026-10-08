@@ -1,5 +1,5 @@
 // The ticket's life, drawn inside the job file page. Money (invoices + general ledger) lives on its own page: jobCostPage.
-import { esc, $app, call, doAndProve, crumbs, fail, ask, toast } from './ui.js';
+import { esc, $app, call, doAndProve, crumbs, fail, ask, toast, qbPdfLink } from './ui.js';
 import { money, round2, isWork, canPlaceholder, isBill, inAR, shortDate, costSoFar, LANES, invoicingLane, ticketName, drawAging, placeholderDays } from './money.js';
 
 export async function renderTicket(jobId, mount) {
@@ -33,7 +33,7 @@ export async function renderTicket(jobId, mount) {
         const sent = L.invoices.filter(i => i.kind !== 'placeholder' && i.sent_at);
         if (!sent.length) return '';
         const tot = round2(sent.reduce((a, i) => a + Number(i.amount), 0));
-        return `<div style="margin-top:12px"><h3 style="margin:0 0 6px">Invoices sent</h3>${sent.map(i => `<div>Invoice ${esc(i.number)} · ${money(i.amount)} · sent ${shortDate(i.sent_at)}${i.paid_at ? ' · paid' : ''}</div>`).join('')}<div style="margin-top:6px"><b>Total sent: ${money(tot)}</b></div></div>`;
+        return `<div style="margin-top:12px"><h3 style="margin:0 0 6px">Invoices sent</h3>${sent.map(i => `<div>Invoice ${esc(i.number)} · ${money(i.amount)} · sent ${shortDate(i.sent_at)}${i.paid_at ? ' · paid' : ''} ${qbPdfLink(i)}</div>`).join('')}<div style="margin-top:6px"><b>Total sent: ${money(tot)}</b></div></div>`;
       })()}
       ${L.shares && L.shares.length ? `<div style="margin-top:12px"><h3 style="margin:0 0 6px">Logged <a href="#/jobcost/${jobId}/labor">Labor detail ›</a></h3>${
         Object.entries(L.shares.reduce((g, s) => { (g[s.work_date] ||= []).push(s); return g; }, {})).sort((a, b) => a[0] < b[0] ? 1 : -1).map(([d, rows]) =>

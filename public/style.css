@@ -59,6 +59,8 @@ select.small,input.small{padding:4px 6px;font-size:14px}
 input.days{width:56px;padding:4px;text-align:center}
 .btnrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
 button.small{padding:4px 10px;font-size:14px}
+a.qbpdf{display:inline-block;text-decoration:none;font-weight:700;font-size:14px;line-height:1.2;padding:4px 10px;border-radius:6px;border:1px solid var(--brand);background:transparent;color:var(--brand);white-space:nowrap;cursor:pointer}
+a.qbpdf:hover{color:var(--ink)}
 .star{background:none;border:0;color:var(--mute);font-size:20px;padding:0 4px;cursor:pointer}
 .star.on{color:#ffd24d}
 .checkline{display:flex;align-items:center;gap:8px;font-size:16px;color:var(--ink);flex-direction:row}
