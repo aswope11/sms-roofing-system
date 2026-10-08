@@ -146,6 +146,11 @@ async function qbNextNumber() {
 // Write one real invoice from the app into QuickBooks, then read it back from QuickBooks in a separate request.
 // Four Corners rule (9/23): the invoice says the owning LLC + its address top left, and the tenant + tenant address on the right.
 // Only when the property has a Bill-to name filled in; otherwise the invoice goes out the way it always has.
+// NO "VIEW AND PAY" (10/8/26, his order, every ticket): Wortham, Standridge and Four Corners pay by check/ACH on their own —
+// their invoices never carry QuickBooks' online-pay button (cards, bank transfer, PayPal all off).
+const NO_PAY_CUSTOMERS = /wortham|standridge|four corners/i;
+const noPay = (job: any) => NO_PAY_CUSTOMERS.test(String(job?.customer_name || ""))
+  ? { AllowOnlinePayment: false, AllowOnlineCreditCardPayment: false, AllowOnlineACHPayment: false, AllowIPNPayment: false } : {};
 function billTo(job: any) {
   const name = String(job.bill_name || "").trim();
   if (!name) return {};
@@ -179,7 +184,7 @@ async function pushInvoiceToQB(sql: any, invoiceId: number, job: any) {
     if (!cust) cust = await qbCustomerFor(job, sql);
     const DocNumber = await qbNextNumber();
     const made = (await qb("POST", "invoice", {
-      CustomerRef: { value: cust.Id }, DocNumber, TxnDate: inv.inv_date, DueDate: inv.inv_date, PrivateNote: inv.memo, ...billTo(job),
+      CustomerRef: { value: cust.Id }, DocNumber, TxnDate: inv.inv_date, DueDate: inv.inv_date, PrivateNote: inv.memo, ...billTo(job), ...noPay(job),
       ...(scopeInNote(job) ? { CustomerMemo: { value: scopeNote(inv.scope, inv.covers_through) } } : {}),
       Line: [{ DetailType: "SalesItemLineDetail", Amount: Number(inv.amount), Description: scopeInNote(job) ? "" : inv.scope,
         SalesItemLineDetail: { ItemRef: { value: "1" }, Qty: 1, UnitPrice: Number(inv.amount) } }],
@@ -339,7 +344,7 @@ async function pushPlaceholderToQB(sql: any, o: any, amount: number) {
   const inv_date = M.addDays(o.work_date, 14);
   const memo = M.placeholderMemo(o.job, o.work_date);
   const made = (await qb("POST", "invoice", {
-    CustomerRef: { value: cust.Id }, DocNumber, TxnDate: inv_date, DueDate: inv_date, PrivateNote: memo,
+    CustomerRef: { value: cust.Id }, DocNumber, TxnDate: inv_date, DueDate: inv_date, PrivateNote: memo, ...noPay(o.job),
     Line: [qbLine(amount, desc)],
   })).Invoice;
   const back = (await qb("GET", `invoice/${made.Id}`)).Invoice;
