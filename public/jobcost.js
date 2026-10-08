@@ -1,7 +1,7 @@
 // JOB COST SHEET — built on his "Greenhill Actual Job Cost Sheet.xlsx" (9/16/26).
 // Summary page first (numbers only, short on a repair); every detail is a pill that opens its own page.
 // Scales from a two-scope repair to a 28-scope, 200-day job: the server adds it up, pages fold what they don't need.
-import { esc, $app, call, doAndProve, crumbs, fail, ask, toast, delX } from './ui.js';
+import { esc, $app, call, doAndProve, crumbs, fail, ask, toast, delX, qbPdfLink } from './ui.js';
 import { money, round2, isWork, canPlaceholder, isBill, inAR, shortDate, ticketName, budgetTable, pricedBack, payWeekStart, addDays } from './money.js';
 
 const dt = d => { if (!d) return ''; const [y, m, dd] = String(d).slice(0, 10).split('-'); return `${m}/${dd}/${y}`; };
@@ -187,6 +187,7 @@ export async function jobCostPage(jobId, sub) {
     <td>${isBill(i) ? (i.sent_at ? `<span class="greentxt">sent ${shortDate(i.sent_at)}</span>` : '<span class="ambertxt">not sent</span>') : '<span class="mute">a seat, never sent</span>'}</td>
     <td>${isBill(i) ? (i.paid_at ? `<span class="greentxt">paid ${shortDate(i.paid_at)}</span>` : inAR(i) ? '<span class="redtxt">in AR</span>' : '') : ''}</td>
     <td class="btnrow" style="margin:0">
+      ${qbPdfLink(i)}
       <button class="small ghost inv-edit" data-id="${i.id}">Edit</button>
       ${i.kind === 'placeholder' && Number(i.amount) > 0 ? `<button class="small ghost inv-zero" data-id="${i.id}">Zero it</button>` : ''}
       ${isBill(i) ? `<button class="small ghost inv-sent" data-id="${i.id}" data-v="${i.sent_at ? 0 : 1}">${i.sent_at ? 'Un-mark sent' : 'Mark sent'}</button>` : ''}

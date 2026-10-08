@@ -66,6 +66,7 @@ export const ask = (q, def = '') => { const v = window.prompt(q, def); return v 
 // ---------- DELETE, everywhere ----------
 // A button with data-del="type" data-id="id". It asks the server what's attached, shows it, asks first,
 // deletes, then reads it back in a separate request to prove it's gone. Deleting never touches QuickBooks.
+export { qbPdfLink } from './qbpdf.js';
 export const delBtn = (type, id, word = 'Delete') => `<button type="button" class="small ghost delbtn" data-del="${type}" data-id="${esc(id)}" title="${word}">${word === 'Delete' ? '🗑 Delete' : esc(word)}</button>`;
 export const delX = (type, id) => `<button type="button" class="delx" data-del="${type}" data-id="${esc(id)}" title="Delete" aria-label="Delete">🗑</button>`;
 export async function askDelete(type, id) {

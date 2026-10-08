@@ -1,6 +1,6 @@
 // INVOICING — copied from the old board's renderInvoicing (6-old-app-source): Ready to bill (fills itself) → Placeholders owed →
 // Send it → three little grids (Needs both / Needs the scope / Needs pictures) → Write it → Billed a trip at a time → Tabled.
-import { esc, $app, call, doAndProve, crumbs, setTab, fail, ask, toast, stillMissing } from './ui.js';
+import { esc, $app, call, doAndProve, crumbs, setTab, fail, ask, toast, stillMissing, qbPdfLink } from './ui.js';
 import { money, ticketName, invoicingLane, isBill, shortDate, round2 } from './money.js';
 
 const age = (from, to) => from ? Math.max(0, Math.round((new Date(to + 'T12:00:00') - new Date(String(from).slice(0, 10) + 'T12:00:00')) / 86400000)) : null;
@@ -32,6 +32,7 @@ export async function invoicingPage() {
         ${billsOf(t).map(i => `<div class="ps">${i.kind === 'draw' ? 'Draw' : 'Invoice'} ${esc(i.number) || 'no number'} · ${money(i.amount)} · ${i.sent_at ? 'sent ' + shortDate(i.sent_at) : '<span class="ambertxt">not sent</span>'}${i.kind === 'real' ? (i.qb_id ? ' · in QuickBooks' : ' · <span class="redtxt">not in QuickBooks</span>') : ''}</div>${i.kind === 'real' && !i.qb_id && i.qb_error ? `<div class="ps redtxt">${esc(i.qb_error)}</div>` : ''}`).join('')}
       </a>
       <div class="lanebtns">
+        ${billsOf(t).filter(i => i.kind === 'real' && i.qb_id).map(i => qbPdfLink(i)).join('')}
         ${billsOf(t).filter(i => i.kind === 'real' && !i.qb_id).map(i => `<button class="lb send toqb" data-id="${i.id}" data-job="${t.id}">Send to QuickBooks</button>`).join('')}
         ${billsOf(t).filter(i => !i.sent_at).map(i => `<button class="lb send sent" data-id="${i.id}" data-job="${t.id}">Mark ${esc(i.number) || 'it'} sent</button>`).join('')}
         <button class="lb tbl" data-job="${t.id}">Table it</button>
@@ -40,6 +41,7 @@ export async function invoicingPage() {
   const mini = t => `<div class="minirow">
       <a ${open(t.id)}><div class="mt">${esc(ticketName(t))}</div><div class="ms">${esc(who(t))}${t.last_work_date ? ' · ' + shortDate(t.last_work_date) : ''}</div></a>
       <div class="lanebtns">
+        ${billsOf(t).filter(i => i.kind === 'real' && i.qb_id).map(i => qbPdfLink(i)).join('')}
         <button class="lb chk ${t.scope_ok ? 'on' : ''}" data-job="${t.id}" data-which="scope" data-v="${t.scope_ok ? 0 : 1}">Scope</button>
         <button class="lb chk ${t.pics_ok ? 'on' : ''}" data-job="${t.id}" data-which="pics" data-v="${t.pics_ok ? 0 : 1}">Pictures</button>
       </div></div>`;

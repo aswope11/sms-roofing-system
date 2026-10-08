@@ -1,5 +1,5 @@
 // AR — copied from the old board's renderAR: aging tiles, one pile per customer A–Z, days out, Mark it paid on the row.
-import { esc, $app, call, doAndProve, crumbs, setTab, fail } from './ui.js';
+import { esc, $app, call, doAndProve, crumbs, setTab, fail, qbPdfLink } from './ui.js';
 import { money, ticketName, shortDate, round2, missingToMarkPaid, isBill } from './money.js';
 
 const age = (from, to) => Math.max(0, Math.round((new Date(to + 'T12:00:00') - new Date(String(from).slice(0, 10) + 'T12:00:00')) / 86400000));
@@ -40,7 +40,7 @@ export async function arPage() {
       const ct = bucketsOf(byCust[c]);
       return `<tbody class="qbgrp"><tr class="qbparent"><td colspan="8"><span class="qbcar">&#9662;</span>${esc(c)}</td></tr>
         ${jobs.map(js => { const b = bucketsOf(js), t = round2(b.reduce((a, v) => a + v, 0)), id = js[0].job_id;
-          return `<tr class="qbrow" data-hover="${id}"><td class="qbname" title="${esc(ticketName(js[0]))}">${esc(ticketName(js[0]))}</td>${b.map(v => `<td class="qbn">${v ? `<a href="#/job/${id}">${fmt(v)}</a>` : ''}</td>`).join('')}<td class="qbn"><a href="#/job/${id}">${fmt(t) || '0.00'}</a></td><td class="qbpay"><button class="lb send paid" data-ids="${js.map(r => r.id).join(',')}">Paid</button></td></tr>`; }).join('')}
+          return `<tr class="qbrow" data-hover="${id}"><td class="qbname" title="${esc(ticketName(js[0]))}">${esc(ticketName(js[0]))}</td>${b.map(v => `<td class="qbn">${v ? `<a href="#/job/${id}">${fmt(v)}</a>` : ''}</td>`).join('')}<td class="qbn"><a href="#/job/${id}">${fmt(t) || '0.00'}</a></td><td class="qbpay"><button class="lb send paid" data-ids="${js.map(r => r.id).join(',')}">Paid</button>${js.map(r => qbPdfLink(r)).join('')}</td></tr>`; }).join('')}
         <tr class="qbtot"><td class="qbname">Total for ${esc(c)}</td>${ct.map(v => `<td class="qbn">${fmt(v)}</td>`).join('')}<td class="qbn">${fmtT(round2(ct.reduce((a, v) => a + v, 0)))}</td><td></td></tr></tbody>`;
     }).join('');
     return `<style>
@@ -48,10 +48,11 @@ export async function arPage() {
       .qbhead{text-align:center;margin-bottom:22px}.qbco{font-size:22px;font-weight:800}.qbsub,.qbasof{font-size:13px;color:var(--mute);margin-top:4px}
       .qbtab{width:100%;border-collapse:collapse;table-layout:fixed}
       .qbtab th{font-weight:700;text-align:right;padding:9px 8px;color:var(--mute);font-size:12px;text-transform:uppercase;letter-spacing:.04em;border-bottom:2px solid var(--line);width:10%}
-      .qbtab th:first-child{width:34%}
-      .qbtab th:last-child{width:6%}
+      .qbtab th:first-child{width:22%}
+      .qbtab th:last-child{width:18%}
       .qbtab th{white-space:nowrap}
-      .qbpay{text-align:right;padding:4px 0 4px 8px!important}
+      .qbpay{text-align:right;padding:4px 0 4px 8px!important;white-space:normal}
+      .qbpay .qbpdf{margin:2px 0 2px 4px}
       .qbpay .lb{padding:3px 10px;font-size:12px}
       .qbtab td{padding:7px 8px;line-height:1.3}
       .qbn{text-align:right;white-space:nowrap}
@@ -80,7 +81,7 @@ export async function arPage() {
         <a class="pmain" href="#/job/${t.id}"><div class="pt">${esc(ticketName(t))}</div>
           <div class="ps">${esc(t.customer_name)} · done ${shortDate(t.done_at)}${t.invoices.filter(isBill).length ? ' · ' + t.invoices.filter(isBill).map(i => `${esc(i.number) || 'no #'} ${money(i.amount)}`).join(', ') : ''}</div>
           <div class="ps redtxt"><b>${t.why.map(w => w.toUpperCase()).join(' · ')}</b></div></a>
-        <div class="lanebtns"><a class="lb send" href="#/jobcost/${t.id}/invoices">Fix it</a><button class="lb nocharge" data-job="${t.id}">No charge</button></div>
+        <div class="lanebtns">${(t.invoices || []).map(i => qbPdfLink(i)).join('')}<a class="lb send" href="#/jobcost/${t.id}/invoices">Fix it</a><button class="lb nocharge" data-job="${t.id}">No charge</button></div>
       </div>`).join('')}</div>` : ''}
     ${qbTable()}
   </div>`;
@@ -106,7 +107,7 @@ export async function arPage() {
         const j = L.job, cost = round2(L.shares.reduce((a, x) => a + x.cost, 0) + L.material.reduce((a, l) => a + Number(l.line_total), 0));
         tip.innerHTML = `<h4>${esc(ticketName(j))}</h4><div class="pm">${esc(j.customer_name)}${j.tenant ? ' · ' + esc(j.tenant) : ''} · ${esc(L.places.join(' + '))}</div>
           ${j.scope ? `<div class="pv">${esc(j.scope)}</div>` : ''}
-          <div class="pk">Invoices</div>${L.invoices.map(i => `<div class="prow"><span>${i.kind === 'placeholder' ? 'Placeholder' : i.kind === 'draw' ? 'Draw' : 'Invoice'} ${esc(i.number) || ''}${i.sent_at ? ' · sent ' + shortDate(i.sent_at) : ''}${i.paid_at ? ' · paid ' + shortDate(i.paid_at) : ''}</span><b>${money(i.amount)}</b></div>`).join('') || '<div class="pnote">none</div>'}
+          <div class="pk">Invoices</div>${L.invoices.map(i => `<div class="prow"><span>${i.kind === 'placeholder' ? 'Placeholder' : i.kind === 'draw' ? 'Draw' : 'Invoice'} ${esc(i.number) || ''}${i.sent_at ? ' · sent ' + shortDate(i.sent_at) : ''}${i.paid_at ? ' · paid ' + shortDate(i.paid_at) : ''} ${qbPdfLink(i)}</span><b>${money(i.amount)}</b></div>`).join('') || '<div class="pnote">none</div>'}
           <div class="pk">Cost so far</div><div class="prow"><span>Labor + material</span><b>${money(cost)}</b></div>
           <div class="pk">Days worked</div><div class="pnote">${[...new Set(L.shares.map(x => shortDate(x.work_date)))].join(', ') || 'none'}</div>
           <div class="pk">File cabinet</div><div class="pnote">${(f.files || []).length} file${(f.files || []).length === 1 ? '' : 's'}${j.scope_ok ? ' · scope checked' : ''}${j.pics_ok ? ' · pictures checked' : ''}</div>`;
