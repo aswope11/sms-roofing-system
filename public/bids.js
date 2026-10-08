@@ -129,7 +129,7 @@ export async function templatesPage() {
       </div>`).join('')}
       ${isShut ? '' : links(k).map(t => `<div class="tcard">
         <span class="ttag">${esc(t.tag)}</span><b class="tname">${esc(t.name)}</b><span class="spacer"></span>
-        <a class="tsheet" href="${esc(t.url)}" target="_blank" rel="noopener">Open ↗</a>
+        <a class="tsheet" href="${esc(t.url.replace(/\/edit.*$/, '/copy'))}" target="_blank" rel="noopener">New copy ↗</a>
       </div>`).join('')}
     </div>`; }).join('')}
   </div>`;
