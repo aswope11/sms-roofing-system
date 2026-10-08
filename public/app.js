@@ -64,12 +64,11 @@ async function home() {
       </form>
     </details>
     <h1>Customers</h1>
-    <div id="mailMount"></div>
     <div class="card">
       ${list.length ? list.map(c => `<div class="row"><a href="#/customer/${c.id}">${esc(c.name)}</a><span class="mute">${c.property_count} ${c.property_count === 1 ? 'property' : 'properties'} ${delX('customer', c.id)}</span></div>`).join('')
         : '<div class="empty">No customers yet.</div>'}
     </div>`;
-  mailStrip(document.getElementById('mailMount')).catch(() => {});
+  // 10/8/26 his order: the Mail / Import problems box is OFF the customer page. He never uses it here.
   document.getElementById('f').onsubmit = async ev => {
     ev.preventDefault(); const btn = ev.submitter; btn.disabled = true;
     try {
