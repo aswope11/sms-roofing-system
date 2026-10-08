@@ -218,8 +218,14 @@ async function qbSetScope(qbId: string, scope: string, inNote = false, date?: st
   const cur = (await qb('GET', `invoice/${qbId}`)).Invoice;
   if (inNote) {   // the note only; line 1 stays his (crew/hours). If line 1 still holds these exact scope words from before, clear them.
     const ls = (cur.Line || []).filter((l: any) => l.DetailType === 'SalesItemLineDetail');
-    const clear = ls.length && String(ls[0].Description || '').trim() === String(scope || '').trim();
-    if (clear) ls[0] = { ...ls[0], Description: '' };
+    // NEVER THE SAME SCOPE TWICE (10/8/26, his law): scope in the note → every scope line comes OFF the line description,
+    // not just an exact whole-text match. Crew/hours/date lines that aren't scope words stay.
+    const scopeLines = new Set(String(scope || '').split('\n').map((s) => s.replace(/^[\s•\-*]+/, '').trim().toLowerCase()).filter(Boolean));
+    scopeLines.add('scope of work:'); scopeLines.add('scope of work');
+    const d0 = String(ls[0]?.Description || '');
+    const kept = d0.split('\n').filter((s) => !scopeLines.has(s.replace(/^[\s•\-*]+/, '').trim().toLowerCase())).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+    const clear = ls.length && kept !== d0.trim();
+    if (clear) ls[0] = { ...ls[0], Description: kept };
     await qb('POST', 'invoice', { Id: qbId, SyncToken: cur.SyncToken, sparse: true, CustomerMemo: { value: scopeNote(scope, date) }, ...(clear ? { Line: ls } : {}) });
     return;
   }
