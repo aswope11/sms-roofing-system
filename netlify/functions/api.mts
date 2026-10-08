@@ -60,6 +60,10 @@ export default async (req: Request, context: Context) => {
         p.jobs = await sql`SELECT j.*, (SELECT COUNT(*)::int FROM files f WHERE f.job_id=j.id AND f.complete) AS file_count,
           (SELECT pj.title FROM jobs pj WHERE pj.id=j.parent_job_id) AS parent_title
           FROM jobs j WHERE j.property_id = ${id} ORDER BY j.created_at DESC`;
+        // CUSTOMER PAGE FILING (10/8/26, his drawing): each ticket shows its real invoice + placeholder under it.
+        const jobIds = p.jobs.map((j: any) => j.id);
+        p.invoices = jobIds.length ? await sql`SELECT id, job_id, kind, number, work_date, covers_through
+          FROM invoices WHERE job_id = ANY(${jobIds}::int[]) AND kind IN ('real','placeholder','draw') ORDER BY id` : [];
         return json(p);
       }
       if (m === "GET" && !id) {

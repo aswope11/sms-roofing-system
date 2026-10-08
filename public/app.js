@@ -91,7 +91,7 @@ async function customer(id) {
       <h2>Properties</h2>
       ${(() => {
         // Bids only (no real job yet) sit in the "Bids" pill at the bottom; the moment a job is made there it moves up.
-        const propRow = p => `<details class="propdd" data-pid="${p.id}"><summary class="row" style="cursor:pointer"><span style="font-weight:600">${esc(p.address)}${p.city ? ', ' + esc(p.city) : ''}</span><span class="mute">${p.bill_name ? esc(p.bill_name) + ' · ' : ''}${p.tenant ? esc(p.tenant) + ' · ' : ''}${p.job_count} job file${p.job_count === 1 ? '' : 's'} ${delX('property', p.id)}</span></summary><div class="propbody" style="padding-left:26px"><div class="mute">Loading…</div></div></details>`;
+        const propRow = p => `<details class="propdd" data-pid="${p.id}"><summary class="row" style="cursor:pointer"><span style="font-weight:600">${p.bill_name ? esc(p.bill_name) + ' - ' : ''}${esc(p.address)}${p.city ? ', ' + esc(p.city) : ''}</span><span class="mute">${p.tenant ? esc(p.tenant) + ' · ' : ''}${p.job_count} job file${p.job_count === 1 ? '' : 's'} ${delX('property', p.id)}</span></summary><div class="propbody" style="padding-left:26px"><div class="mute">Loading…</div></div></details>`;
         const bidOnly = c.properties.filter(p => p.job_count > 0 && p.work_count === 0);
         const rest = c.properties.filter(p => !bidOnly.includes(p));
         if (!c.properties.length) return '<div class="empty">No properties yet.</div>';
@@ -291,8 +291,14 @@ function tenantDrops(p) {
   const groups = new Map([['', []]]);
   for (const j of p.jobs) { const t = tenantOf(j); (groups.get(t) || groups.set(t, []).get(t)).push(j); }
   const names = ['', ...[...groups.keys()].filter(Boolean).sort((a, b) => a.localeCompare(b))];
-  // Ticket line = tag, then the date as its name, then " - " and the job name (e.g. "R 10/2/2026 - Roof leak repair"). No date off to the right.
-  const ticket = j => `<div class="row"><a href="#/job/${j.id}">${j.tag ? `<span class="tag">${j.tag}</span>` : ''}${new Date(j.created_at).toLocaleDateString()}${j.title ? ' - ' + esc(j.title) : ''}</a></div>`;
+  // TICKET LINE (10/8/26, his drawing): "R - 10/8/26" — the tag and the day worked, nothing else.
+  // Open it → the real invoice and the placeholder under it; click the ticket link to open the ticket.
+  const invs = p.invoices || [];
+  const mdy = d => { const [y, m, dd] = String(d).slice(0, 10).split('-'); return `${Number(m)}/${Number(dd)}/${y.slice(2)}`; };
+  const worked = j => { const ds = invs.filter(i => i.job_id === j.id).map(i => i.work_date || i.covers_through).filter(Boolean).map(d => String(d).slice(0, 10)).sort(); return ds[0] || (j.scheduled_date ? String(j.scheduled_date).slice(0, 10) : String(j.created_at).slice(0, 10)); };
+  const kindName = k => k === 'real' ? 'Real' : k === 'placeholder' ? 'Placeholder' : 'Draw';
+  const ticket = j => { const mine = invs.filter(i => i.job_id === j.id);
+    return `<details><summary class="row" style="cursor:pointer"><span>${esc([j.tag, mdy(worked(j))].filter(Boolean).join(' - '))}</span><span class="mute">${mine.length} invoice${mine.length === 1 ? '' : 's'}</span></summary><div style="padding-left:26px"><div class="row"><a href="#/job/${j.id}">Open the ticket</a></div>${mine.map(i => `<div class="row"><span>Invoice #${esc(i.number || '—')}</span><span class="mute">${kindName(i.kind)}</span></div>`).join('') || '<div class="empty">No invoice yet.</div>'}</div></details>`; };
   return names.map(t => {
     const js = groups.get(t);
     return `<details><summary class="row" style="cursor:pointer"><span>${t ? esc(t) : 'Overall property'}</span><span class="mute">${js.length} ticket${js.length === 1 ? '' : 's'}</span></summary><div style="padding-left:26px">${js.length ? js.map(ticket).join('') : '<div class="empty">No tickets yet.</div>'}</div></details>`;
