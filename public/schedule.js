@@ -97,15 +97,16 @@ export async function schedulePage(start) {
   const fold = foldState();
   let sections = '';
   const readyRows = listed.filter(j => bucketOf(j) === 'ready' && !onToday(j)).sort(jobCmp);
-  if (readyRows.length) sections += `<div class="psec"><h3 data-fold="readytowork">${fold.readytowork ? '▸' : '▾'} Ready to work <span class="n">${readyRows.length}</span></h3>${fold.readytowork ? '' : readyRows.map(rowHTML).join('')}</div>`;
+  // DROP ANYWHERE (10/8/26, his ask): every list is always on the page so a pill can be dropped into it, even when it is empty.
+  sections += `<div class="psec" data-dropbucket="ready"><h3 data-fold="readytowork">${fold.readytowork ? '▸' : '▾'} Ready to work <span class="n">${readyRows.length}</span></h3>${fold.readytowork ? '' : (readyRows.map(rowHTML).join('') || '<div class="empty">Nothing here — drop a pill here.</div>')}</div>`;
   [{ k: 'hold', l: 'Waiting on the customer' }, { k: 'trades', l: 'Waiting on other trades' }].forEach(h => {
-    const rows = listed.filter(j => bucketOf(j) === h.k); if (!rows.length) return;
-    sections += `<div class="${schedOpen[h.k] ? 'parked open' : 'parked'}"><h3 data-hold="${h.k}">${schedOpen[h.k] ? '▾' : '▸'} ${esc(h.l)} <span class="n">${rows.length}</span></h3>
+    const rows = listed.filter(j => bucketOf(j) === h.k);
+    sections += `<div class="${schedOpen[h.k] ? 'parked open' : 'parked'}" data-dropbucket="${h.k}"><h3 data-hold="${h.k}">${schedOpen[h.k] ? '▾' : '▸'} ${esc(h.l)} <span class="n">${rows.length}</span></h3>
       <div class="plist"><div class="psec">${rows.sort(jobCmp).map(rowHTML).join('')}</div></div></div>`;
   });
   {
     const rows = listed.filter(j => bucketOf(j) === 'contract').sort(jobCmp);
-    sections += `<div class="parked open" id="smsAwardedLane"><h3 data-fold="awarded">${fold.awarded ? '▸' : '▾'} Awarded <span class="n">${rows.length}</span></h3>${
+    sections += `<div class="parked open" id="smsAwardedLane" data-dropbucket="contract"><h3 data-fold="awarded">${fold.awarded ? '▸' : '▾'} Awarded <span class="n">${rows.length}</span></h3>${
       fold.awarded ? '' : `<div class="plist"><div class="psec">${rows.map(rowHTML).join('') || '<div class="empty">Nothing sold without a ticket right now.</div>'}</div></div>`}</div>`;
   }
 
@@ -487,39 +488,66 @@ export async function schedulePage(start) {
   });
   // DRAG A TICKET PILL (10/1/26): grab a pill under the grid and drop it on another pill in the same list — it lands in that spot.
   // Replaces the ▲▼ arrows. Priority tickets still sit on top (10/5/26).
-  let dragJob = 0;
-  const clearMarks = () => $app().querySelectorAll('.prow[data-dragjob]').forEach(r => { r.style.boxShadow = ''; });
+  // DROP ANYWHERE (10/8/26, his ask): a pill also goes from one list to another, from the grid down to a list, and from a list up onto the grid.
+  let dragJob = 0, dragStop = 0, dragPlan = 0;
+  const clearMarks = () => {
+    $app().querySelectorAll('.prow[data-dragjob]').forEach(r => { r.style.boxShadow = ''; });
+    $app().querySelectorAll('[data-dropbucket]').forEach(x => { x.style.outline = ''; });
+  };
+  const dropOnList = (bucket, targetId, below) => {
+    const s = dragStop ? w.stops.find(x => x.id === dragStop) : null;
+    const jobId = dragJob || dragPlan || (s ? s.job_id : 0), fromGrid = !!(dragPlan || dragStop);
+    dragJob = 0; dragPlan = 0; dragStop = 0; clearMarks();
+    const j = jobsById[jobId]; if (!j) return;
+    if (s && !confirm(offJobAsk(s))) return;
+    const mine = open.filter(x => bucketOf(x) === bucket && x.id !== j.id).sort(jobCmp);
+    let at = targetId ? mine.findIndex(x => x.id === targetId) + (below ? 1 : 0) : mine.length;
+    if (at < 0) at = mine.length;
+    mine.splice(at, 0, j);
+    const ids = mine.map(x => x.id);
+    const unplan = fromGrid && j.scheduled_date && (!s || dayOf(j.scheduled_date) === dayOf(s.work_date));
+    run(async () => {
+      if (s) await call(`/d/stop/${s.id}`, { method: 'DELETE' });
+      if (unplan) await call(`/w/job/${j.id}/plan`, { method: 'PUT', body: { scheduled_date: null } });
+      if (bucketOf(j) !== bucket) await call(`/w/job/${j.id}/stage`, { method: 'PUT', body: { stage: bucket } });
+      await call('/w/sched-order', { method: 'PUT', body: { ids } });
+      const back = await call(weekUrl), one = await call(jobUrl(j.id));
+      if (s && back.stops.some(row => row.id === s.id)) throw new Error('He is still on that job — it did not come off the board.');
+      if (unplan && back.jobs.some(row => row.id === j.id && row.scheduled_date)) throw new Error('It is still on the day — it did not come off the board.');
+      if (!one || !one.job || (one.job.stage || 'ready') !== bucket) throw new Error(`It did not land in ${STAGE_LABEL[bucket]} — the read-back shows it somewhere else.`);
+      const got = back.jobs.filter(x => ids.includes(x.id)).sort((a, c) => (a.sched_rank ?? 9999) - (c.sched_rank ?? 9999)).map(x => x.id);
+      if (got.join(',') !== ids.join(',')) throw new Error('It moved, but the order did not stick — the read-back shows a different order.');
+      toast(`${ticketName(j)} → ${STAGE_LABEL[bucket]} — read back and it is there`);
+    });
+  };
   $app().querySelectorAll('.prow[data-dragjob]').forEach(r => {
     r.ondragstart = e => { dragJob = Number(r.dataset.dragjob); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', 'job' + dragJob); hidePeek(); r.style.opacity = '.4'; };
-    r.ondragend = () => { dragJob = 0; r.style.opacity = ''; clearMarks(); };
+    r.ondragend = () => { dragJob = 0; r.style.opacity = ''; clearMarks(); $app().querySelectorAll('td[data-dropdate]').forEach(t => t.style.outline = ''); };
     r.ondragover = e => {
-      if (!dragJob || dragJob === Number(r.dataset.dragjob)) return;
-      if (bucketOf(jobsById[dragJob]) !== bucketOf(jobsById[r.dataset.dragjob])) return;
-      e.preventDefault(); clearMarks();
+      if (!dragJob && !dragPlan && !dragStop) return;
+      if (dragJob === Number(r.dataset.dragjob)) return;
+      e.preventDefault(); e.stopPropagation(); clearMarks();
       const below = e.clientY > r.getBoundingClientRect().top + r.offsetHeight / 2;
       r.style.boxShadow = below ? '0 3px 0 #ff7a3d' : '0 -3px 0 #ff7a3d';
     };
     r.ondragleave = e => { if (!r.contains(e.relatedTarget)) r.style.boxShadow = ''; };
     r.ondrop = e => {
-      e.preventDefault(); clearMarks();
-      const me = jobsById[dragJob], target = jobsById[r.dataset.dragjob]; dragJob = 0;
-      if (!me || !target || me.id === target.id || bucketOf(me) !== bucketOf(target)) return;
+      e.preventDefault(); e.stopPropagation();
+      const target = jobsById[r.dataset.dragjob];
+      if (!target || dragJob === target.id) { clearMarks(); return; }
       const below = e.clientY > r.getBoundingClientRect().top + r.offsetHeight / 2;
-      const mine = open.filter(x => bucketOf(x) === bucketOf(me)).sort(jobCmp).filter(x => x.id !== me.id);
-      mine.splice(mine.findIndex(x => x.id === target.id) + (below ? 1 : 0), 0, me);
-      const ids = mine.map(x => x.id);
-      run(async () => {
-        await call('/w/sched-order', { method: 'PUT', body: { ids } });
-        const back = await call(weekUrl);
-        const got = back.jobs.filter(x => ids.includes(x.id)).sort((a, c) => (a.sched_rank ?? 9999) - (c.sched_rank ?? 9999)).map(x => x.id);
-        if (got.join(',') !== ids.join(',')) throw new Error('The order did not stick — the read-back shows a different order.');
-      });
+      dropOnList(bucketOf(target), target.id, below);
     };
+  });
+  // Drop on a list's open space or its heading (even a shut one) = it goes to the bottom of that list.
+  $app().querySelectorAll('[data-dropbucket]').forEach(box => {
+    box.ondragover = e => { if (!dragJob && !dragPlan && !dragStop) return; e.preventDefault(); clearMarks(); box.style.outline = '2px dashed #ff7a3d'; };
+    box.ondragleave = e => { if (!box.contains(e.relatedTarget)) box.style.outline = ''; };
+    box.ondrop = e => { e.preventDefault(); dropOnList(box.dataset.dropbucket, 0, false); };
   });
   // DRAG A PILL onto a man or onto Nobody, including a different day.
   // An assigned pill keeps its stop (scope stays on it). An unassigned pill ("Nobody on it yet") moves the plan date,
   // or lands on a man. The day it leaves and the day it lands rebalance that man's percents on the server.
-  let dragStop = 0, dragPlan = 0;
   $app().querySelectorAll('.jobcard[draggable="true"]').forEach(c => {
     c.ondragstart = e => {
       if (e.target.closest('.kill')) { e.preventDefault(); return; }
@@ -529,17 +557,17 @@ export async function schedulePage(start) {
       e.dataTransfer.setData('text/plain', dragStop ? `stop:${dragStop}` : `plan:${dragPlan}`);
       hidePeek();
     };
-    c.ondragend = () => { dragStop = 0; dragPlan = 0; $app().querySelectorAll('td[data-dropdate]').forEach(t => t.style.outline = ''); };
+    c.ondragend = () => { dragStop = 0; dragPlan = 0; clearMarks(); $app().querySelectorAll('td[data-dropdate]').forEach(t => t.style.outline = ''); };
   });
   $app().querySelectorAll('td[data-dropdate]').forEach(td => {
-    td.ondragover = e => { if (!dragStop && !dragPlan) return; e.preventDefault(); td.style.outline = '2px dashed #ff7a3d'; };
+    td.ondragover = e => { if (!dragStop && !dragPlan && !dragJob) return; e.preventDefault(); td.style.outline = '2px dashed #ff7a3d'; };
     td.ondragleave = e => { if (!td.contains(e.relatedTarget)) td.style.outline = ''; };
     td.ondrop = e => {
       e.preventDefault(); td.style.outline = '';
       const raw = e.dataTransfer.getData('text/plain') || '';
       const id = dragStop || (raw.startsWith('stop:') ? Number(raw.slice(5)) : 0);
-      const planId = dragPlan || (raw.startsWith('plan:') ? Number(raw.slice(5)) : 0);
-      dragStop = 0; dragPlan = 0;
+      const planId = dragPlan || dragJob || (raw.startsWith('plan:') ? Number(raw.slice(5)) : raw.startsWith('job') ? Number(raw.slice(3)) : 0); // a list pill dropped on the grid works like a Nobody pill (10/8/26)
+      dragStop = 0; dragPlan = 0; dragJob = 0;
       const crew_id = Number(td.dataset.dropcrew) || 0, work_date = td.dataset.dropdate;
       if (planId && !crew_id) {
         if (!work_date) return;
