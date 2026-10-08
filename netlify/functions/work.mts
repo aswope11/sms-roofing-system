@@ -1840,6 +1840,21 @@ export default async function handler(req: Request) {
 
     // ================= MAIL =================
     if (kind === "mail") {
+      // FILE A WHOLE EMAIL THREAD INTO A TICKET (10/8/26, his ask: "everything from the email that was sent goes in the customer file").
+      // Every email in the thread (.eml) and every attachment lands in that ticket's file cabinet. Already-filed ones are skipped.
+      if (m === "POST" && idRaw === "file-thread") {
+        const b = await body();
+        const job = norm(await loadJob(Number(b.job_id)));
+        if (!job) return refuse("Which ticket? That one isn't on the book.", 404);
+        const t = await gmail(`threads/${encodeURIComponent(String(b.thread_id || ""))}?format=full`);
+        let emails = 0, files = 0;
+        for (const msg of (t.messages || [])) {
+          const when = new Date(Number(msg.internalDate || Date.now())).toISOString();
+          await fileEmail(sql, job.id, msg.id, headerOf(msg, "Subject"), when); emails++;
+          for (const a of attachmentsOf(msg.payload)) { await fileAttachment(sql, job.id, msg.id, a); files++; }
+        }
+        return json({ job_id: job.id, emails, files });
+      }
       if (m === "GET" && !id) {
         const needs = norm(await sql`SELECT mi.*, j.tag, j.title, p.address, p.city, c.name AS customer_name
           FROM mail_items mi LEFT JOIN jobs j ON j.id = mi.job_id LEFT JOIN properties p ON p.id = j.property_id LEFT JOIN customers c ON c.id = p.customer_id
