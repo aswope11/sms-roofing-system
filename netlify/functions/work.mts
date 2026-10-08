@@ -165,6 +165,9 @@ function billTo(job: any) {
 // In the note, line 1 is left for the crew/hours ("2 men @ 4 hours") — the scope never touches it.
 const scopeInNote = (job: any) => /standridge|four\s*corners/i.test(String(job.customer_name || "")) || !!job.scope_note;
 const scopeNote = (scope: string, date?: string) => (date ? `Date: ${mdyy(date)}\n\n` : "") + String(scope || "");
+// QuickBooks caps the customer note at 1,000 characters (10/8/26: Lake Highlands Cafe's scope + assessment ran 1,064 and never landed).
+// Too long for the note → the scope goes on the invoice line instead, the note keeps just the date. Never both places.
+const noteFits = (job: any, scope: string, date?: string) => scopeInNote(job) && scopeNote(scope, date).length <= 1000;
 async function pushInvoiceToQB(sql: any, invoiceId: number, job: any) {
   const [inv] = norm(await sql`SELECT * FROM invoices WHERE id = ${invoiceId}`);
   if (!inv) throw new Error("That invoice doesn't exist.");
@@ -185,8 +188,9 @@ async function pushInvoiceToQB(sql: any, invoiceId: number, job: any) {
     const DocNumber = await qbNextNumber();
     const made = (await qb("POST", "invoice", {
       CustomerRef: { value: cust.Id }, DocNumber, TxnDate: inv.inv_date, DueDate: inv.inv_date, PrivateNote: inv.memo, ...billTo(job), ...noPay(job),
-      ...(scopeInNote(job) ? { CustomerMemo: { value: scopeNote(inv.scope, inv.covers_through) } } : {}),
-      Line: [{ DetailType: "SalesItemLineDetail", Amount: Number(inv.amount), Description: scopeInNote(job) ? "" : inv.scope,
+      ...(noteFits(job, inv.scope, inv.covers_through) ? { CustomerMemo: { value: scopeNote(inv.scope, inv.covers_through) } }
+        : scopeInNote(job) && inv.covers_through ? { CustomerMemo: { value: `Date: ${mdyy(inv.covers_through)}` } } : {}),
+      Line: [{ DetailType: "SalesItemLineDetail", Amount: Number(inv.amount), Description: noteFits(job, inv.scope, inv.covers_through) ? "" : inv.scope,
         SalesItemLineDetail: { ItemRef: { value: "1" }, Qty: 1, UnitPrice: Number(inv.amount) } }],
     })).Invoice;
     const back = (await qb("GET", `invoice/${made.Id}`)).Invoice;
@@ -1420,7 +1424,7 @@ export default async function handler(req: Request) {
         const after = { ...job, scope_note: !!b.value };
         let qb_error = '';
         if (String(r.scope || '').trim()) for (const inv of norm(await sql`SELECT * FROM invoices WHERE job_id = ${id} AND kind = 'real' AND sent_at IS NULL AND COALESCE(qb_id, '') <> ''`)) {
-          try { await qbSetScope(inv.qb_id, String(r.scope), scopeInNote(after), inv.covers_through); } catch (e: any) { qb_error = String(e?.message || e); }
+          try { await qbSetScope(inv.qb_id, String(r.scope), noteFits(after, String(r.scope), inv.covers_through), inv.covers_through); } catch (e: any) { qb_error = String(e?.message || e); }
         }
         return json({ ...norm(r), qb_error });
       }
@@ -1433,7 +1437,7 @@ export default async function handler(req: Request) {
         let qb_error = '';
         for (const inv of openInvs) {
           await sql`UPDATE invoices SET scope = ${scopeWords} WHERE id = ${inv.id}`;
-          if (inv.qb_id) { try { await qbSetScope(inv.qb_id, scopeWords, scopeInNote(job), inv.covers_through); } catch (e: any) { qb_error = String(e?.message || e); } }
+          if (inv.qb_id) { try { await qbSetScope(inv.qb_id, scopeWords, noteFits(job, scopeWords, inv.covers_through), inv.covers_through); } catch (e: any) { qb_error = String(e?.message || e); } }
         }
         return json({ ...norm(r), qb_error });
       }
@@ -1451,7 +1455,7 @@ export default async function handler(req: Request) {
             const open = norm(await sql`SELECT * FROM invoices WHERE job_id = ${id} AND kind = 'real' AND sent_at IS NULL`);
             for (const inv of open) {
               await sql`UPDATE invoices SET scope = ${String(row.scope)} WHERE id = ${inv.id}`;
-              if (inv.qb_id) { try { await qbSetScope(inv.qb_id, String(row.scope), scopeInNote(job), inv.covers_through); } catch (e: any) { /* the scope still saved in the app */ } }
+              if (inv.qb_id) { try { await qbSetScope(inv.qb_id, String(row.scope), noteFits(job, String(row.scope), inv.covers_through), inv.covers_through); } catch (e: any) { /* the scope still saved in the app */ } }
             }
           }
           return row;
