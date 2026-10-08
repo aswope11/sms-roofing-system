@@ -8,6 +8,7 @@ import { SS_TEMPLATES, OTHER_TEMPLATES, LINK_TEMPLATES, PULLOUT_TEMPLATES } from
 const LANE = { late: 'var(--bad)', today: 'var(--bad)', tomorrow: '#ffd24d', soon: '#ffd24d', ok: 'var(--mute)', nodate: 'var(--line)' };
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 let calMonth = null;   // 'YYYY-MM', remembered while the app is open
+let dragBid = 0;       // DRAG A BID (10/8/26, his ask): the bid being dragged — kept here so it survives a month flip mid-drag
 
 export async function bidsPage() {
   setTab('bids'); crumbs([['Bids']]);
@@ -34,16 +35,16 @@ export async function bidsPage() {
         if (!day) return '<div class="bcday empty"></div>';
         const list = dueOn(day);
         const isToday = day === d.today;
-        return `<div class="bcday${isToday ? ' today' : ''}">
+        return `<div class="bcday${isToday ? ' today' : ''}" data-day="${day}">
           <div class="bcn">${Number(day.slice(-2))}${isToday ? ' <span class="mute">today</span>' : ''}</div>
-          ${list.map(b => { const st = bidState(b, d.today); return `<a class="bcpill" style="border-left-color:${LANE[st.level] || 'var(--line)'}" href="#/job/${b.id}" title="${esc(b.customer_name)}">${esc(b.address)}${b.title ? ' — ' + esc(b.title) : ''}${b.bid_sent_at ? ' ✓' : ''}</a>`; }).join('')}
+          ${list.map(b => { const st = bidState(b, d.today); return `<a class="bcpill" draggable="true" data-bid="${b.id}" style="border-left-color:${LANE[st.level] || 'var(--line)'}" href="#/job/${b.id}" title="${esc(b.customer_name)}">${esc(b.address)}${b.title ? ' — ' + esc(b.title) : ''}${b.bid_sent_at ? ' ✓' : ''}</a>`; }).join('')}
         </div>`;
       }).join('')}
     </div></div>`;
 
   // 2 — BIDS OWED: due date first, worst first. Each row opens that bid's job file.
   const row = b => `<div class="prow" style="border-left-color:${LANE[b.state.level]}">
-      <a class="pmain" href="#/job/${b.id}">
+      <a class="pmain" href="#/job/${b.id}" draggable="true" data-bid="${b.id}" style="cursor:grab">
         <div class="pt">${esc(b.address)}${b.city ? ', ' + esc(b.city) : ''} — ${esc(b.title)}</div>
         <div class="ps">${esc(b.customer_name)}${b.gc ? ' · ' + esc(b.gc) : ''}${b.bid_amount != null ? ' · ' + money(b.bid_amount) : ''}</div>
         <div class="ps ${['late', 'today'].includes(b.state.level) ? 'redtxt' : ['tomorrow', 'soon'].includes(b.state.level) ? 'ambertxt' : ''}"><b>${esc(b.state.say)}</b></div>
@@ -80,6 +81,32 @@ export async function bidsPage() {
   document.getElementById('calPrev').onclick = () => shift(-1);
   document.getElementById('calNext').onclick = () => shift(1);
   document.getElementById('calToday').onclick = () => { calMonth = d.today.slice(0, 7); again(); };
+
+  // DRAG A BID ANYWHERE ON THE CALENDAR (10/8/26, his ask): grab a pill on the calendar or a bid in the Bids owed list
+  // and drop it on any day — that day becomes its due date. Hold it over ‹ Prev / Next › to flip the month while dragging.
+  const all = [...owe, ...d.sent];
+  $app().querySelectorAll('[data-bid]').forEach(el => {
+    el.ondragstart = e => { dragBid = Number(el.dataset.bid); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', 'bid:' + dragBid); el.style.opacity = '.4'; };
+    el.ondragend = () => { el.style.opacity = ''; $app().querySelectorAll('.bcday').forEach(c => c.style.outline = ''); };
+  });
+  $app().querySelectorAll('.bcday[data-day]').forEach(cell => {
+    cell.ondragover = e => { if (!dragBid) return; e.preventDefault(); cell.style.outline = '2px dashed #ff7a3d'; };
+    cell.ondragleave = e => { if (!cell.contains(e.relatedTarget)) cell.style.outline = ''; };
+    cell.ondrop = e => {
+      e.preventDefault(); cell.style.outline = '';
+      const raw = e.dataTransfer.getData('text/plain') || '';
+      const id = dragBid || (raw.startsWith('bid:') ? Number(raw.slice(4)) : 0); dragBid = 0;
+      const b = all.find(x => x.id === id), day = cell.dataset.day;
+      if (!b || !day || String(b.bid_due || '').slice(0, 10) === day) return;
+      run(() => doAndProve(`/w/bids/${id}`, { method: 'PUT', body: { bid_due: day } }, `/w/job/${id}`,
+        bk => String(bk.job.bid_due || '').slice(0, 10) === day, `${b.address} — due ${shortDateYY(day)} (read back and it matches)`));
+    };
+  });
+  [['calPrev', -1], ['calNext', 1]].forEach(([bid, n]) => {
+    const btn = document.getElementById(bid); let t = null;
+    btn.ondragover = e => { if (!dragBid) return; e.preventDefault(); if (!t) t = setTimeout(() => { t = null; shift(n); }, 700); };
+    btn.ondragleave = () => { clearTimeout(t); t = null; };
+  });
 
   const go = document.getElementById('bsGo');
   go.onclick = async () => {
