@@ -59,3 +59,9 @@ test('company hint (where his other buildings sit) wins', async () => {
   await placeCustomer({ customer_name: 'Four Corners', address: '77 Elm', city: 'Allen' }, api, { companyId: '1' });
   assert.equal(made[0].ParentRef.value, '1'); assert.equal(made.length, 1);
 });
+test('another company\'s building at the same address is never used; same name gets the company on the end', async () => {
+  const { api, made } = fakeQB([...FC, { Id: '50', DisplayName: 'Good Seed Consulting Group' }]);
+  const c = await placeCustomer({ customer_name: 'Good Seed Consulting Group', address: '1480 N. Custer Rd', city: 'Allen', tenant: 'Playa Bowls' }, api);
+  assert.equal(made[0].DisplayName, '1480 N. Custer Rd, Allen - Good Seed Consulting Group'); assert.equal(made[0].ParentRef.value, '50');
+  assert.equal(c.DisplayName, '1480 N. Custer Rd - Allen - Playa Bowls - Good Seed Consulting Group');
+});
