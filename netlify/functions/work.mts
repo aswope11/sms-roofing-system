@@ -1754,8 +1754,27 @@ export default async function handler(req: Request) {
       const par = ((await qbQuery(`SELECT Id, DisplayName FROM Customer WHERE DisplayName = '${qEsc(pname)}' AND Active = true`)).Customer || [])[0];
       if (!par) return refuse(`No QuickBooks customer named "${pname}".`);
       const cur = (await qb("GET", `customer/${cid}`)).Customer;
-      const out = (await qb("POST", "customer", { Id: cur.Id, SyncToken: cur.SyncToken, sparse: true, DisplayName: cur.DisplayName, ParentRef: { value: par.Id }, Job: true, BillWithParent: false })).Customer;
+      if (cur.ParentRef?.value === par.Id) return json({ id: cur.Id, name: cur.DisplayName, fully_qualified: cur.FullyQualifiedName, parent: par.DisplayName, already: true });
+      // BillWithParent is left exactly as it is — changing it is what QuickBooks refuses when the parent has billed for it.
+      const out = (await qb("POST", "customer", { Id: cur.Id, SyncToken: cur.SyncToken, sparse: true, DisplayName: cur.DisplayName, ParentRef: { value: par.Id }, Job: true })).Customer;
       return json({ id: out.Id, name: out.DisplayName, fully_qualified: out.FullyQualifiedName, parent: par.DisplayName });
+    }
+    // CUSTOMER LAYERS (10/8/26): GET /w/qb-customer/:id → its full company › building › tenant name.
+    // POST /w/qb-customer-create {name, parent_name} → a new building (or tenant) customer under its parent; an existing one is reused.
+    if (kind === "qb-customer" && id && m === "GET") {
+      const c = (await qb("GET", `customer/${id}`)).Customer;
+      return json({ id: c.Id, name: c.DisplayName, fully_qualified: c.FullyQualifiedName, parent_id: c.ParentRef?.value || null, level: c.Level || 0, active: c.Active });
+    }
+    if (kind === "qb-customer-create" && m === "POST") {
+      const b = await body();
+      const name = String(b.name || "").trim(), pname = String(b.parent_name || "").trim();
+      if (!name || !pname) return refuse("Which name and which parent?");
+      const par = ((await qbQuery(`SELECT Id FROM Customer WHERE DisplayName = '${qEsc(pname)}' AND Active = true`)).Customer || [])[0];
+      if (!par) return refuse(`No QuickBooks customer named "${pname}".`);
+      const had = ((await qbQuery(`SELECT Id, DisplayName, FullyQualifiedName FROM Customer WHERE DisplayName = '${qEsc(name)}' AND Active = true`)).Customer || [])[0];
+      if (had) return json({ id: had.Id, name: had.DisplayName, fully_qualified: had.FullyQualifiedName, existed: true });
+      const out = (await qb("POST", "customer", { DisplayName: name, ParentRef: { value: par.Id }, Job: true, BillWithParent: false })).Customer;
+      return json({ id: out.Id, name: out.DisplayName, fully_qualified: out.FullyQualifiedName, created: true });
     }
     // ================= INVOICE CHECKER (10/8/26) =================
     // POST /w/invoice-check/:id → check one invoice (app id) now.  POST /w/invoice-sweep → every open invoice in QuickBooks,
