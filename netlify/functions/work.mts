@@ -802,19 +802,47 @@ function readInvoiceText(text: string) {
 async function syncQbTotals(sql: any, jobId: number | null) {
   try {
     const rows = norm(jobId
-      ? await sql`SELECT id, qb_id, amount FROM invoices WHERE job_id = ${jobId} AND qb_id IS NOT NULL AND qb_id <> ''`
-      : await sql`SELECT id, qb_id, amount FROM invoices WHERE paid_at IS NULL AND qb_id IS NOT NULL AND qb_id <> ''`);
+      ? await sql`SELECT id, qb_id, amount, kind, number, sent_at, paid_at FROM invoices WHERE job_id = ${jobId} AND qb_id IS NOT NULL AND qb_id <> ''`
+      : await sql`SELECT id, qb_id, amount, kind, number, sent_at, paid_at FROM invoices WHERE paid_at IS NULL AND qb_id IS NOT NULL AND qb_id <> ''`);
     const ids = [...new Set(rows.map((r: any) => String(r.qb_id)))] as string[];
-    const tot: Record<string, number> = {};
+    const tot: Record<string, number> = {}, txn: Record<string, string> = {};
     for (let k = 0; k < ids.length; k += 100) {
-      const got: any = await qbQuery(`SELECT Id, TotalAmt FROM Invoice WHERE Id IN (${ids.slice(k, k + 100).map((x) => "'" + x + "'").join(",")}) MAXRESULTS 1000`);
-      for (const q of (got.Invoice || [])) tot[String(q.Id)] = Math.round(Number(q.TotalAmt) * 100) / 100;
+      const got: any = await qbQuery(`SELECT Id, TotalAmt, TxnDate FROM Invoice WHERE Id IN (${ids.slice(k, k + 100).map((x) => "'" + x + "'").join(",")}) MAXRESULTS 1000`);
+      for (const q of (got.Invoice || [])) { tot[String(q.Id)] = Math.round(Number(q.TotalAmt) * 100) / 100; txn[String(q.Id)] = String(q.TxnDate || ""); }
     }
     for (const r of rows) {
       const t = tot[String(r.qb_id)];
       if (t !== undefined && Math.abs(t - Number(r.amount)) > 0.004) await sql`UPDATE invoices SET amount = ${t} WHERE id = ${r.id}`;
     }
+    await unsentOutOfAR(sql, rows, txn);
   } catch (e) { /* QuickBooks unreachable: leave the ticket as it is, try again next open */ }
+}
+// NOT SENT = NOT IN AR (10/9/26, his rule): AR "today" means sent. A real invoice dated today-or-earlier in QuickBooks
+// that the app never marked sent goes BACKWARDS: if his Gmail shows it went out (invoice # in a sent subject) it is marked
+// sent on that day; if not, it is moved back to tomorrow so it drops out of AR and sits on Invoicing as "not sent".
+// Runs every time AR, Invoicing or a ticket opens.
+async function unsentOutOfAR(sql: any, rows: any[], txn: Record<string, string>) {
+  const tday = today(), tomorrow = M.addDays(tday, 1);
+  for (const r of rows) {
+    if (r.kind !== "real" || r.sent_at || r.paid_at) continue;
+    const d = txn[String(r.qb_id)];
+    if (!d || d > tday) continue;
+    let sentDay = "";
+    const num = String(r.number || "").trim();
+    if (num) {
+      try {
+        const hit = await gmail(`messages?q=${encodeURIComponent(`in:sent subject:"${num}"`)}&maxResults=1`);
+        if (hit?.messages?.length) { const msg = await gmail(`messages/${hit.messages[0].id}?format=minimal`); sentDay = new Date(Number(msg.internalDate) - 5 * 3600 * 1000).toISOString().slice(0, 10); }
+      } catch { continue; }   // can't see Gmail → change nothing
+    }
+    if (sentDay) {
+      await sql`UPDATE invoices SET sent_at = ${sentDay}, inv_date = ${sentDay}::date WHERE id = ${r.id}`;
+      await qbSetDate(String(r.qb_id), sentDay);
+    } else {
+      await sql`UPDATE invoices SET inv_date = ${tomorrow}::date WHERE id = ${r.id}`;
+      await qbSetDate(String(r.qb_id), tomorrow);
+    }
+  }
 }
 
 export default async function handler(req: Request) {
@@ -1746,6 +1774,13 @@ export default async function handler(req: Request) {
     if (kind === "qb-customer" && id && m === "GET") {
       const c = (await qb("GET", `customer/${id}`)).Customer;
       return json({ id: c.Id, name: c.DisplayName, fully_qualified: c.FullyQualifiedName, parent_id: c.ParentRef?.value || null, level: c.Level || 0, active: c.Active });
+    }
+    // POST /w/qb-customer/:id/inactive → make a leftover empty customer inactive (QuickBooks' version of delete; it refuses if anything is open).
+    if (kind === "qb-customer" && id && action === "inactive" && m === "POST") {
+      const c = (await qb("GET", `customer/${id}`)).Customer;
+      if (Number(c.Balance || 0) !== 0) return refuse(`${c.DisplayName} still has $${c.Balance} open — not touched.`);
+      const out = (await qb("POST", "customer", { Id: c.Id, SyncToken: c.SyncToken, sparse: true, Active: false })).Customer;
+      return json({ id: out.Id, name: out.DisplayName, active: out.Active });
     }
     if (kind === "qb-customer-create" && m === "POST") {
       const b = await body();
