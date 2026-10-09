@@ -11,6 +11,7 @@ import { getStore } from "@netlify/blobs";
 import type { Config } from "@netlify/functions";
 import * as M from "../../lib/money.js";
 import * as Q from "../../lib/qb-pdf.js";
+import * as L from "../../lib/qb-layers.js";
 import { repushReason } from "../../lib/mail-label.js";
 import * as TALK from "../../lib/bidtalk.js";
 import { addressKey, chunkCount, CHUNK_BYTES } from "../../lib/rules.js";
@@ -82,13 +83,18 @@ async function qb(method: string, path: string, payload?: any) {
 }
 const qbQuery = (q: string) => qb("GET", `query?query=${encodeURIComponent(q)}`).then((d: any) => d.QueryResponse || {});
 const qEsc = (s: string) => String(s || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
-// QuickBooks customer = the property. Find it by address; none → create it named "address - city - tenant"; more than one → stop and name them.
+// QuickBooks customer = Company › Building › Tenant (10/9/26, the structure of the app — see lib/qb-layers.js).
+// An old customer this building + tenant was already invoiced under always wins; anything new is made in its layer.
+const qbLayerApi = {
+  query: async (where: string) => (await qbQuery(`SELECT * FROM Customer WHERE ${where} AND Active = true`)).Customer || [],
+  get: async (id: string) => (await qb("GET", `customer/${id}`)).Customer,
+  create: async (payload: any) => (await qb("POST", "customer", payload)).Customer,
+};
 async function qbCustomerFor(job: any, sql?: any) {
-  const addr = String(job.address || "").trim();
   // SAME BUILDING, SAME TENANT → SAME QB CUSTOMER (10/8/26): White Lion and 1710 Greenville landed on the wrong customer because
   // the name lookup missed "Reid Gormely - 4916 White Lion" / "Cook Children's Pediatrics-1710…". Whatever customer this
   // building + tenant was already invoiced under in QuickBooks wins over any name lookup.
-  let companyParent: any = null;
+  let companyId: string | null = null;
   if (sql) {
     const tenant = String(job.tenant || "").trim().toLowerCase();
     const prior = norm(await sql`SELECT i.qb_id, COALESCE(NULLIF(j.tenant_name, ''), p.tenant, '') AS tenant, j.property_id
@@ -98,50 +104,16 @@ async function qbCustomerFor(job: any, sql?: any) {
     for (const r of same.slice(0, 3)) {
       try { const c = (await qb("GET", `invoice/${r.qb_id}`)).Invoice?.CustomerRef; if (c?.value) return { Id: c.value, DisplayName: c.name || "" }; } catch { /* next */ }
     }
-    // A brand-new building: its company parent is the parent his other buildings for this company already sit under (Wortham Bros., Inc. ≠ "Wortham Brothers Roofing").
-    for (const r of prior.filter((r: any) => r.property_id !== job.property_id).slice(0, 5)) {
+    // The company layer = the top of the tree his other jobs for this company already sit in (Wortham Bros., Inc. ≠ "Wortham Brothers Roofing").
+    for (const r of prior.slice(0, 5)) {
       try {
         const cid = (await qb("GET", `invoice/${r.qb_id}`)).Invoice?.CustomerRef?.value;
-        const pr = cid ? (await qb("GET", `customer/${cid}`)).Customer?.ParentRef?.value : null;
-        if (pr) { companyParent = { Id: pr }; break; }
+        const top = cid ? await L.rootOf(qbLayerApi, cid) : null;
+        if (top && top.Id !== cid) { companyId = top.Id; break; }
       } catch { /* next */ }
     }
   }
-  const found = (await qbQuery(`SELECT Id, DisplayName FROM Customer WHERE DisplayName LIKE '${qEsc(addr)}%' AND Active = true`)).Customer || [];
-  if (found.length === 1) return found[0];
-  if (found.length > 1) {
-    // WHOLE PROPERTY (10/1/26): no tenant on the ticket → the customer named exactly the address
-    if (!String(job.tenant || "").trim()) { const whole = found.filter((c: any) => c.DisplayName.trim().toLowerCase() === addr.toLowerCase()); if (whole.length === 1) return whole[0]; }
-    // several customers at one address (e.g. Building 1-4): pick the one named for this job's building — the CO's parent job, or the job itself
-    let pool = found;
-    const city = String(job.city || "").trim().toLowerCase();
-    const byCity = city ? pool.filter((c: any) => c.DisplayName.toLowerCase().includes(city)) : [];
-    if (byCity.length === 1) return byCity[0];
-    if (byCity.length) pool = byCity;
-    for (const name of [job.tenant, job.title, job.parent_title]) {   // TENANT IS THE ANSWER (10/1/26): the ticket's tenant picks the QB customer first; then THIS ticket's own title before its parent job's (10/7/26)
-      const n = String(name || "").trim().toLowerCase();
-      if (!n) continue;
-      const hit = pool.filter((c: any) => { const d = c.DisplayName.toLowerCase(); return d.endsWith(" - " + n) || d.includes(" - " + n + " -") || d.includes(" " + n); });
-      const exact = hit.filter((c: any) => c.DisplayName.toLowerCase().endsWith(" - " + n));
-      if (exact.length === 1) return exact[0];
-      if (hit.length === 1) return hit[0];
-    }
-    // no QB customer has this ticket's tenant yet -> fall through and make "address - city - tenant" under the company
-    if (!String(job.tenant || "").trim()) throw new Error(`QuickBooks has ${found.length} customers at ${addr}: ${found.map((c: any) => c.DisplayName).join(" / ")} — fix the names in QuickBooks, then Send to QuickBooks.`);
-  }
-  const name = [addr, job.city, job.tenant].map((x: any) => String(x || "").trim()).filter(Boolean).join(" - ");
-  // A new property never lands loose: it goes UNDER its company (Four Corners, Wortham…) — his AR rolls up by company.
-  // The company's QuickBooks name from its billing card wins ("Wortham Bros., Inc."), then the app's name.
-  let parent: any = companyParent;
-  for (const pn of [job.c_qb_parent, job.customer_name]) {
-    if (parent || !String(pn || "").trim()) continue;
-    parent = ((await qbQuery(`SELECT Id FROM Customer WHERE DisplayName = '${qEsc(String(pn).trim())}' AND Active = true`)).Customer || [])[0];
-  }
-  // No company parent in QuickBooks (Wortham's buildings are named "address - Wortham Brothers Roofing", no parent):
-  // the company name goes ON the customer name — the app's customer name, exactly — so it never lands with no company on it.
-  const company = String(job.customer_name || "").trim();
-  const named = parent || !company ? name : [addr, job.tenant, company].map((x: any) => String(x || "").trim()).filter(Boolean).join(" - ");
-  return (await qb("POST", "customer", { DisplayName: named, ...(parent ? { ParentRef: { value: parent.Id }, Job: true, BillWithParent: false } : {}) })).Customer;
+  return await L.placeCustomer(job, qbLayerApi, { companyId });
 }
 async function qbNextNumber() {
   const rows = (await qbQuery("SELECT DocNumber FROM Invoice ORDERBY MetaData.CreateTime DESC MAXRESULTS 100")).Invoice || [];
