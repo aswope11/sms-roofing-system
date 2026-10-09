@@ -35,7 +35,7 @@ function norm(v: any): any {
 const today = () => new Date(Date.now() - 5 * 3600 * 1000).toISOString().slice(0, 10); // Central time
 
 const JOB_COLS = (sql: any) => sql`
-  SELECT j.*, p.address, p.city, COALESCE(NULLIF(j.tenant_name, ''), p.tenant) AS tenant, p.gc, p.customer_id, p.contract_amount, p.bill_name, p.bill_addr, p.ship_addr, c.name AS customer_name, c.bill_name AS c_bill_name, c.bill_addr AS c_bill_addr, c.no_pay AS c_no_pay, pj.title AS parent_title, pj.tag AS parent_tag
+  SELECT j.*, p.address, p.city, COALESCE(NULLIF(j.tenant_name, ''), p.tenant) AS tenant, p.gc, p.customer_id, p.contract_amount, p.bill_name, p.bill_addr, p.ship_addr, c.name AS customer_name, c.bill_name AS c_bill_name, c.bill_addr AS c_bill_addr, c.no_pay AS c_no_pay, c.qb_parent AS c_qb_parent, pj.title AS parent_title, pj.tag AS parent_tag
   FROM jobs j JOIN properties p ON p.id = j.property_id JOIN customers c ON c.id = p.customer_id LEFT JOIN jobs pj ON pj.id = j.parent_job_id`;
 
 // ================= QUICKBOOKS =================
@@ -131,7 +131,12 @@ async function qbCustomerFor(job: any, sql?: any) {
   }
   const name = [addr, job.city, job.tenant].map((x: any) => String(x || "").trim()).filter(Boolean).join(" - ");
   // A new property never lands loose: it goes UNDER its company (Four Corners, Wortham…) — his AR rolls up by company.
-  const parent = companyParent || ((await qbQuery(`SELECT Id FROM Customer WHERE DisplayName = '${qEsc(String(job.customer_name || "").trim())}' AND Active = true`)).Customer || [])[0];
+  // The company's QuickBooks name from its billing card wins ("Wortham Bros., Inc."), then the app's name.
+  let parent: any = companyParent;
+  for (const pn of [job.c_qb_parent, job.customer_name]) {
+    if (parent || !String(pn || "").trim()) continue;
+    parent = ((await qbQuery(`SELECT Id FROM Customer WHERE DisplayName = '${qEsc(String(pn).trim())}' AND Active = true`)).Customer || [])[0];
+  }
   // No company parent in QuickBooks (Wortham's buildings are named "address - Wortham Brothers Roofing", no parent):
   // the company name goes ON the customer name — the app's customer name, exactly — so it never lands with no company on it.
   const company = String(job.customer_name || "").trim();
@@ -1740,6 +1745,18 @@ export default async function handler(req: Request) {
       return json(norm(r));
     }
 
+    // PUT A QUICKBOOKS CUSTOMER UNDER ITS COMPANY (10/8/26): POST /w/qb-customer-parent {qb_customer_id, parent_name}
+    // — the one thing Claude's QuickBooks tools can't do. Name and invoices stay; it just moves under the parent.
+    if (kind === "qb-customer-parent" && m === "POST") {
+      const b = await body();
+      const cid = String(b.qb_customer_id || "").trim(), pname = String(b.parent_name || "").trim();
+      if (!cid || !pname) return refuse("Which customer and which parent?");
+      const par = ((await qbQuery(`SELECT Id, DisplayName FROM Customer WHERE DisplayName = '${qEsc(pname)}' AND Active = true`)).Customer || [])[0];
+      if (!par) return refuse(`No QuickBooks customer named "${pname}".`);
+      const cur = (await qb("GET", `customer/${cid}`)).Customer;
+      const out = (await qb("POST", "customer", { Id: cur.Id, SyncToken: cur.SyncToken, sparse: true, DisplayName: cur.DisplayName, ParentRef: { value: par.Id }, Job: true, BillWithParent: false })).Customer;
+      return json({ id: out.Id, name: out.DisplayName, fully_qualified: out.FullyQualifiedName, parent: par.DisplayName });
+    }
     // ================= INVOICE CHECKER (10/8/26) =================
     // POST /w/invoice-check/:id → check one invoice (app id) now.  POST /w/invoice-sweep → every open invoice in QuickBooks,
     // as many as fit in the time budget, oldest-checked first; the nightly sweep calls this until it's done.
