@@ -1733,6 +1733,16 @@ export default async function handler(req: Request) {
     }
     // CUSTOMER LAYERS (10/8/26): GET /w/qb-customer/:id → its full company › building › tenant name.
     // POST /w/qb-customer-create {name, parent_name} → a new building (or tenant) customer under its parent; an existing one is reused.
+    // EVERY QUICKBOOKS CUSTOMER (10/9/26, read-only): GET /w/qb-customers → id, name, full name, parent, level, balance — for putting past customers in their layers.
+    if (kind === "qb-customers" && m === "GET") {
+      const out: any[] = [];
+      for (let start = 1; start < 5000; start += 1000) {
+        const page = (await qbQuery(`SELECT * FROM Customer WHERE Active = true STARTPOSITION ${start} MAXRESULTS 1000`)).Customer || [];
+        out.push(...page.map((c: any) => ({ id: c.Id, name: c.DisplayName, full: c.FullyQualifiedName, parent_id: c.ParentRef?.value || null, level: c.Level || 0, balance: c.Balance, bill_with_parent: !!c.BillWithParent })));
+        if (page.length < 1000) break;
+      }
+      return json(out);
+    }
     if (kind === "qb-customer" && id && m === "GET") {
       const c = (await qb("GET", `customer/${id}`)).Customer;
       return json({ id: c.Id, name: c.DisplayName, fully_qualified: c.FullyQualifiedName, parent_id: c.ParentRef?.value || null, level: c.Level || 0, active: c.Active });
