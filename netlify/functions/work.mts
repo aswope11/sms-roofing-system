@@ -11,6 +11,7 @@ import { getStore } from "@netlify/blobs";
 import type { Config } from "@netlify/functions";
 import * as M from "../../lib/money.js";
 import * as Q from "../../lib/qb-pdf.js";
+import * as AR from "../../lib/qb-ar.js";
 import * as L from "../../lib/qb-layers.js";
 import { repushReason } from "../../lib/mail-label.js";
 import * as TALK from "../../lib/bidtalk.js";
@@ -69,6 +70,14 @@ async function invoiceQbPdf(sql: any, invoiceId: number) {
   try { t = await qbToken(); }
   catch (e: any) { return json({ error: String(e?.message || e) }, 401); }
   return Q.serveQbInvoicePdf({ invoice: inv, token: t, fetchImpl: fetch });
+}
+// QUICKBOOKS A/R AGING (read only). The access key is the one already saved for the company.
+// This does not write an invoice, a customer, or anything else — token refresh is the existing blob update.
+async function qbArAging(reqUrl: string, format: "pdf" | "csv") {
+  let t: any;
+  try { t = await qbToken(); }
+  catch (e: any) { return new Response(JSON.stringify({ error: String(e?.message || e) }), { status: 401, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "private, no-store" } }); }
+  return AR.serveArAging({ token: t, url: reqUrl, format, fetchImpl: fetch });
 }
 async function qb(method: string, path: string, payload?: any) {
   const t = await qbToken();
@@ -846,6 +855,14 @@ async function unsentOutOfAR(sql: any, rows: any[], txn: Record<string, string>)
 }
 
 export default async function handler(req: Request) {
+  // A/R aging is a pair of QuickBooks report GETs. It never opens the CRM database.
+  // Same Netlify cookie as every other /w route. A plain GET, so curl -b <that cookie> gets the file too.
+  const early = new URL(req.url);
+  const [earlyKind, earlyId] = early.pathname.replace(/^\/w\/?/, "").split("/").filter(Boolean);
+  if (earlyKind === "qb" && (earlyId === "ar-aging.pdf" || earlyId === "ar-aging.csv")) {
+    if (req.method !== "GET") return new Response(JSON.stringify({ error: "That report is read-only." }), { status: 405, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "private, no-store" } });
+    return qbArAging(req.url, earlyId.endsWith(".csv") ? "csv" : "pdf");
+  }
   const db = getDatabase();
   const sql = db.sql;
   const url = new URL(req.url);
