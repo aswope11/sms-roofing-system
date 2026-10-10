@@ -59,8 +59,9 @@ export async function schedulePage(start) {
     const st = j.stage || 'ready';
     const chip = x => `<button type="button" class="stchip ${st === x.k ? 'on' : ''}${x.k === 'contract' ? ' toBids' : ''}" data-stage="${x.k}" data-job="${j.id}"
       ${x.k === 'contract' ? 'title="Awarded — this ticket sits in the Awarded lane at the bottom of the Schedule tab"' : ''}>${esc(x.l)}</button>`;
-    return `<div class="stbar">${
-      STAGE_GROUPS.map(g => `<span class="stgrp">${g.l ? `<span class="stgl">${esc(g.l)}</span>` : ''}${g.ks.map(k => chip(STAGES.find(x => x.k === k))).join('')}</span>`).join('')}<span class="stgrp"><button type="button" class="stchip ${j.priority ? 'on' : ''}" data-prio="${j.id}" title="Puts this ticket on top of its list. Tap again to take it off.">Priority</button></span></div>`;
+    // 10/10/26, his ask: Priority moved to the far left; Complete pill added (does the same as the ticket's Complete button).
+    return `<div class="stbar"><span class="stgrp"><button type="button" class="stchip ${j.priority ? 'on' : ''}" data-prio="${j.id}" title="Puts this ticket on top of its list. Tap again to take it off.">Priority</button></span>${
+      STAGE_GROUPS.map(g => `<span class="stgrp">${g.l ? `<span class="stgl">${esc(g.l)}</span>` : ''}${g.ks.map(k => chip(STAGES.find(x => x.k === k))).join('')}</span>`).join('')}<span class="stgrp"><button type="button" class="stchip" data-complete="${j.id}" title="Complete — moves it to Invoicing and the invoice gets written now.">Complete</button></span></div>`;
   };
   // ---------- (1) THE CARD: old jobCardHTML ----------
   // Step 6: oldest unpaid trip 21+ days → the card goes red
@@ -485,6 +486,15 @@ export async function schedulePage(start) {
     const j = jobsById[b.dataset.prio], v = !j.priority;
     run(() => doAndProve(`/w/job/${j.id}/priority`, { method: 'PUT', body: { priority: v } }, jobUrl(j.id), back => !!back.job.priority === v,
       `${j.tag} - ${j.address} → ${v ? 'Priority' : 'not Priority'}`));
+  });
+  // COMPLETE PILL (10/10/26): same as the ticket's Complete button — asks first, then moves it to Invoicing and writes the invoice.
+  $app().querySelectorAll('.stchip[data-complete]').forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const j = jobsById[b.dataset.complete];
+    const notGreen = [...new Set(w.stops.filter(s => s.job_id === j.id).map(s => s.work_date))].filter(d => !isGreen(d));
+    if (!confirm(`Are you sure you're done with ${j.tag} - ${j.address}${j.tenant ? ' - ' + j.tenant : ''}?\n\nIt moves to Invoicing and the invoice gets written now.${notGreen.length ? `\n\nHEADS UP: ${notGreen.join(', ')} ${notGreen.length === 1 ? 'is' : 'are'} logged but not green yet. Anything worked after this goes on a SECOND invoice. Cancel, green the day first, then press Complete.` : ''}`)) return;
+    run(() => doAndProve(`/w/job/${j.id}/done`, { method: 'POST', body: {} }, jobUrl(j.id), back => !!back.job.done_at,
+      `${j.tag} - ${j.address} → Complete`));
   });
   // DRAG A TICKET PILL (10/1/26): grab a pill under the grid and drop it on another pill in the same list — it lands in that spot.
   // Replaces the ▲▼ arrows. Priority tickets still sit on top (10/5/26).

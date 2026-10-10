@@ -40,7 +40,7 @@ export async function renderTicket(jobId, mount) {
           `<div><b>${shortDate(d)}</b> — ${rows.map(s => `${esc(s.man)} ${Number(s.days) === 0.5 ? 'half' : 'full'}${s.day_scope ? ' · ' + esc(s.day_scope) : ''} · ${money(s.cost)}`).join('; ')}</div>`).join('')
         }${L.material && L.material.length ? `<div class="mute" style="margin-top:4px">Material ${L.material.map(m => `${esc(m.house || '')} ${money(m.line_total)}`).join(' · ')}</div>` : ''}</div>` : ''}
       <div class="btnrow" style="margin-top:14px">
-        ${!j.done_at ? '<button id="done">Work is done</button>' : '<button class="ghost" id="reopen">Reopen — put it back on the schedule</button>'}
+        ${!j.done_at ? '<button id="done">Complete</button>' : '<button class="ghost" id="reopen">Reopen — put it back on the schedule</button>'}
         ${j.done_at && !j.tabled_at ? '<button class="ghost" id="table">Table it — not billing yet</button>' : ''}
         ${j.tabled_at ? '<button class="ghost" id="untable">Bring it back to Invoicing</button>' : ''}
         <label class="checkline"><input type="checkbox" id="nocharge" ${j.no_charge ? 'checked' : ''}> No charge on purpose</label>
@@ -87,7 +87,7 @@ export async function renderTicket(jobId, mount) {
     !notGreen.length && notSeated.length ? `${notSeated.map(shortDate).join(', ')} ${notSeated.length === 1 ? 'has' : 'have'} no placeholder yet` : '',
     stillPlanned ? `it's still on the schedule for ${shortDate(stillPlanned)}` : '',
     laterWork.length ? `work is already logged on ${laterWork.map(shortDate).join(', ')}` : ''].filter(Boolean);
-  if (q('#done')) q('#done').onclick = () => { if (confirm(`Are you sure you're done with ${ticketName(j)}?\n\nIt moves to Invoicing and the invoice gets written now.${doneWarn.length ? `\n\nHEADS UP: ${doneWarn.join('; ')}. Anything worked after this goes on a SECOND invoice. Cancel, green the day first, then press Work is done.` : ''}`)) run(() => act(`/w/job/${jobId}/done`, {}, b => !!b.job.done_at)); };
+  if (q('#done')) q('#done').onclick = () => { if (confirm(`Are you sure you're done with ${ticketName(j)}?\n\nIt moves to Invoicing and the invoice gets written now.${doneWarn.length ? `\n\nHEADS UP: ${doneWarn.join('; ')}. Anything worked after this goes on a SECOND invoice. Cancel, green the day first, then press Complete.` : ''}`)) run(() => act(`/w/job/${jobId}/done`, {}, b => !!b.job.done_at)); };
   if (q('#reopen')) q('#reopen').onclick = () => {
     const unsent = L.invoices.filter(i => i.kind === 'real' && !i.sent_at && !i.paid_at);
     const backPh = L.invoices.filter(p => p.kind === 'placeholder' && unsent.some(u => u.id === p.zeroed_by));
@@ -95,7 +95,7 @@ export async function renderTicket(jobId, mount) {
     const invTot = round2(unsent.reduce((a, i) => a + Number(i.amount), 0));
     const phTot = round2(backPh.reduce((a, p) => a + Number(p.zeroed_from || 0), 0));
     if (unsent.length && !confirm(`Reopen it?\n\nThe invoice${unsent.length === 1 ? '' : 's'} not sent yet (${unsent.map(i => (i.number ? '#' + i.number + ' ' : '') + money(i.amount)).join(', ')}) get deleted here and in QuickBooks.\n`
-      + `${backPh.length ? `The money goes back on placeholder ${backPh.map(p => '#' + (p.number || p.id) + ' ' + money(p.zeroed_from || 0)).join(', ')} — nothing is lost, and it all bills on ONE invoice when you press Work is done again.` : 'No placeholder holds this money.'}`
+      + `${backPh.length ? `The money goes back on placeholder ${backPh.map(p => '#' + (p.number || p.id) + ' ' + money(p.zeroed_from || 0)).join(', ')} — nothing is lost, and it all bills on ONE invoice when you press Complete again.` : 'No placeholder holds this money.'}`
       + `${noPrice.length || (backPh.length && invTot !== phTot) ? `\n\nHEADS UP: the invoice says ${money(invTot)} and the saved placeholder price adds to ${money(phTot)}.` : ''}`)) return;
     run(async () => {
       const { result, back } = await act(`/w/job/${jobId}/reopen`, {}, b => !b.job.done_at && !b.invoices.some(i => unsent.some(u => u.id === i.id)), 'Reopened — back on the schedule, off Invoicing (read back and it matches)');

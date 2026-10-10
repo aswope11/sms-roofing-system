@@ -70,7 +70,7 @@ function openTalk() {
           <label class="checkline"><input type="checkbox" id="tkSave" checked> Save this scope on the ticket</label>
           <label class="checkline"><input type="checkbox" id="tkCheck" ${r.check_scope ? 'checked' : ''}> Tick "Scope of work checked"</label>
           ${r.already_done ? '<div class="mute">Work is already marked done.</div>'
-            : `<label class="checkline"><input type="checkbox" id="tkDone" ${r.mark_done ? 'checked' : ''}> Mark "Work is done" (moves it to Invoicing)</label>`}
+            : `<label class="checkline"><input type="checkbox" id="tkDone" ${r.mark_done ? 'checked' : ''}> Mark "Complete" (moves it to Invoicing)</label>`}
           <div class="btnrow"><button id="tkYes">Yes — do it</button><button class="ghost" id="tkNo">No</button></div>
         </div>`;
       q('#tkSaid').value = '';
@@ -80,7 +80,7 @@ function openTalk() {
     finally { q('#tkRead').disabled = false; }
   };
 
-  // His Yes. Same order as his own thumb on the ticket: words first, then the scope box, then Work is done.
+  // His Yes. Same order as his own thumb on the ticket: words first, then the scope box, then Complete.
   async function doIt(jobId) {
     const read = `/w/job/${jobId}`;
     const scope = q('#tkScope').value;
@@ -89,7 +89,7 @@ function openTalk() {
     try {
       if (q('#tkSave').checked) { await doAndProve(`${read}/scope`, { method: 'PUT', body: { scope } }, read, b => b.job.scope === scope, 'Scope saved'); did.push('scope saved'); }
       if (q('#tkCheck').checked) { await doAndProve(`${read}/check`, { method: 'PUT', body: { which: 'scope', value: true } }, read, b => b.job.scope_ok === true, 'Scope checked'); did.push('scope checked'); }
-      if (q('#tkDone') && q('#tkDone').checked) { await doAndProve(`${read}/done`, { method: 'POST', body: {} }, read, b => !!b.job.done_at, 'Work is done'); did.push('work done'); }
+      if (q('#tkDone') && q('#tkDone').checked) { await doAndProve(`${read}/done`, { method: 'POST', body: {} }, read, b => !!b.job.done_at, 'Complete'); did.push('work done'); }
       toast(`Done — ${did.join(' · ')} (each read back from the server)`);
       stopMic(); box.remove();
       location.hash = `#/job/${jobId}`;
