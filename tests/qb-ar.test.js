@@ -298,6 +298,100 @@ test('summary and detail use QuickBooks figures as returned, including nested cu
   assert.ok(!report.groups.some(g => /Total for \d/.test(g.customer) || g.customer === 'TOTAL'));
 });
 
+test('summary buckets follow QuickBooks column titles, not ColKey indexes or position', () => {
+  // Live AgedReceivables headers. ColKey is a period index: "1" is the 31-60 column, not 1-30.
+  // Reading those numbers as columns drops 1-30 and slides every older bucket one to the left.
+  const money = (title, key) => ({ ColTitle: title, ColType: 'Money', MetaData: [{ Name: 'ColKey', Value: key }] });
+  const columns = [
+    { ColTitle: '', ColType: 'Customer', MetaData: [{ Name: 'ColKey', Value: 'customer' }] },
+    money('Current', 'current'),
+    money('1 - 30', '0'),
+    money('31 - 60', '1'),
+    money('61 - 90', '2'),
+    money('91 and over', '3'),
+    money('Total', 'total'),
+  ];
+  const figures = ['10527.23', '53531.04', '9871.13', '1165.00', '26983.21', '102077.61'];
+  const cells = (name, nums) => [{ value: name }, ...nums.map(value => ({ value }))];
+  const summary = {
+    Columns: { Column: columns },
+    Rows: { Row: [
+      { type: 'Data', ColData: cells('All customers', figures) },
+      { group: 'GrandTotal', type: 'Section', Summary: { ColData: cells('TOTAL', figures) } },
+    ] },
+  };
+  const detail = {
+    Columns: { Column: [
+      { ColTitle: 'Date', ColType: 'tx_date' },
+      { ColTitle: 'Transaction Type', ColType: 'txn_type' },
+      { ColTitle: 'Num', ColType: 'doc_num' },
+      { ColTitle: 'Customer', ColType: 'cust_name' },
+      { ColTitle: 'Due Date', ColType: 'due_date' },
+      { ColTitle: 'Past Due', ColType: 'past_due' },
+      { ColTitle: 'Amount', ColType: 'subt_amount' },
+      { ColTitle: 'Open Balance', ColType: 'subt_open_bal' },
+    ] },
+    Rows: { Row: [detailRow('2026-09-01', 'Invoice', '4812', 'All customers', '2026-09-20', '20', '3000.00', '2500.50', '9001')] },
+  };
+  const report = buildArReport(summary, detail, '2026-10-10');
+  for (const row of [report.summary[0], report.grand]) {
+    assert.equal(row.current, '10527.23');
+    assert.equal(row.b30, '53531.04');
+    assert.equal(row.b60, '9871.13');
+    assert.equal(row.b90, '1165.00');
+    assert.equal(row.b91, '26983.21');
+    assert.equal(row.total, '102077.61');
+  }
+  assert.equal(report.summary[0].customer, 'All customers');
+  assert.equal(report.groups[0].subtotal, '102077.61');
+  assert.equal(report.groups[0].lines[0].balance, '2500.50');
+  assert.equal(report.groups[0].lines[0].days, '20');
+  const csv = parseCsv(renderArCsv(report));
+  assert.equal(csv.find(r => r[1] === '4812')[5], '2500.50');
+  assert.equal(csv.find(r => r[0] === 'Total for All customers')[5], '102077.61');
+  assert.equal(csv.some(r => r.includes('53531.04') || r.includes('9871.13')), false);
+
+  // Same headers out of order, one of them written with an en dash, so a positional read cannot pass.
+  const shuffled = [
+    money('Total', 'total'),
+    money('91 and over', '3'),
+    { ColTitle: '', ColType: 'Customer', MetaData: [{ Name: 'ColKey', Value: 'customer' }] },
+    money('61 - 90', '2'),
+    money('1 \u2013 30', '0'),
+    money('Current', 'current'),
+    money('31 - 60', '1'),
+  ];
+  const byTitle = {
+    'Total': '102077.61', '91 and over': '26983.21', '': 'All customers', '61 - 90': '1165.00',
+    '1 \u2013 30': '53531.04', 'Current': '10527.23', '31 - 60': '9871.13',
+  };
+  const moved = buildArReport({
+    Columns: { Column: shuffled },
+    Rows: { Row: [{ ColData: shuffled.map(col => ({ value: byTitle[col.ColTitle] })) }] },
+  }, { Rows: {} }, '2026-10-10');
+  assert.equal(moved.summary[0].customer, 'All customers');
+  assert.equal(moved.summary[0].current, '10527.23');
+  assert.equal(moved.summary[0].b30, '53531.04');
+  assert.equal(moved.summary[0].b60, '9871.13');
+  assert.equal(moved.summary[0].b90, '1165.00');
+  assert.equal(moved.summary[0].b91, '26983.21');
+  assert.equal(moved.summary[0].total, '102077.61');
+
+  // A blank title still maps when ColKey repeats the header text, not a period index.
+  const fromKey = buildArReport({
+    Columns: { Column: [
+      { ColTitle: '', ColType: 'Customer' },
+      { ColTitle: '', ColType: 'Money', MetaData: [{ Name: 'ColKey', Value: '1 - 30' }] },
+      { ColTitle: 'Total', ColType: 'Money', MetaData: [{ Name: 'ColKey', Value: 'total' }] },
+    ] },
+    Rows: { Row: [{ ColData: [{ value: 'Acme' }, { value: '53531.04' }, { value: '53531.04' }] }] },
+  }, { Rows: {} }, '2026-10-10');
+  assert.equal(fromKey.summary[0].b30, '53531.04');
+  assert.equal(fromKey.summary[0].b60, '');
+  assert.equal(fromKey.summary[0].b91, '');
+  assert.equal(fromKey.summary[0].total, '53531.04');
+});
+
 test('a subtotal is the summary total QuickBooks sent, not a sum of the lines', () => {
   const summary = {
     Columns: SUMMARY.Columns,
