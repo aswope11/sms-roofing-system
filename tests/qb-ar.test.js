@@ -282,6 +282,7 @@ test('summary and detail use QuickBooks figures as returned, including nested cu
   ]);
   const w = report.groups[0];
   assert.deepEqual(w.lines.map(l => l.invoice), ['4402', '4701']);
+  assert.equal(w.lines[0].txn, 'Invoice');
   assert.equal(w.lines[0].days, '132');
   assert.equal(w.lines[0].date, '2026-05-01');
   assert.equal(w.lines[0].due, '2026-05-31');
@@ -296,6 +297,135 @@ test('summary and detail use QuickBooks figures as returned, including nested cu
   assert.equal(cook.lines[1].invoice, '4900');
   assert.equal(cook.subtotal, '1475.25');
   assert.ok(!report.groups.some(g => /Total for \d/.test(g.customer) || g.customer === 'TOTAL'));
+});
+
+test('summary buckets follow QuickBooks column titles, not ColKey indexes or position', () => {
+  // Live AgedReceivables headers. ColKey is a period index: "1" is the 31-60 column, not 1-30.
+  // Reading those numbers as columns drops 1-30 and slides every older bucket one to the left.
+  const money = (title, key) => ({ ColTitle: title, ColType: 'Money', MetaData: [{ Name: 'ColKey', Value: key }] });
+  const columns = [
+    { ColTitle: '', ColType: 'Customer', MetaData: [{ Name: 'ColKey', Value: 'customer' }] },
+    money('Current', 'current'),
+    money('1 - 30', '0'),
+    money('31 - 60', '1'),
+    money('61 - 90', '2'),
+    money('91 and over', '3'),
+    money('Total', 'total'),
+  ];
+  const figures = ['10527.23', '53531.04', '9871.13', '1165.00', '26983.21', '102077.61'];
+  const cells = (name, nums) => [{ value: name }, ...nums.map(value => ({ value }))];
+  const summary = {
+    Columns: { Column: columns },
+    Rows: { Row: [
+      { type: 'Data', ColData: cells('All customers', figures) },
+      { group: 'GrandTotal', type: 'Section', Summary: { ColData: cells('TOTAL', figures) } },
+    ] },
+  };
+  const detail = {
+    Columns: { Column: [
+      { ColTitle: 'Date', ColType: 'tx_date' },
+      { ColTitle: 'Transaction Type', ColType: 'txn_type' },
+      { ColTitle: 'Num', ColType: 'doc_num' },
+      { ColTitle: 'Customer', ColType: 'cust_name' },
+      { ColTitle: 'Due Date', ColType: 'due_date' },
+      { ColTitle: 'Past Due', ColType: 'past_due' },
+      { ColTitle: 'Amount', ColType: 'subt_amount' },
+      { ColTitle: 'Open Balance', ColType: 'subt_open_bal' },
+    ] },
+    Rows: { Row: [detailRow('2026-09-01', 'Invoice', '4812', 'All customers', '2026-09-20', '20', '3000.00', '2500.50', '9001')] },
+  };
+  const report = buildArReport(summary, detail, '2026-10-10');
+  for (const row of [report.summary[0], report.grand]) {
+    assert.equal(row.current, '10527.23');
+    assert.equal(row.b30, '53531.04');
+    assert.equal(row.b60, '9871.13');
+    assert.equal(row.b90, '1165.00');
+    assert.equal(row.b91, '26983.21');
+    assert.equal(row.total, '102077.61');
+  }
+  assert.equal(report.summary[0].customer, 'All customers');
+  assert.equal(report.groups[0].subtotal, '102077.61');
+  assert.equal(report.groups[0].lines[0].balance, '2500.50');
+  assert.equal(report.groups[0].lines[0].days, '20');
+  const csv = parseCsv(renderArCsv(report));
+  assert.equal(csv.find(r => r[1] === '4812')[5], '2500.50');
+  assert.equal(csv.find(r => r[0] === 'Total for All customers')[5], '102077.61');
+  assert.equal(csv.some(r => r.includes('53531.04') || r.includes('9871.13')), false);
+
+  // Same headers out of order, one of them written with an en dash, so a positional read cannot pass.
+  const shuffled = [
+    money('Total', 'total'),
+    money('91 and over', '3'),
+    { ColTitle: '', ColType: 'Customer', MetaData: [{ Name: 'ColKey', Value: 'customer' }] },
+    money('61 - 90', '2'),
+    money('1 \u2013 30', '0'),
+    money('Current', 'current'),
+    money('31 - 60', '1'),
+  ];
+  const byTitle = {
+    'Total': '102077.61', '91 and over': '26983.21', '': 'All customers', '61 - 90': '1165.00',
+    '1 \u2013 30': '53531.04', 'Current': '10527.23', '31 - 60': '9871.13',
+  };
+  const moved = buildArReport({
+    Columns: { Column: shuffled },
+    Rows: { Row: [{ ColData: shuffled.map(col => ({ value: byTitle[col.ColTitle] })) }] },
+  }, { Rows: {} }, '2026-10-10');
+  assert.equal(moved.summary[0].customer, 'All customers');
+  assert.equal(moved.summary[0].current, '10527.23');
+  assert.equal(moved.summary[0].b30, '53531.04');
+  assert.equal(moved.summary[0].b60, '9871.13');
+  assert.equal(moved.summary[0].b90, '1165.00');
+  assert.equal(moved.summary[0].b91, '26983.21');
+  assert.equal(moved.summary[0].total, '102077.61');
+
+  // A blank title still maps when ColKey repeats the header text, not a period index.
+  const fromKey = buildArReport({
+    Columns: { Column: [
+      { ColTitle: '', ColType: 'Customer' },
+      { ColTitle: '', ColType: 'Money', MetaData: [{ Name: 'ColKey', Value: '1 - 30' }] },
+      { ColTitle: 'Total', ColType: 'Money', MetaData: [{ Name: 'ColKey', Value: 'total' }] },
+    ] },
+    Rows: { Row: [{ ColData: [{ value: 'Acme' }, { value: '53531.04' }, { value: '53531.04' }] }] },
+  }, { Rows: {} }, '2026-10-10');
+  assert.equal(fromKey.summary[0].b30, '53531.04');
+  assert.equal(fromKey.summary[0].b60, '');
+  assert.equal(fromKey.summary[0].b91, '');
+  assert.equal(fromKey.summary[0].total, '53531.04');
+});
+
+test('pdf currency keeps QuickBooks digits and only adds a dollar sign and separators', async () => {
+  const summary = {
+    Columns: SUMMARY.Columns,
+    Rows: { Row: [
+      { ColData: [
+        { value: 'Acme' }, { value: '10527.23' }, { value: '4,010.75' }, { value: '-12.50' }, { value: '(8.00)' }, { value: '0.00' }, { value: '14517.48' },
+      ] },
+      { group: 'GrandTotal', type: 'Section', Summary: { ColData: [
+        { value: 'TOTAL' }, { value: '10527.23' }, { value: '53531.04' }, { value: '9871.13' }, { value: '1165.00' }, { value: '26983.21' }, { value: '102077.61' },
+      ] } },
+    ] },
+  };
+  const report = buildArReport(summary, { Rows: {} }, '2026-10-10');
+  assert.equal(report.summary[0].current, '10527.23');
+  assert.equal(report.summary[0].b30, '4,010.75');
+  assert.equal(report.grand.b91, '26983.21');
+  assert.equal(report.grand.total, '102077.61');
+  report.generatedAt = new Date('2026-10-10T13:15:00Z');
+  const text = pdfText(await renderArPdf(report));
+  assert.match(text, /\$10,527\.23/);
+  assert.match(text, /\$4,010\.75/);
+  assert.match(text, /-\$12\.50/);
+  assert.match(text, /\(\$8\.00\)/);
+  assert.match(text, /\$0\.00/);
+  assert.match(text, /\$53,531\.04/);
+  assert.match(text, /\$9,871\.13/);
+  assert.match(text, /\$1,165\.00/);
+  assert.match(text, /\$26,983\.21/);
+  assert.match(text, /\$102,077\.61/);
+  assert.equal(text.includes('10527.23'), false);
+  assert.match(text, /As of October 10, 2026/);
+  assert.match(text, /Saturday, October 10, 2026 at 8:15 AM CDT/);
+  assert.match(text, /Page 1 of 1/);
 });
 
 test('a subtotal is the summary total QuickBooks sent, not a sum of the lines', () => {
@@ -351,7 +481,7 @@ test('columns are read by type, so a shuffled detail report still shows open bal
   };
   const report = buildArReport({ Rows: { Row: [] } }, detail, '2026-10-10');
   assert.deepEqual(report.groups[0].lines[0], {
-    customer: 'Plaza', invoice: '5001', date: '2026-07-01', due: '2026-08-01', days: '44', balance: '15.50',
+    customer: 'Plaza', invoice: '5001', txn: '', date: '2026-07-01', due: '2026-08-01', days: '44', balance: '15.50',
   });
 });
 
@@ -371,16 +501,24 @@ test('GET pdf returns the QuickBooks report inline and does not write', async ()
   const bytes = Buffer.from(await res.arrayBuffer());
   assert.equal(bytes.subarray(0, 4).toString(), '%PDF');
   const text = pdfText(bytes);
-  assert.match(text, /SMS Roofing & Waterproofing - A\/R Aging - 2026-01-14/);
+  assert.match(text, /SMS Roofing & Waterproofing/);
+  assert.equal(text.includes('SMS Roofing & Waterproofing - A/R Aging'), false);
   assert.match(text, /A\/R Aging Summary/);
+  assert.match(text, /As of January 14, 2026/);
   assert.match(text, /A\/R Aging Detail/);
+  assert.match(text, /Transaction type/);
+  assert.match(text, /91 and over/);
+  assert.equal(text.includes('91+'), false);
   assert.match(text, /Wortham Bros\., Inc\./);
   assert.match(text, /4402/);
-  assert.match(text, /810\.75/);
-  assert.match(text, /7136\.50/);
+  assert.match(text, /\$810\.75/);
+  assert.match(text, /\$7,136\.50/);
+  assert.match(text, /\$3,200\.00/);
   assert.match(text, /132/);
   assert.match(text, /Current/);
-  assert.match(text, /91\+/);
+  assert.match(text, /Wednesday, January 14, 2026 at 11:30 PM CST/);
+  assert.match(text, /Page 1 of /);
+  assert.match(Buffer.from(bytes).toString('latin1'), /\/MediaBox \[ 0 0 792 612 \]/);
   assert.equal(calls.length, 2);
   for (const call of calls) {
     const u = new URL(call.url);
@@ -556,7 +694,7 @@ test('csv quotes commas and quotes, and a long report still renders', async () =
   assert.equal(Buffer.from(bytes).subarray(0, 4).toString(), '%PDF');
   const text = pdfText(bytes);
   assert.match(text, /Plaza \(continued\)/);
-  assert.match(text, /2 \/ /);
+  assert.match(text, /Page 2 of /);
 });
 
 test('the helper only GETs, and the route is cookie auth with no CRM write', () => {
