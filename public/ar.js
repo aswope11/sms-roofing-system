@@ -1,5 +1,6 @@
 // AR — copied from the old board's renderAR: aging tiles, one pile per customer A–Z, days out, Mark it paid on the row.
 import { esc, $app, call, doAndProve, crumbs, setTab, fail, qbPdfLink } from './ui.js';
+import { qbArReportLink } from './qbar.js';
 import { money, ticketName, shortDate, round2, missingToMarkPaid, isBill } from './money.js';
 
 const age = (from, to) => Math.max(0, Math.round((new Date(to + 'T12:00:00') - new Date(String(from).slice(0, 10) + 'T12:00:00')) / 86400000));
@@ -76,6 +77,7 @@ export async function arPage() {
       <tfoot><tr class="qbgrand"><td>TOTAL</td>${grand.map(v => `<td class="qbn">${fmtT(v)}</td>`).join('')}<td class="qbn">${fmtT(total)}</td><td></td></tr></tfoot></table></div>`;
   };
   $app().innerHTML = `<div class="oldgrid oldinv">
+    <div class="btnrow" style="margin-bottom:10px">${qbArReportLink()}</div>
     ${d.stuck.length ? `<div class="billgrp stuck" style="--lane:var(--bad)"><div class="bgh"><b>DONE — NOT GETTING PAID YET</b> <span class="lanen">${d.stuck.length}</span></div>
       ${d.stuck.map(t => `<div class="prow" data-hover="${t.id}" style="border-left-color:var(--bad)">
         <a class="pmain" href="#/job/${t.id}"><div class="pt">${esc(ticketName(t))}</div>
