@@ -282,6 +282,7 @@ test('summary and detail use QuickBooks figures as returned, including nested cu
   ]);
   const w = report.groups[0];
   assert.deepEqual(w.lines.map(l => l.invoice), ['4402', '4701']);
+  assert.equal(w.lines[0].txn, 'Invoice');
   assert.equal(w.lines[0].days, '132');
   assert.equal(w.lines[0].date, '2026-05-01');
   assert.equal(w.lines[0].due, '2026-05-31');
@@ -392,6 +393,41 @@ test('summary buckets follow QuickBooks column titles, not ColKey indexes or pos
   assert.equal(fromKey.summary[0].total, '53531.04');
 });
 
+test('pdf currency keeps QuickBooks digits and only adds a dollar sign and separators', async () => {
+  const summary = {
+    Columns: SUMMARY.Columns,
+    Rows: { Row: [
+      { ColData: [
+        { value: 'Acme' }, { value: '10527.23' }, { value: '4,010.75' }, { value: '-12.50' }, { value: '(8.00)' }, { value: '0.00' }, { value: '14517.48' },
+      ] },
+      { group: 'GrandTotal', type: 'Section', Summary: { ColData: [
+        { value: 'TOTAL' }, { value: '10527.23' }, { value: '53531.04' }, { value: '9871.13' }, { value: '1165.00' }, { value: '26983.21' }, { value: '102077.61' },
+      ] } },
+    ] },
+  };
+  const report = buildArReport(summary, { Rows: {} }, '2026-10-10');
+  assert.equal(report.summary[0].current, '10527.23');
+  assert.equal(report.summary[0].b30, '4,010.75');
+  assert.equal(report.grand.b91, '26983.21');
+  assert.equal(report.grand.total, '102077.61');
+  report.generatedAt = new Date('2026-10-10T13:15:00Z');
+  const text = pdfText(await renderArPdf(report));
+  assert.match(text, /\$10,527\.23/);
+  assert.match(text, /\$4,010\.75/);
+  assert.match(text, /-\$12\.50/);
+  assert.match(text, /\(\$8\.00\)/);
+  assert.match(text, /\$0\.00/);
+  assert.match(text, /\$53,531\.04/);
+  assert.match(text, /\$9,871\.13/);
+  assert.match(text, /\$1,165\.00/);
+  assert.match(text, /\$26,983\.21/);
+  assert.match(text, /\$102,077\.61/);
+  assert.equal(text.includes('10527.23'), false);
+  assert.match(text, /As of October 10, 2026/);
+  assert.match(text, /Saturday, October 10, 2026 at 8:15 AM CDT/);
+  assert.match(text, /Page 1 of 1/);
+});
+
 test('a subtotal is the summary total QuickBooks sent, not a sum of the lines', () => {
   const summary = {
     Columns: SUMMARY.Columns,
@@ -445,7 +481,7 @@ test('columns are read by type, so a shuffled detail report still shows open bal
   };
   const report = buildArReport({ Rows: { Row: [] } }, detail, '2026-10-10');
   assert.deepEqual(report.groups[0].lines[0], {
-    customer: 'Plaza', invoice: '5001', date: '2026-07-01', due: '2026-08-01', days: '44', balance: '15.50',
+    customer: 'Plaza', invoice: '5001', txn: '', date: '2026-07-01', due: '2026-08-01', days: '44', balance: '15.50',
   });
 });
 
@@ -465,16 +501,24 @@ test('GET pdf returns the QuickBooks report inline and does not write', async ()
   const bytes = Buffer.from(await res.arrayBuffer());
   assert.equal(bytes.subarray(0, 4).toString(), '%PDF');
   const text = pdfText(bytes);
-  assert.match(text, /SMS Roofing & Waterproofing - A\/R Aging - 2026-01-14/);
+  assert.match(text, /SMS Roofing & Waterproofing/);
+  assert.equal(text.includes('SMS Roofing & Waterproofing - A/R Aging'), false);
   assert.match(text, /A\/R Aging Summary/);
+  assert.match(text, /As of January 14, 2026/);
   assert.match(text, /A\/R Aging Detail/);
+  assert.match(text, /Transaction type/);
+  assert.match(text, /91 and over/);
+  assert.equal(text.includes('91+'), false);
   assert.match(text, /Wortham Bros\., Inc\./);
   assert.match(text, /4402/);
-  assert.match(text, /810\.75/);
-  assert.match(text, /7136\.50/);
+  assert.match(text, /\$810\.75/);
+  assert.match(text, /\$7,136\.50/);
+  assert.match(text, /\$3,200\.00/);
   assert.match(text, /132/);
   assert.match(text, /Current/);
-  assert.match(text, /91\+/);
+  assert.match(text, /Wednesday, January 14, 2026 at 11:30 PM CST/);
+  assert.match(text, /Page 1 of /);
+  assert.match(Buffer.from(bytes).toString('latin1'), /\/MediaBox \[ 0 0 792 612 \]/);
   assert.equal(calls.length, 2);
   for (const call of calls) {
     const u = new URL(call.url);
@@ -650,7 +694,7 @@ test('csv quotes commas and quotes, and a long report still renders', async () =
   assert.equal(Buffer.from(bytes).subarray(0, 4).toString(), '%PDF');
   const text = pdfText(bytes);
   assert.match(text, /Plaza \(continued\)/);
-  assert.match(text, /2 \/ /);
+  assert.match(text, /Page 2 of /);
 });
 
 test('the helper only GETs, and the route is cookie auth with no CRM write', () => {
