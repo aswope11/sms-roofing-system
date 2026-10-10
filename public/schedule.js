@@ -15,7 +15,8 @@ const TYPE_COLOR = { JC: '#4a90e2', R: '#3ea672', UC: '#e8a53c', CO: '#d4557a', 
 const typeColor = t => TYPE_COLOR[t] || '#8a93a3';
 // old board STAGES / STAGE_GROUPS. On the schedule page the contract chip reads "Awarded" and its bracket label is blank.
 const STAGES = [{ k: 'ready', l: 'Ready to work' }, { k: 'hold', l: 'the customer' }, { k: 'trades', l: 'other trades' }, { k: 'contract', l: 'Awarded' }];
-const STAGE_GROUPS = [{ l: '', ks: ['ready'] }, { l: 'Waiting on', ks: ['hold', 'trades'] }, { l: '', ks: ['contract'] }];
+// 10/10/26, his ask: "Awarded" pill and the Awarded lane removed from the Schedule page.
+const STAGE_GROUPS = [{ l: '', ks: ['ready'] }, { l: 'Waiting on', ks: ['hold', 'trades'] }];
 const STAGE_LABEL = { ready: 'Ready to work', hold: 'Held up by the customer', trades: 'Waiting on other trades', contract: 'Awarded' };
 let activeDay = null;  // 10/10/26: null = today (default); [] = no day active — he can turn every Active off.  // 10/7/26: he can hold Active on several dates at once — tap a date to add it, tap again to drop it.   // his rule 10/6/26 (changed his mind): tap "Active" on any date and that day works like today — its jobs drop off Ready to work and the + box list. The Today button puts it back on today.
 let schedOpen = { hold: false, trades: false };           // the two hold buckets start shut on every load
@@ -82,7 +83,7 @@ export async function schedulePage(start) {
   // PRIORITY PILL (10/5/26, his ask): repairs no longer jump the line on their own — only a ticket he taps Priority on sits on top.
   const jobCmp = (a, b) => ((b.priority ? 1 : 0) - (a.priority ? 1 : 0)) || (rank(a) - rank(b))
     || String(a.scheduled_date || '9999').localeCompare(String(b.scheduled_date || '9999')) || String(a.address || '').localeCompare(String(b.address || ''));
-  const bucketOf = j => ['ready', 'hold', 'trades', 'contract'].includes(j.stage) ? j.stage : 'ready';
+  const bucketOf = j => ['ready', 'hold', 'trades'].includes(j.stage) ? j.stage : 'ready';  // an old 'contract' ticket shows in Ready to work, never lost
   const pRow = j => `<div class="prow${stale(j) ? ' stale' : ''}" style="border-left-color:${stale(j) ? 'var(--bad)' : typeColor(j.tag)};cursor:grab" data-peek="${j.id}" data-open="${j.id}" data-dragjob="${j.id}" draggable="true">
       <div class="pmain">
         <div class="pt">${pfx(j)}${esc(j.address)}${j.city ? `<span class="pcity">${esc(j.city)}</span>` : ''}</div>
@@ -105,11 +106,6 @@ export async function schedulePage(start) {
     sections += `<div class="${schedOpen[h.k] ? 'parked open' : 'parked'}" data-dropbucket="${h.k}"><h3 data-hold="${h.k}">${schedOpen[h.k] ? '▾' : '▸'} ${esc(h.l)} <span class="n">${rows.length}</span></h3>
       <div class="plist"><div class="psec">${rows.sort(jobCmp).map(rowHTML).join('')}</div></div></div>`;
   });
-  {
-    const rows = listed.filter(j => bucketOf(j) === 'contract').sort(jobCmp);
-    sections += `<div class="parked open" id="smsAwardedLane" data-dropbucket="contract"><h3 data-fold="awarded">${fold.awarded ? '▸' : '▾'} Awarded <span class="n">${rows.length}</span></h3>${
-      fold.awarded ? '' : `<div class="plist"><div class="psec">${rows.map(rowHTML).join('') || '<div class="empty">Nothing sold without a ticket right now.</div>'}</div></div>`}</div>`;
-  }
 
   // ADD A MAN, WHERE HE IS STANDING WHEN HE HIRES ONE (off the Crew page, 9/18).
   const bossOpts = `<option value="">— nobody, he's his own —</option>` +
