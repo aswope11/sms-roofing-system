@@ -172,7 +172,7 @@ export async function templatesPage() {
   $app().innerHTML = `<div class="tplpage">
     <button class="jpback" id="tplBack">‹ Bids</button>
     <h1>Templates</h1>
-    ${[['proposals', 'PROPOSALS'], ...BID_CATS].map(([k, label]) => { const list = byCat[k] || []; const isShut = !!shut[k]; const n = list.length + links(k).length; return `<div class="tcat">
+    ${[['proposals', 'PROPOSALS'], ...BID_CATS, ['scopes', 'SCOPES — one scope per sheet']].map(([k, label]) => { const list = byCat[k] || []; const isShut = !!shut[k]; const n = list.length + links(k).length; return `<div class="tcat">
       <div class="tcathead" data-cat="${k}"><span>${esc(label)}</span>${n ? `<span class="tcatn">${n}</span>` : ''}<span class="spacer"></span><span class="tcatchev">${isShut ? '▸' : '▾'}</span></div>
       ${isShut ? '' : list.map(t => `<div class="tcard">
         <span class="ttag">TEMPLATE</span><b class="tname">${esc(t.name)}</b><span class="spacer"></span>
@@ -180,7 +180,7 @@ export async function templatesPage() {
       </div>`).join('')}
       ${isShut ? '' : links(k).map(t => `<div class="tcard">
         <span class="ttag">${esc(t.tag)}</span><b class="tname">${esc(t.name)}</b><span class="spacer"></span>
-        <a class="tsheet" href="${esc(t.url.replace(/\/edit.*$/, '/copy'))}" target="_blank" rel="noopener">New copy ↗</a>
+        ${t.file ? `<a class="tsheet" href="/sheets/${esc(encodeURI(t.file))}" download>Sheet ⤓</a>` : `<a class="tsheet" href="${esc(t.url.replace(/\/edit.*$/, '/copy'))}" target="_blank" rel="noopener">New copy ↗</a>`}
       </div>`).join('')}
     </div>`; }).join('')}
   </div>`;

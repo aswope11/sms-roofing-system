@@ -548,6 +548,32 @@ export const LINK_TEMPLATES = [
   { cat: 'trades', tag: 'TEMPLATE', name: '15 NAIL BASE', url: 'https://docs.google.com/spreadsheets/d/1WZYeJN_r09Uhi0Kc2hEAJ-wqtq3pzjBLya1KOB3ehIQ/edit' },
   { cat: 'ss', tag: 'TEMPLATE', name: '16 STANDING SEAM — CEE-LOK', url: 'https://docs.google.com/spreadsheets/d/1SlsWlgP4B4CpJYyKXn6Npe4a2zi5ck3MttEnpd2UpdI/edit' },
   { cat: 'ss', tag: 'TEMPLATE', name: '17 STANDING SEAM — ZEE-LOCK', url: 'https://docs.google.com/spreadsheets/d/1H33cb4Gj8XG1qi9WmmenYAI9vw9k-hVkrZz6agYrxMI/edit' },
+  // SCOPES (10/11/26) — the templates broken into one scope per sheet. The bid-prep agent stacks these per the plans.
+  // 01–15 are Google Sheets in Drive folder "SCOPES (agent pieces)"; 16–24 are xlsx in /sheets/scopes until they go up.
+  { cat: 'scopes', tag: 'SCOPE', name: 'SCOPE 01 — TPO ROOF (shared buys)', url: 'https://docs.google.com/spreadsheets/d/1mH0tuL2g2jGqdylL6Kb6sO9ZRWGX54ys7BLIcK5DkO4/edit' },
+  { cat: 'scopes', tag: 'SCOPE', name: 'SCOPE 02 — ISO FLAT', url: 'https://docs.google.com/spreadsheets/d/1rlHa5AyxfYmx_K-NfGYqxruqECMmbEIYiWbcRmYn9WY/edit' },
+  { cat: 'scopes', tag: 'SCOPE', name: 'SCOPE 03 — TAPERED ISO 1/4″', url: 'https://docs.google.com/spreadsheets/d/19MnHdqfMJod3Nl921z3AZyxNOjEOdLDkDKg_3ffsQSY/edit' },
+  { cat: 'scopes', tag: 'SCOPE', name: 'SCOPE 04 — TAPERED ISO 1/8″', url: 'https://docs.google.com/spreadsheets/d/1AnK3q3prJF7MDrXjwjAF21gJtGZ7h0Swnzk3huHOVjk/edit' },
+  { cat: 'scopes', tag: 'SCOPE', name: 'SCOPE 05 — KICKERS', url: 'https://docs.google.com/spreadsheets/d/1C1U4g2RdYC3iDYgqkCfIToQuWocVZJai5MhM1w15dnc/edit' },
+  { cat: 'scopes', tag: 'SCOPE', name: 'SCOPE 06 — CRICKETS', url: 'https://docs.google.com/spreadsheets/d/1j5AMfZkRyGkFbXwQb-K1-gzSIt-r-8KTLxh-yNHZVQ4/edit' },
+  { cat: 'scopes', tag: 'SCOPE', name: 'SCOPE 07 — TPO MA', url: 'https://docs.google.com/spreadsheets/d/16GFxCDkPuFUws0dG_Y0Kf1HCX5ZB9-WNQlT1zPlzUFQ/edit' },
+  { cat: 'scopes', tag: 'SCOPE', name: 'SCOPE 08 — TPO FA', url: 'https://docs.google.com/spreadsheets/d/1AjwY_khyN-sD-mC7txvuW6zT1I-p2bP9LdrDWu8F5Cw/edit' },
+  { cat: 'scopes', tag: 'SCOPE', name: 'SCOPE 09 — TPO RHINOBOND', url: 'https://docs.google.com/spreadsheets/d/1CDnAyLizTWTMqgIK7q3RXG77QhdRGLVcu2224_1FydM/edit' },
+  { cat: 'scopes', tag: 'SCOPE', name: 'SCOPE 10 — TEAR-OFF', url: 'https://docs.google.com/spreadsheets/d/1vTJt4g8dSTqlhLVxpvFaoZPK28-n8pD65Vl-IZupg00/edit' },
+  { cat: 'scopes', tag: 'SCOPE', name: 'SCOPE 11 — PARAPET WALLS', url: 'https://docs.google.com/spreadsheets/d/1M-zXR54XSdOrgiydwJiZTAPjBO5knEYqmvL7mgvPxY0/edit' },
+  { cat: 'scopes', tag: 'SCOPE', name: 'SCOPE 12 — BASE FLASHING', url: 'https://docs.google.com/spreadsheets/d/15h36xKN61gnYoLqzj4AU-TbmfWT8qd0zYTq0aEo73r8/edit' },
+  { cat: 'scopes', tag: 'SCOPE', name: 'SCOPE 13 — CONCRETE WALLS', url: 'https://docs.google.com/spreadsheets/d/1xg_ebeT8kTHmJJTW7b0BSbfXgLwlhaHZlxsDhjM9Eac/edit' },
+  { cat: 'scopes', tag: 'SCOPE', name: 'SCOPE 14 — COPING', url: 'https://docs.google.com/spreadsheets/d/1rDoxL6urqyjD2P-vDKzJwIfE7BeijWfmHXoE31RRG1Y/edit' },
+  { cat: 'scopes', tag: 'SCOPE', name: 'SCOPE 15 — GRAVEL STOP', url: 'https://docs.google.com/spreadsheets/d/1PL-pJ8rQCOO7ldoslZnrgvZ2Rhv9OWvB7e6IylCJMr0/edit' },
+  { cat: 'scopes', tag: 'SCOPE', name: 'SCOPE 16 — COUNTER FLASHING', file: 'scopes/SCOPE 16 - Counter flashing.xlsx' },
+  { cat: 'scopes', tag: 'SCOPE', name: 'SCOPE 17 — GUTTERS', file: 'scopes/SCOPE 17 - Gutters.xlsx' },
+  { cat: 'scopes', tag: 'SCOPE', name: 'SCOPE 18 — DOWNSPOUTS', file: 'scopes/SCOPE 18 - Downspouts.xlsx' },
+  { cat: 'scopes', tag: 'SCOPE', name: 'SCOPE 19 — SCUPPERS + COLLECTORS', file: 'scopes/SCOPE 19 - Scuppers.xlsx' },
+  { cat: 'scopes', tag: 'SCOPE', name: 'SCOPE 20 — CURBS', file: 'scopes/SCOPE 20 - Curbs.xlsx' },
+  { cat: 'scopes', tag: 'SCOPE', name: 'SCOPE 21 — PITCH PANS', file: 'scopes/SCOPE 21 - Pitch pans.xlsx' },
+  { cat: 'scopes', tag: 'SCOPE', name: 'SCOPE 22 — PIPE BOOTS', file: 'scopes/SCOPE 22 - Pipe boots.xlsx' },
+  { cat: 'scopes', tag: 'SCOPE', name: 'SCOPE 23 — ROOF HATCH', file: 'scopes/SCOPE 23 - Roof hatch.xlsx' },
+  { cat: 'scopes', tag: 'SCOPE', name: 'SCOPE 24 — WALKPADS', file: 'scopes/SCOPE 24 - Walkpads.xlsx' },
 ];
 
 // TWO TEMPLATES PULLED OUT OF THE LIBERTY RETAIL CENTER BID (9/26/26). His picks: counter flashing add-on and

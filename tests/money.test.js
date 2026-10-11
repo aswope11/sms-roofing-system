@@ -1,7 +1,7 @@
 // Each test is one of his locked rules. If a change breaks a rule, the build fails and nothing deploys.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import * as M from '../lib/money.js';
 import { repushReason } from '../lib/mail-label.js';
 
@@ -695,8 +695,11 @@ test('Templates page carries the proposal templates (9/25: "everything is suppos
   const { LINK_TEMPLATES } = await import('../public/templates.js');
   const names = LINK_TEMPLATES.map(t => t.name).join(' | ');
   for (const w of ['Standing seam', 'MA TPO / MA ISO']) assert.ok(names.includes(w), w);
-  assert.ok(LINK_TEMPLATES.every(t => t.tag === 'PROPOSAL' || (t.tag === 'TEMPLATE' && /^https:\/\/docs\.google\.com\/spreadsheets\//.test(t.url))), 'proposals, or TEMPLATE-tagged Google Sheet links (bid-sheet rule changed)');
-  assert.ok(LINK_TEMPLATES.every(t => /^https:\/\/docs\.google\.com\//.test(t.url)));
+  const notScope = LINK_TEMPLATES.filter(t => t.tag !== 'SCOPE');
+  assert.ok(notScope.every(t => t.tag === 'PROPOSAL' || (t.tag === 'TEMPLATE' && /^https:\/\/docs\.google\.com\/spreadsheets\//.test(t.url))), 'proposals, or TEMPLATE-tagged Google Sheet links (bid-sheet rule changed)');
+  assert.ok(notScope.every(t => /^https:\/\/docs\.google\.com\//.test(t.url)));
+  // 10/11: SCOPE cards are a Google Sheet link or an xlsx in public/sheets that really exists.
+  for (const t of LINK_TEMPLATES.filter(t => t.tag === 'SCOPE')) assert.ok(t.url ? /^https:\/\/docs\.google\.com\/spreadsheets\//.test(t.url) : existsSync('public/sheets/' + t.file), t.name);
   assert.ok(readFileSync('public/bids.js', 'utf8').includes('links(k).map('));
 });
 

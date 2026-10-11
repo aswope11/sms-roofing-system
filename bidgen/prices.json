@@ -1,0 +1,527 @@
+{
+"TPO field membrane 5'": {
+"src": "t03",
+"product": "31014  GAF TPO .060 Wht 5'X100'  \u00b7  5 SQ/ROLL",
+"unit": "roll",
+"price": 355.0,
+"note": null
+},
+"TPO wall membrane 5'": {
+"src": "t03",
+"product": "31014  GAF TPO .060 Wht 5'X100'  \u00b7  5 SQ/ROLL",
+"unit": "roll",
+"price": 355.0,
+"note": "same roll as the field 5 ft \u2014 one product, two lines"
+},
+"Polyiso  \u2014  field of the roof": {
+"src": "t03",
+"product": "12004  Insulation ISO 1.6\" (LTTR 9.4) 4x8  \u00b7  51 BDFT/EA",
+"unit": "board",
+"price": 21.76,
+"note": "$68.00/sq on the sheet"
+},
+"Q board": {
+"src": "t03",
+"product": "11000  ISO Taper Panel Q (0.5\"-2.5\") 4x4  \u00b7  24 BDFT/EA",
+"unit": "board",
+"price": 14.28,
+"note": "$89.25/sq on the sheet"
+},
+"ISO plates": {
+"src": "t03",
+"product": "20000  GAF Drill-Tec Stnd Flat Steel Galv Insul Plate 3\" (#4181B)  \u00b7  500/EA",
+"unit": "box",
+"price": 118.96,
+"note": null
+},
+"Seam plates": {
+"src": "t03",
+"product": "20003  GAF Drill-Tec 2-3/8\" EGX-FM Steel Plate, Barbed  \u00b7  1000/EA",
+"unit": "box",
+"price": 376.44,
+"note": "sheet says 2-3/8\", not the 2-3/4\" in the crosswalk"
+},
+"Fasteners  \u2014  field": {
+"src": "t03",
+"product": "20037  GAF Drill-Tec 5\" #15 Washer Head Fastener  \u00b7  #3 Phillips  \u00b7  500/EA",
+"unit": "box",
+"price": 192.69,
+"note": "PACK IS 500, not 1000. The sheet was built on 1000 \u2014 corrected."
+},
+"Fasteners  \u2014  walls + base flashing": {
+"src": "t03",
+"product": "20018  GAF Drill-Tec 3\" #14 Fastener  \u00b7  #3 Phillips  \u00b7  1000/EA",
+"unit": "box",
+"price": 218.94,
+"note": null
+},
+"Bonding adhesive": {
+"src": "t03",
+"product": "41022  GAF TPO #1121 Solvent Based Bonding Adhesive 5GL",
+"unit": "pail",
+"price": 149.5,
+"note": null
+},
+"Rollers": {
+"src": "t03",
+"product": "shop supply",
+"unit": "ea",
+"price": 5.0,
+"note": "shop supply \u2014 not on Blake's sheet"
+},
+"Cages": {
+"src": "t03",
+"product": "shop supply",
+"unit": "ea",
+"price": 5.0,
+"note": "shop supply \u2014 not on Blake's sheet"
+},
+"Sticks": {
+"src": "t03",
+"product": "shop supply",
+"unit": "ea",
+"price": 5.0,
+"note": "shop supply \u2014 not on Blake's sheet"
+},
+"Unsupported flashing": {
+"src": "t03",
+"product": "41044  GAF TPO UN-55 Flexible Detail Memb. Wht 24\"X50'  \u00b7  50 LF/ROLL",
+"unit": "roll",
+"price": 435.5,
+"note": null
+},
+"TPO T-joints": {
+"src": "t03",
+"product": "41037  GAF TPO Flexible T-Joint Patch White 4\"X4\"  \u00b7  100/EA",
+"unit": "box",
+"price": 99.0,
+"note": null
+},
+"TPO corners": {
+"src": "t03",
+"product": "41028  GAF TPO Flexible Fluted Outside Corner 8\" Diameter  \u00b7  20 EA/CTN",
+"unit": "ea",
+"price": 13.51,
+"note": "PICK ONE: 41045 Universal Corners 4\"x4\" is $12.69 \u2014 which corner do you run?"
+},
+"TPO molded pipe boots": {
+"src": "t03",
+"product": "41047  GAF TPO Vent Boots White 1\"-6\"  \u00b7  6 EA/CTN",
+"unit": "ea",
+"price": 44.5,
+"note": null
+},
+"Pitch pockets": {
+"src": "t03",
+"product": "41020  GAF Split Pourable Sealant Pocket White  \u00b7  6 EA/CTN",
+"unit": "ea",
+"price": 59.5,
+"note": null
+},
+"Pourable sealer": {
+"src": "t03",
+"product": "41015  GAF 1-Part Pourable Sealant White  \u00b7  4 KT/CTN",
+"unit": "kit",
+"price": 85.8,
+"note": "was $85.50 \u2014 sheet says $85.80"
+},
+"TPO cover tape": {
+"src": "t03",
+"product": "41023  GAF TPO Dbl Cover Tape Wht 6\"X100'  \u00b7  100 LF/ROLL",
+"unit": "roll",
+"price": 356.5,
+"note": "PICK ONE: 41033 Primerless Dbl $356.50 \u00b7 41024 Heatweld $388.50 \u00b7 41025 60M Flashing Strip 8\"x100 $283.19"
+},
+"Primer": {
+"src": "t03",
+"product": "IKO / Innovi TPO Tape Primer 3Gl (6/Ctn)",
+"unit": "can",
+"price": 164.75,
+"note": "LAW \u2014 3-GALLON ONLY. Never the 1-gallon. Blake sells the IKO 3G; that is the line, every time."
+},
+"Brushes": {
+"src": "t03",
+"product": "shop supply",
+"unit": "ea",
+"price": 5.0,
+"note": "shop supply \u2014 not on Blake's sheet"
+},
+"TPO cut-edge sealant": {
+"src": "t03",
+"product": "41027  GAF TPO Cut Edge Sealant Wht Pint  \u00b7  12 EA/CTN",
+"unit": "tube",
+"price": 26.65,
+"note": null
+},
+"TPO LVOC all-purpose": {
+"src": "t03",
+"product": "41017  GAF FlexSeal Caulk Grade (Red Label)  \u00b7  20-10OZ/CTN",
+"unit": "tube",
+"price": 14.59,
+"note": null
+},
+"Water block": {
+"src": "t03",
+"product": "41016  GAF Evrg Water Block Mastic 10.3oz  \u00b7  25 EA/CTN",
+"unit": "tube",
+"price": 8.9,
+"note": null
+},
+"TPO cleaner 5g": {
+"src": "t03",
+"product": "Carlisle / QXO TPO seam cleaner 5-GALLON",
+"unit": "can",
+"price": 150.0,
+"note": "ESTIMATE \u2014 $150 stands in until the QXO invoice with the 5-gal cleaner is found. Not a quoted price."
+},
+"Rags": {
+"src": "t03",
+"product": "shop supply \u2014 box",
+"unit": "box",
+"price": 40.0,
+"note": "shop supply \u2014 not on Blake's sheet"
+},
+"Hose clamps": {
+"src": "t03",
+"product": "shop supply \u2014 box",
+"unit": "box",
+"price": 100.0,
+"note": "shop supply \u2014 not on Blake's sheet"
+},
+"Roof hatch": {
+"src": "t03",
+"product": "TRI-BUILT Roof Hatch Galvanized 36 x 30  \u00b7  SKU TRIRHG3630  (TBG3036)  \u00b7  1 pc",
+"unit": "ea",
+"price": 850.0,
+"note": "QXO invoice VG76853, 9/1/26 \u2014 1 pc @ $850.00 + $70.13 tax = $920.13."
+},
+"Safety ladder-up post": {
+"src": "t03",
+"product": null,
+"unit": "ea",
+"price": null,
+"note": "not priced yet \u2014 set the product and price the first time a job needs it."
+},
+"Backer rod": {
+"src": "t03",
+"product": "Backer rod  \u2014  20 ft bag",
+"unit": "bag",
+"price": 4.0,
+"note": "ESTIMATE \u2014 $4 a bag, from the earlier pricing notes (\"~$4/20ft\"). Never tied to an invoice. Not on Blake's sheet."
+},
+"Railing / guardrail set": {
+"src": "t03",
+"product": null,
+"unit": "ea",
+"price": null,
+"note": "not priced yet \u2014 set the product and price the first time a job needs it."
+},
+"Walkpad": {
+"src": "t03",
+"product": "41048  GAF TPO Walkway Roll \u2014 Gray 34.25\" x 50'5\"  \u00b7  50 LF/ROLL",
+"unit": "roll",
+"price": 665.0,
+"note": "Blake / SBM 8/25/26 sheet, page 31, item 41048 \u2014 $665.00 per 50 LF roll."
+},
+"Coping metal": {
+"src": "t03",
+"product": null,
+"unit": "sheet",
+"price": null,
+"note": "not priced yet \u2014 set the product and price the first time a job needs it."
+},
+"Coping cleat": {
+"src": "t03",
+"product": null,
+"unit": "sheet",
+"price": null,
+"note": "not priced yet \u2014 set the product and price the first time a job needs it."
+},
+"Gravel stop metal": {
+"src": "t03",
+"product": "24g Kynar flat  4 x 10",
+"unit": "sheet",
+"price": 80.0,
+"note": "QXO / metal supplier \u2014 not on Blake's sheet"
+},
+"Gravel stop cleat": {
+"src": "t03",
+"product": "MAJ G90 20GA GALVANIZED 4 x 10 \u2014 QXO MAJ20G90",
+"unit": "sheet",
+"price": 58.5,
+"note": "QXO MAJ20G90 \u2014 not on Blake's sheet"
+},
+"Counter flashing metal": {
+"src": "t03",
+"product": null,
+"unit": "sheet",
+"price": null,
+"note": "not priced yet \u2014 set the product and price the first time a job needs it."
+},
+"Gutter metal": {
+"src": "t03",
+"product": null,
+"unit": "sheet",
+"price": null,
+"note": "not priced yet \u2014 set the product and price the first time a job needs it."
+},
+"Downspout metal": {
+"src": "t03",
+"product": "24g Kynar flat  4 x 10",
+"unit": "sheet",
+"price": 80.0,
+"note": "QXO / metal supplier \u2014 not on Blake's sheet"
+},
+"Scuppers": {
+"src": "t03",
+"product": null,
+"unit": "ea",
+"price": 200.0,
+"note": "FINAL all-in each (labor-loaded) \u2014 do NOT mark up.  Standing rule: $200 each, all-in."
+},
+"Collector heads": {
+"src": "t03",
+"product": null,
+"unit": "ea",
+"price": 300.0,
+"note": "FINAL all-in each (labor-loaded) \u2014 do NOT mark up.  Standing rule: $300 each, all-in."
+},
+"Material delivery": {
+"src": "t03",
+"product": "delivery truck",
+"unit": "delivery",
+"price": 200.0,
+"note": "$200 a delivery. One delivery every 50 squares, every bid."
+},
+"Metal delivery": {
+"src": "t03",
+"product": "delivery truck",
+"unit": "delivery",
+"price": 200.0,
+"note": "$200 a delivery. Normally ONE covers the metal."
+},
+"Coping metal  \u2014  prefab, per LF": {
+"src": "t03",
+"product": null,
+"unit": "LF",
+"price": null,
+"note": "not priced yet \u2014 the prefab price per LF; set it the first time a job buys this piece prefab."
+},
+"Gravel stop metal  \u2014  prefab, per LF": {
+"src": "t03",
+"product": null,
+"unit": "LF",
+"price": null,
+"note": "not priced yet \u2014 the prefab price per LF; set it the first time a job buys this piece prefab."
+},
+"Counter flashing metal  \u2014  prefab, per LF": {
+"src": "t03",
+"product": null,
+"unit": "LF",
+"price": null,
+"note": "not priced yet \u2014 the prefab price per LF; set it the first time a job buys this piece prefab."
+},
+"Gutter metal  \u2014  prefab, per LF": {
+"src": "t03",
+"product": null,
+"unit": "LF",
+"price": null,
+"note": "not priced yet \u2014 the prefab price per LF; set it the first time a job buys this piece prefab."
+},
+"Downspout metal  \u2014  prefab, per LF": {
+"src": "t03",
+"product": null,
+"unit": "LF",
+"price": null,
+"note": "not priced yet \u2014 the prefab price per LF; set it the first time a job buys this piece prefab."
+},
+"Counter flashing cleat": {
+"src": "t03",
+"product": "MAJ G90 20GA GALVANIZED 4 x 10 \u2014 QXO MAJ20G90",
+"unit": "sheet",
+"price": 58.5,
+"note": "QXO MAJ20G90 \u2014 not on Blake's sheet"
+},
+"TPO field membrane 10'": {
+"src": "t04",
+"product": "31012  GAF TPO .060 Wht 10'X100'  \u00b7  10 SQ/ROLL",
+"unit": "roll",
+"price": 710.0,
+"note": null
+},
+"Crickets  \u2014  Scuppers / Drains  \u00b7  Q board": {
+"src": "t04",
+"product": "11000  ISO Taper Panel Q (0.5\"-2.5\") 4x4  \u00b7  24 BDFT/EA",
+"unit": "board",
+"price": 14.28,
+"note": "$89.25/sq on the sheet"
+},
+"Crickets  \u2014  Units  \u00b7  Q board": {
+"src": "t04",
+"product": "11000  ISO Taper Panel Q (0.5\"-2.5\") 4x4  \u00b7  24 BDFT/EA",
+"unit": "board",
+"price": 14.28,
+"note": "$89.25/sq on the sheet"
+},
+"Insulation fasteners  #12": {
+"src": "t04",
+"product": "20012  GAF Drill-Tec 6\" #12 Fastener  \u00b7  1000/box",
+"unit": "box",
+"price": 321.7,
+"note": "6 in: 4.5 in ISO + 0.5 in wood deck + 1 in = 6 in"
+},
+"Seam fasteners  #15  \u2014  5\"": {
+"src": "t04",
+"product": "20037  GAF Drill-Tec 5\" #15 Washer Head Fastener  \u00b7  #3 Phillips  \u00b7  500/EA",
+"unit": "box",
+"price": 192.69,
+"note": "PACK IS 500, not 1000. The sheet was built on 1000 \u2014 corrected."
+},
+"Crickets  \u2014  Scuppers / Drains  \u00b7  2\u2033 fill board  4 ft x 4 ft": {
+"src": "t04",
+"product": "12010  Insulation ISO 2.0\" (LTTR 11.4) 4x4 Fill  \u00b7  32 BDFT/EA",
+"unit": "board",
+"price": 13.6,
+"note": null
+},
+"Retro drains": {
+"src": "t04",
+"product": "retro drain",
+"unit": "ea",
+"price": 300.0,
+"note": "ESTIMATE \u2014 not a quoted price. Confirm before this bid goes out."
+},
+"2 x 8 nailer": {
+"src": "t04",
+"product": "2 x 8 pressure-treated, 10 ft boards",
+"unit": "LF",
+"price": 1.0,
+"note": "lumber yard"
+},
+"7/16\" OSB  \u2014  wall face": {
+"src": "t04",
+"product": "7/16\" OSB 4 x 8",
+"unit": "sheet",
+"price": 15.0,
+"note": "lumber yard"
+},
+"Fasteners  3\" #14  \u2014  blocking & sheathing": {
+"src": "t04",
+"product": "20018  GAF Drill-Tec 3\" #14 Fastener  \u00b7  #3 Phillips  \u00b7  1000/EA",
+"unit": "box",
+"price": 218.94,
+"note": null
+},
+"Seam fasteners  #15  \u2014  7\"": {
+"src": "t04",
+"product": "20039  GAF Drill-Tec 7\" #15 Washer Head Fastener  \u00b7  #3 Phillips  \u00b7  500/EA",
+"unit": "box",
+"price": 369.73,
+"note": "for the crickets"
+},
+"Seam fasteners  #15  \u2014  8\"": {
+"src": "t04",
+"product": "20040  GAF Drill-Tec 8\" #15 Washer Head Fastener  \u00b7  #3 Phillips  \u00b7  500/EA",
+"unit": "box",
+"price": 449.6,
+"note": "for the crickets"
+},
+"Fasteners  3\" #14  \u2014  wall + base flashing plates": {
+"src": "t04",
+"product": "20018  GAF Drill-Tec 3\" #14 Fastener  \u00b7  #3 Phillips  \u00b7  1000/EA",
+"unit": "box",
+"price": 218.94,
+"note": "3 in. #14 for the wood wall and base-flashing plates"
+},
+"Tapered ISO  \u2014  X": {
+"src": "t05",
+"product": "11001 GAF ISO Taper Panel X (0.5\u2033\u20131.5\u2033) 4x4",
+"unit": "board",
+"price": null,
+"note": "not priced yet \u2014 get the price for this panel the first time a job needs it."
+},
+"Tapered ISO  \u2014  Y": {
+"src": "t05",
+"product": "11002 GAF ISO Taper Panel Y (1.5\u2033\u20132.5\u2033) 4x4",
+"unit": "board",
+"price": null,
+"note": "not priced yet \u2014 get the price for this panel the first time a job needs it."
+},
+"Tapered ISO  \u2014  2\" flat (4x4)": {
+"src": "t05",
+"product": "12010  Insulation ISO 2.0\" (LTTR 11.4) 4x4 Fill  \u00b7  32 BDFT/EA",
+"unit": "board",
+"price": 13.6,
+"note": null
+},
+"Tapered ISO  \u2014  4\" flat (4x4)": {
+"src": "t05",
+"product": "12031  ISO 4.0\u2033 4x8, cut to 4x4",
+"unit": "board",
+"price": 27.2,
+"note": null
+},
+"Fasteners  \u2014  3\u2033 #14  (field + walls)": {
+"src": "t05",
+"product": "20018  GAF Drill-Tec 3\" #14 Fastener  \u00b7  #3 Phillips  \u00b7  1000/EA",
+"unit": "box",
+"price": 218.94,
+"note": null
+},
+"Fasteners  \u2014  field 5\u2033": {
+"src": "t05",
+"product": "20020 GAF Drill-Tec 5\u2033 #14 (500/box)",
+"unit": "box",
+"price": null,
+"note": "not priced yet \u2014 set the price the first time a job needs it."
+},
+"Fasteners  \u2014  field 6\u2033": {
+"src": "t05",
+"product": "20021 GAF Drill-Tec 6\u2033 #14 (500/box)",
+"unit": "box",
+"price": null,
+"note": "not priced yet \u2014 set the price the first time a job needs it."
+},
+"Tapered ISO  \u2014  AA": {
+"src": "t06",
+"product": "11004 GAF ISO Taper Panel AA (0.5\u2033\u20131.0\u2033) 4x4",
+"unit": "board",
+"price": 7.14,
+"note": null
+},
+"Tapered ISO  \u2014  A": {
+"src": "t06",
+"product": "11003 GAF ISO Taper Panel A (1.0\u2033\u20131.5\u2033) 4x4",
+"unit": "board",
+"price": 11.9,
+"note": null
+},
+"Tapered ISO  \u2014  B": {
+"src": "t06",
+"product": "11005 GAF ISO Taper Panel B (1.5\u2033\u20132.0\u2033) 4x4",
+"unit": "board",
+"price": 16.66,
+"note": null
+},
+"Tapered ISO  \u2014  C": {
+"src": "t06",
+"product": "11006 GAF ISO Taper Panel C (2.0\u2033\u20132.5\u2033) 4x4",
+"unit": "board",
+"price": 21.42,
+"note": null
+},
+"Polyiso  \u2014  under kickers": {
+"src": "t07",
+"product": "12004  Insulation ISO 1.6\" (LTTR 9.4) 4x8  \u00b7  51 BDFT/EA",
+"unit": "board",
+"price": 21.76,
+"note": "$68.00/sq on the sheet"
+},
+"Rhinobond plates": {
+"src": "t02",
+"product": "Rhinobond plates \u2014 item no., pack size (sheet assumes 500 a box) and price still to get from the supplier",
+"unit": "box",
+"price": null,
+"note": "NOT PRICED YET \u2014 the Material Order Rhinobond line stays blank until the price goes in here."
+}
+}
