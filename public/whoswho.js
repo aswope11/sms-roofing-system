@@ -31,7 +31,7 @@ export async function whosWhoPage() {
     <div class="card">
       <h2>Check it against QuickBooks</h2>
       <p class="help">Read-only. For each company: one open ticket is run through the map (where it would land), and every open invoice is read back from QuickBooks and compared to its row. Nothing is written.</p>
-      <div class="actions" style="display:flex;gap:8px;flex-wrap:wrap"><button class="ghost" id="ww-test">Check QuickBooks</button><button class="ghost" id="ww-re">Re-check from the app</button><button id="ww-fix">Fix the 8 loose tenants in QuickBooks</button></div>
+      <div class="actions" style="display:flex;gap:8px;flex-wrap:wrap"><button class="ghost" id="ww-test">Check QuickBooks</button><button class="ghost" id="ww-re">Re-check from the app</button><button id="ww-fix">Fix the 8 loose tenants in QuickBooks</button><button id="ww-pay">Re-apply Burrito Bar $3,000 payment to #4363</button></div>
       <p class="help">Fix button: Burrito Bar, Reformed Pilates, 4Korners, Elegant Dentistry (→ Four Corners), Bellezza, Scrambler, Lake Highlands Cafe, MKOA go under their building. Old tenant moves under the building if QuickBooks allows; if not, a tenant under the building gets only the open invoices. Nothing is deleted.</p>
       <div id="ww-out"></div>
     </div>`;
@@ -45,6 +45,11 @@ export async function whosWhoPage() {
   document.getElementById('ww-fix').onclick = async ev => {
     ev.target.disabled = true; const out = document.getElementById('ww-out'); out.innerHTML = '<div class="mute">Fixing in QuickBooks — about a minute…</div>';
     try { const r = await call('/w/whoswho/fix-qb', { method: 'POST' }); out.innerHTML = r.lines.map(l => `<div class="row"><span>${esc(l)}</span></div>`).join(''); toast('QuickBooks fix ran — every step listed below'); }
+    catch (e) { out.innerHTML = `<div class="err">${esc(e.message)}</div>`; ev.target.disabled = false; }
+  };
+  document.getElementById('ww-pay').onclick = async ev => {
+    ev.target.disabled = true; const out = document.getElementById('ww-out'); out.innerHTML = '<div class="mute">Working in QuickBooks…</div>';
+    try { const r = await call('/w/whoswho/fix-payment', { method: 'POST' }); out.innerHTML = r.lines.map(l => `<div class="row"><span>${esc(l)}</span></div>`).join(''); }
     catch (e) { out.innerHTML = `<div class="err">${esc(e.message)}</div>`; ev.target.disabled = false; }
   };
   document.getElementById('ww-test').onclick = async ev => {

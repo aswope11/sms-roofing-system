@@ -1999,6 +1999,36 @@ export default async function handler(req: Request) {
         return json({ rows, companies: meta.find((x: any) => x.k === "companies")?.v || {}, built: meta.find((x: any) => x.k === "built") || null, log, pre });
       }
       if (idRaw === "prefill" && m === "POST") return json(await whoswhoPrefill(sql));
+      // RE-APPLY A PAYMENT THE SPOT FIX UNHOOKED (10/12/26, his approval "approved"): moving #4363 to the new Burrito Bar tenant
+      // left its $3,000 payment on the old customer, unapplied. His tap moves that payment to the invoice's customer and applies it.
+      // Only touches a payment that is fully unapplied and on the invoice's old customer; anything else is reported, not changed.
+      if (idRaw === "fix-payment" && m === "POST") {
+        const lines: string[] = [];
+        const log = async (t: string) => { lines.push(t); await sql`INSERT INTO whoswho_log (row_id, what) VALUES (NULL, ${"QB FIX: " + t})`; };
+        const FIX = { invoice: "4363", oldCustomer: "1480 N. Custer Rd Ste 140 - Burrito Bar" };
+        const inv = ((await qbQuery(`SELECT * FROM Invoice WHERE DocNumber = '${qEsc(FIX.invoice)}'`)).Invoice || [])[0];
+        if (!inv) { await log(`#${FIX.invoice} not found`); return json({ lines }); }
+        const old = ((await qbQuery(`SELECT * FROM Customer WHERE DisplayName = '${qEsc(FIX.oldCustomer)}'`)).Customer || [])[0];
+        if (!old) { await log(`old customer "${FIX.oldCustomer}" not found`); return json({ lines }); }
+        const pays = (await qbQuery(`SELECT * FROM Payment WHERE CustomerRef = '${qEsc(old.Id)}'`)).Payment || [];
+        const free = pays.filter((p: any) => Number(p.UnappliedAmt || 0) > 0 && !(p.Line || []).some((l: any) => (l.LinkedTxn || []).length));
+        if (!free.length) { await log(`no unapplied payment on "${old.DisplayName}" — found ${pays.length} payment(s), all applied; nothing changed`); return json({ lines }); }
+        let bal = Number(inv.Balance || 0);
+        for (const p of free) {
+          if (!(bal > 0)) break;
+          const amt = Math.min(Number(p.TotalAmt || 0), bal);
+          if (amt < Number(p.TotalAmt || 0)) { await log(`payment ${p.PaymentRefNum || p.Id} ($${p.TotalAmt}) is bigger than #${FIX.invoice}'s balance $${bal} — left alone`); continue; }
+          try {
+            await qb("POST", "payment", { Id: p.Id, SyncToken: p.SyncToken, sparse: true, CustomerRef: { value: inv.CustomerRef.value },
+              Line: [{ Amount: amt, LinkedTxn: [{ TxnId: inv.Id, TxnType: "Invoice" }] }] });
+            bal = Math.round((bal - amt) * 100) / 100;
+            await log(`payment ${p.PaymentRefNum || p.Id} ($${amt}, ${p.TxnDate}) moved to "${inv.CustomerRef.name}" and applied to #${FIX.invoice}`);
+          } catch (e: any) { await log(`payment ${p.PaymentRefNum || p.Id} could not be moved — ${String(e?.message || e)}`); }
+        }
+        const back = (await qb("GET", `invoice/${inv.Id}`)).Invoice;
+        await log(`read back: #${FIX.invoice} open balance $${back.Balance} (was $${inv.Balance})`);
+        return json({ lines });
+      }
       if (idRaw === "fix-qb" && m === "POST") {
         const lines: string[] = [];
         const log = async (t: string) => { lines.push(t); await sql`INSERT INTO whoswho_log (row_id, what) VALUES (NULL, ${"QB FIX: " + t})`; };
