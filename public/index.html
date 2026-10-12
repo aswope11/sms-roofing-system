@@ -9,6 +9,7 @@
 </head>
 <body>
 <header>
+  <button id="backBtn" class="backbtn" type="button" aria-label="Back" title="Back">&#8249;</button>
   <a href="#/" class="brand">SMS Roofing &amp; Waterproofing</a>
   <input id="search" type="search" placeholder="Search customer, address, tenant, city">
 </header>
@@ -26,6 +27,7 @@
 <div id="crumbs"></div>
 <main id="app"></main>
 <div id="toast"></div>
+<script>document.getElementById('backBtn').onclick = () => { if (history.length > 1) history.back(); else location.hash = '#/'; };</script>
 <script type="module" src="app.js"></script>
 </body>
 </html>
