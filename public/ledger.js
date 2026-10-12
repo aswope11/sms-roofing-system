@@ -35,10 +35,6 @@ export async function renderTicket(jobId, mount) {
         const tot = round2(sent.reduce((a, i) => a + Number(i.amount), 0));
         return `<div style="margin-top:12px"><h3 style="margin:0 0 6px">Invoices sent</h3>${sent.map(i => `<div>Invoice ${esc(i.number)} · ${money(i.amount)} · sent ${shortDate(i.sent_at)}${i.paid_at ? ' · paid' : ''} ${qbPdfLink(i)}</div>`).join('')}<div style="margin-top:6px"><b>Total sent: ${money(tot)}</b></div></div>`;
       })()}
-      ${L.shares && L.shares.length ? `<div style="margin-top:12px"><h3 style="margin:0 0 6px">Logged <a href="#/jobcost/${jobId}/labor">Labor detail ›</a></h3>${
-        Object.entries(L.shares.reduce((g, s) => { (g[s.work_date] ||= []).push(s); return g; }, {})).sort((a, b) => a[0] < b[0] ? 1 : -1).map(([d, rows]) =>
-          `<div><b>${shortDate(d)}</b> — ${rows.map(s => `${esc(s.man)} ${Number(s.days) === 0.5 ? 'half' : 'full'}${s.day_scope ? ' · ' + esc(s.day_scope) : ''} · ${money(s.cost)}`).join('; ')}</div>`).join('')
-        }${L.material && L.material.length ? `<div class="mute" style="margin-top:4px">Material ${L.material.map(m => `${esc(m.house || '')} ${money(m.line_total)}`).join(' · ')}</div>` : ''}</div>` : ''}
       <div class="btnrow" style="margin-top:14px">
         ${!j.done_at ? '<button id="done">Complete</button>' : '<button class="ghost" id="reopen">Reopen — put it back on the schedule</button>'}
         ${j.done_at && !j.tabled_at ? '<button class="ghost" id="table">Table it — not billing yet</button>' : ''}

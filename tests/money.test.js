@@ -506,7 +506,8 @@ test('DELETE: every delete lives in one place, asks first, and never calls Quick
   const inv = readFileSync('public/invoicing.js', 'utf8');
   assert.ok(inv.includes('#/jobcost/${o.job.id}/labor') && inv.includes('l.how'));
   const led = readFileSync('public/ledger.js', 'utf8');
-  assert.ok(led.includes('Labor detail') && led.includes('qb_errors') && led.includes('HEADS UP'));
+  assert.ok(led.includes('qb_errors') && led.includes('HEADS UP'));
+  assert.ok(!led.includes('Labor detail') && !/L\.shares\s*&&\s*L\.shares\.length/.test(led), 'no labor on the main ticket card — job cost sheet only');
 });
 
 test('LAW bids (half 1): only what he owes is chased — 3 days then 1 day then due then late; a sent bid is filed, not chased; awarded is off the list', () => {
