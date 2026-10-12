@@ -13,6 +13,7 @@ import * as M from "../../lib/money.js";
 import * as Q from "../../lib/qb-pdf.js";
 import * as AR from "../../lib/qb-ar.js";
 import * as L from "../../lib/qb-layers.js";
+import * as W from "../../lib/whoswho.js";
 import { repushReason } from "../../lib/mail-label.js";
 import * as TALK from "../../lib/bidtalk.js";
 import { addressKey, chunkCount, CHUNK_BYTES } from "../../lib/rules.js";
@@ -99,30 +100,140 @@ const qbLayerApi = {
   get: async (id: string) => (await qb("GET", `customer/${id}`)).Customer,
   create: async (payload: any) => (await qb("POST", "customer", payload)).Customer,
 };
-async function qbCustomerFor(job: any, sql?: any) {
-  // SAME BUILDING, SAME TENANT → SAME QB CUSTOMER (10/8/26): White Lion and 1710 Greenville landed on the wrong customer because
-  // the name lookup missed "Reid Gormely - 4916 White Lion" / "Cook Children's Pediatrics-1710…". Whatever customer this
-  // building + tenant was already invoiced under in QuickBooks wins over any name lookup.
-  let companyId: string | null = null;
-  if (sql) {
-    const tenant = String(job.tenant || "").trim().toLowerCase();
-    const prior = norm(await sql`SELECT i.qb_id, COALESCE(NULLIF(j.tenant_name, ''), p.tenant, '') AS tenant, j.property_id
-      FROM invoices i JOIN jobs j ON j.id = i.job_id JOIN properties p ON p.id = j.property_id
-      WHERE p.customer_id = ${job.customer_id} AND COALESCE(i.qb_id, '') <> '' AND j.id <> ${job.id} ORDER BY i.id DESC LIMIT 40`);
-    const same = prior.filter((r: any) => r.property_id === job.property_id && String(r.tenant || "").trim().toLowerCase() === tenant);
-    for (const r of same.slice(0, 3)) {
-      try { const c = (await qb("GET", `invoice/${r.qb_id}`)).Invoice?.CustomerRef; if (c?.value) return { Id: c.value, DisplayName: c.name || "" }; } catch { /* next */ }
-    }
-    // The company layer = the top of the tree his other jobs for this company already sit in (Wortham Bros., Inc. ≠ "Wortham Brothers Roofing").
-    for (const r of prior.slice(0, 5)) {
-      try {
-        const cid = (await qb("GET", `invoice/${r.qb_id}`)).Invoice?.CustomerRef?.value;
-        const top = cid ? await L.rootOf(qbLayerApi, cid) : null;
-        if (top && top.Id !== cid) { companyId = top.Id; break; }
-      } catch { /* next */ }
-    }
+// ================= WHO'S WHO (10/11/26, his order: "The app must never guess again.") =================
+// Every ticket/invoice is matched to ONE row of the locked customer map (lib/whoswho.js) before anything goes to QuickBooks.
+// Confirmed match → that row's QuickBooks customer and Bill To, no exceptions. No confirmed match → STOP: the ticket goes on
+// the Who's Who popup for him and nothing is written. The app never creates a QuickBooks customer on its own.
+// (The old guess — past placeholder, name lookup, placeCustomer — is gone from every write path.)
+const mapTicket = (job: any) => ({ property_id: job.property_id, address: job.address, city: job.city, tenant: job.tenant });
+async function mapDecisionFor(sql: any, job: any) {
+  return W.mapDecision(norm(await sql`SELECT * FROM whoswho`), mapTicket(job));
+}
+// Bill To comes from the map row (it is what he confirmed) — billTo() reads the job's own bill_name first.
+const withMapBill = (job: any, row: any) => row && String(row.bill_name || "").trim() ? { ...job, bill_name: row.bill_name, bill_addr: row.bill_addr } : job;
+async function qbCustomerFor(job: any, sql: any) {
+  const d = await mapDecisionFor(sql, job);
+  if (d.ok) return { Id: String(d.row.qb_customer_id), DisplayName: d.row.qb_path, row: d.row };
+  await sql`INSERT INTO whoswho_ask (job_id, why) VALUES (${job.id}, ${d.why}) ON CONFLICT (job_id) DO UPDATE SET why = EXCLUDED.why, asked_at = NOW()`;
+  throw new Error(`WHO'S WHO — STOPPED: ${M.ticketName(job)} (ticket #${job.id}): ${d.why}. Nothing went to QuickBooks. Answer the Who's Who popup and it goes.`);
+}
+// Every active QuickBooks customer (read-only).
+async function qbAllCustomers() {
+  const out: any[] = [];
+  for (let start = 1; start < 10000; start += 1000) {
+    const page = (await qbQuery(`SELECT * FROM Customer WHERE Active = true STARTPOSITION ${start} MAXRESULTS 1000`)).Customer || [];
+    out.push(...page);
+    if (page.length < 1000) break;
   }
-  return await L.placeCustomer(job, qbLayerApi, { companyId });
+  return out;
+}
+// QuickBooks invoices by Id, read in batches (read-only).
+async function qbInvoicesById(ids: string[]) {
+  const out: any[] = [];
+  const uniq = [...new Set(ids.filter(Boolean).map(String))];
+  for (let i = 0; i < uniq.length; i += 100) {
+    const list = uniq.slice(i, i + 100).map(x => `'${qEsc(x)}'`).join(",");
+    out.push(...((await qbQuery(`SELECT * FROM Invoice WHERE Id IN (${list}) MAXRESULTS 1000`)).Invoice || []));
+  }
+  return out;
+}
+// OUTSTANDING = an open ticket, or an unsent / unpaid invoice (placeholder or real) still carrying money. Bids never count.
+const OUTSTANDING_JOBS = (sql: any) => sql`${JOB_COLS(sql)} WHERE j.tag <> 'BID' AND (j.done_at IS NULL OR EXISTS (
+  SELECT 1 FROM invoices i WHERE i.job_id = j.id AND i.amount > 0 AND i.paid_at IS NULL AND i.zeroed_by IS NULL))`;
+// What the map needs to know about one location (building + tenant), from everything already in the app.
+function locFrom(job: any, invCust: string[], mail: string[]) {
+  return { property_id: job.property_id, customer_id: job.customer_id, company: job.customer_name, qb_parent: job.c_qb_parent,
+    address: job.address, city: job.city, tenant: String(job.tenant || "").trim(), suite: "",
+    p_bill_name: job.bill_name, p_bill_addr: job.bill_addr, c_bill_name: job.c_bill_name, c_bill_addr: job.c_bill_addr,
+    gc: job.gc, mail_from: mail, invoice_customer_ids: invCust };
+}
+// PRE-FILL (his order: "pre-fill the map yourself from everything already in the app … mark those rows CONFIRMED").
+// Only customers with something outstanding. A confirmed row is never touched here — only he changes it.
+async function whoswhoPrefill(sql: any) {
+  const custs = await qbAllCustomers();
+  const idx = W.qbIndex(custs);
+  const open = norm(await OUTSTANDING_JOBS(sql));
+  const locs = new Map<string, any>();
+  for (const j of open) {
+    const k = `${j.property_id}|${W.tenantKey(j.tenant)}`;
+    if (!locs.has(k)) locs.set(k, j);
+  }
+  const pids = [...new Set(open.map((j: any) => Number(j.property_id)))];
+  // Every invoice ever written at these buildings (open or closed) — where his past invoices actually sit in QuickBooks.
+  const invs = pids.length ? norm(await sql`SELECT i.qb_id, i.created_at, j.id AS job_id, j.property_id, COALESCE(NULLIF(j.tenant_name, ''), p.tenant, '') AS tenant
+    FROM invoices i JOIN jobs j ON j.id = i.job_id JOIN properties p ON p.id = j.property_id
+    WHERE j.property_id = ANY(${pids}::int[]) AND COALESCE(i.qb_id, '') <> ''`) : [];
+  const qbInv = new Map((await qbInvoicesById(invs.map((i: any) => i.qb_id))).map((x: any) => [String(x.Id), String(x.CustomerRef?.value || "")]));
+  const jobIds = pids.length ? norm(await sql`SELECT id, property_id, COALESCE(NULLIF(tenant_name, ''), '') AS tenant FROM jobs WHERE property_id = ANY(${pids}::int[])`) : [];
+  const mail = jobIds.length ? norm(await sql`SELECT job_id, from_addr FROM mail_items WHERE job_id = ANY(${jobIds.map((x: any) => x.id)}::int[]) AND COALESCE(from_addr, '') <> '' ORDER BY sent_at DESC NULLS LAST`) : [];
+  const out: any[] = [];
+  for (const [k, j] of locs) {
+    const tk = W.tenantKey(j.tenant);
+    const myInv = invs.filter((i: any) => Number(i.property_id) === Number(j.property_id) && W.tenantKey(i.tenant) === tk).map((i: any) => qbInv.get(String(i.qb_id)) || "").filter(Boolean);
+    const myJobs = new Set(open.filter((o: any) => `${o.property_id}|${W.tenantKey(o.tenant)}` === k).map((o: any) => Number(o.id)));
+    const myMail = mail.filter((x: any) => myJobs.has(Number(x.job_id))).map((x: any) => x.from_addr);
+    const r = W.prefillRow(locFrom(j, myInv, myMail), idx);
+    const w = r.row;
+    const [saved] = norm(await sql`INSERT INTO whoswho (customer_id, property_id, tenant, tenant_key, building, city, suite, bill_name, bill_addr, called_in,
+        qb_customer_id, qb_path, building_qb_id, building_qb_path, status, conflicts, sources, notes, confirmed_by, confirmed_at, updated_at)
+      VALUES (${w.customer_id}, ${w.property_id}, ${w.tenant}, ${w.tenant_key}, ${w.building}, ${w.city}, ${w.suite}, ${w.bill_name}, ${w.bill_addr}, ${w.called_in},
+        ${w.qb_customer_id}, ${w.qb_path}, ${w.building_qb_id}, ${w.building_qb_path}, ${w.status}, ${JSON.stringify(r.conflicts)}::jsonb, ${JSON.stringify(r.sources)}::jsonb, ${JSON.stringify(r.notes)}::jsonb,
+        ${w.status === "confirmed" ? "pre-filled from the app" : ""}, ${w.status === "confirmed" ? new Date().toISOString() : null}, NOW())
+      ON CONFLICT (property_id, tenant_key) DO UPDATE SET customer_id = EXCLUDED.customer_id, tenant = EXCLUDED.tenant, building = EXCLUDED.building, city = EXCLUDED.city,
+        suite = EXCLUDED.suite, bill_name = EXCLUDED.bill_name, bill_addr = EXCLUDED.bill_addr, called_in = EXCLUDED.called_in, qb_customer_id = EXCLUDED.qb_customer_id,
+        qb_path = EXCLUDED.qb_path, building_qb_id = EXCLUDED.building_qb_id, building_qb_path = EXCLUDED.building_qb_path, status = EXCLUDED.status,
+        conflicts = EXCLUDED.conflicts, sources = EXCLUDED.sources, notes = EXCLUDED.notes, confirmed_by = EXCLUDED.confirmed_by, confirmed_at = EXCLUDED.confirmed_at, updated_at = NOW()
+      WHERE whoswho.status <> 'confirmed'
+      RETURNING *`);
+    if (saved) out.push(saved);
+  }
+  // Per company: its QuickBooks tree (for picking a customer) and the flags (duplicates, loose tenants, buildings with no parent).
+  const companies: any = {};
+  const byCo = new Map<number, any[]>();
+  for (const j of locs.values()) { const a = byCo.get(Number(j.customer_id)) || []; a.push(j); byCo.set(Number(j.customer_id), a); }
+  for (const [cid, js] of byCo) {
+    const j0 = js[0];
+    const rule = W.KNOWN.billing.find((b: any) => b.company.test(String(j0.customer_name || "")));
+    const rootName = rule?.qbParent || String(j0.c_qb_parent || "").trim() || j0.customer_name;
+    const root = idx.byName(rootName);
+    const keys = js.map((x: any) => W.canonicalBuilding(x.address, x.city));
+    const tree = custs.filter((c: any) => (root && String(idx.root(c)?.Id) === String(root.Id)) || keys.includes(W.canonicalBuilding(W.parseQbName(c.DisplayName).building)))
+      .map((c: any) => ({ id: String(c.Id), path: idx.path(c) })).sort((a: any, b: any) => a.path.localeCompare(b.path)).slice(0, 600);
+    companies[cid] = { root: root ? idx.path(root) : "", tree, flags: W.qbFlags(custs, keys) };
+  }
+  await sql`INSERT INTO whoswho_meta (k, v, at) VALUES ('companies', ${JSON.stringify(companies)}::jsonb, NOW()) ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v, at = NOW()`;
+  await sql`INSERT INTO whoswho_meta (k, v, at) VALUES ('built', ${JSON.stringify({ at: new Date().toISOString(), locations: locs.size })}::jsonb, NOW()) ON CONFLICT (k) DO NOTHING`;
+  return { locations: locs.size, updated: out.length };
+}
+// The map row for one ticket's location, as HE answered it (popup / screen). Who pays + called in come from the app; the
+// QuickBooks spot is his tap. "New tenant under building X" makes that one tenant customer, on his say-so — never on the app's own.
+async function whoswhoAnswer(sql: any, job: any, qbCustomerId: string, newUnder: string, by: string) {
+  let cust: any;
+  if (newUnder) {
+    if (!String(job.tenant || "").trim()) throw new Error("This ticket has no tenant — pick the building itself instead.");
+    const name = W.newTenantName(job.address, job.tenant);
+    const parent = (await qb("GET", `customer/${newUnder}`)).Customer;
+    const have = ((await qbQuery(`SELECT * FROM Customer WHERE DisplayName = '${qEsc(name)}'`)).Customer || [])[0];
+    cust = have || (await qb("POST", "customer", { DisplayName: name, ParentRef: { value: parent.Id }, Job: true, BillWithParent: false })).Customer;
+    cust = (await qb("GET", `customer/${cust.Id}`)).Customer;                    // read it back from QuickBooks
+    if (String(cust?.ParentRef?.value || "") !== String(parent.Id)) throw new Error(`"${name}" is in QuickBooks but not under ${parent.DisplayName} — check it there.`);
+  } else cust = (await qb("GET", `customer/${qbCustomerId}`)).Customer;
+  if (!cust) throw new Error("That QuickBooks customer wasn't found.");
+  const path = String(cust.FullyQualifiedName || cust.DisplayName).split(":").map((x: string) => x.trim()).join(" › ");
+  const base = W.prefillRow(locFrom(job, [], []), W.qbIndex([])).row;
+  const tk = W.tenantKey(job.tenant);
+  const [old] = norm(await sql`SELECT * FROM whoswho WHERE property_id = ${job.property_id} AND tenant_key = ${tk}`);
+  const bill_name = old?.bill_name || base.bill_name, bill_addr = old?.bill_addr || base.bill_addr, called_in = old?.called_in || base.called_in;
+  const [row] = norm(await sql`INSERT INTO whoswho (customer_id, property_id, tenant, tenant_key, building, city, suite, bill_name, bill_addr, called_in, qb_customer_id, qb_path,
+      building_qb_id, building_qb_path, status, conflicts, confirmed_by, confirmed_at, updated_at)
+    VALUES (${job.customer_id}, ${job.property_id}, ${String(job.tenant || "").trim()}, ${tk}, ${base.building}, ${base.city}, ${base.suite}, ${bill_name}, ${bill_addr}, ${called_in},
+      ${String(cust.Id)}, ${path}, ${newUnder || old?.building_qb_id || ""}, ${old?.building_qb_path || ""}, 'confirmed', '[]'::jsonb, ${by}, NOW(), NOW())
+    ON CONFLICT (property_id, tenant_key) DO UPDATE SET qb_customer_id = EXCLUDED.qb_customer_id, qb_path = EXCLUDED.qb_path, bill_name = EXCLUDED.bill_name, bill_addr = EXCLUDED.bill_addr,
+      called_in = EXCLUDED.called_in, status = 'confirmed', conflicts = '[]'::jsonb, confirmed_by = EXCLUDED.confirmed_by, confirmed_at = NOW(), updated_at = NOW()
+    RETURNING *`);
+  await sql`INSERT INTO whoswho_log (row_id, what) VALUES (${row.id}, ${`${by}: ticket #${job.id} → ${path}`})`;
+  await sql`DELETE FROM whoswho_ask WHERE job_id = ${job.id}`;
+  return row;
 }
 async function qbNextNumber() {
   const rows = (await qbQuery("SELECT DocNumber FROM Invoice ORDERBY MetaData.CreateTime DESC MAXRESULTS 100")).Invoice || [];
@@ -167,7 +278,7 @@ const noteFits = (job: any, scope: string, date?: string) => scopeInNote(job) &&
 //   4. Ship To = tenant, then job address             (fixed)
 //   5. the same scope never in both the line and the bottom-left note (flagged)
 //   6. the QuickBooks customer is this building       (flagged — never moved by the checker)
-async function checkInvoiceQB(qbId: string, job: any, kind = "real") {
+async function checkInvoiceQB(qbId: string, job: any, kind = "real", mapRow: any = null) {
   const fixed: string[] = [], problems: string[] = [];
   const cur = (await qb("GET", `invoice/${qbId}`)).Invoice;
   if (!cur) return { fixed, problems: ["not found in QuickBooks"] };
@@ -193,16 +304,38 @@ async function checkInvoiceQB(qbId: string, job: any, kind = "real") {
     const dup = (cur.Line || []).some((ln: any) => String(ln.Description || "").split("\n").some((x: string) => memoLines.has(x.replace(/^[\s•\-*]+/, "").trim().toLowerCase())));
     if (dup) problems.push("the same scope is in the line AND the bottom-left note — take it out of one");
   }
-  const addrKey = String(job.address || "").trim().toLowerCase().split(/[\s,.#]+/).slice(0, 2).join(" ");
-  const custName = String(cur.CustomerRef?.name || "").toLowerCase().replace(/[,.#]/g, " ").replace(/\s+/g, " ");
-  if (addrKey && !custName.includes(addrKey)) problems.push(`QuickBooks customer "${cur.CustomerRef?.name}" doesn't look like ${job.address}`);
+  // 6. WHO'S WHO (10/11/26): the QuickBooks customer must be the map row's. Never moved by the checker.
+  let moved: any = null;
+  if (mapRow && mapRow.status === "confirmed" && String(mapRow.qb_customer_id || "")) {
+    if (String(cur.CustomerRef?.value || "") !== String(mapRow.qb_customer_id)) moved = { id: String(cur.CustomerRef?.value || ""), name: String(cur.CustomerRef?.name || "") };
+  } else {
+    const addrKey = String(job.address || "").trim().toLowerCase().split(/[\s,.#]+/).slice(0, 2).join(" ");
+    const custName = String(cur.CustomerRef?.name || "").toLowerCase().replace(/[,.#]/g, " ").replace(/\s+/g, " ");
+    if (addrKey && !custName.includes(addrKey)) problems.push(`QuickBooks customer "${cur.CustomerRef?.name}" doesn't look like ${job.address}`);
+  }
   if (Object.keys(patch).length) await qb("POST", "invoice", { Id: cur.Id, SyncToken: cur.SyncToken, sparse: true, ...patch });
-  return { fixed, problems };
+  return { fixed, problems, moved };
 }
 async function checkAndRecord(sql: any, inv: any, job: any) {
   if (!inv?.qb_id) return { fixed: [], problems: [] };
   let r: any;
-  try { r = await checkInvoiceQB(String(inv.qb_id), job, inv.kind); } catch (e: any) { r = { fixed: [], problems: [`couldn't check: ${String(e?.message || e)}`] }; }
+  let row: any = null;
+  try { const d = await mapDecisionFor(sql, job); row = d.row || null; if (d.ok) job = withMapBill(job, d.row); } catch { row = null; }
+  try { r = await checkInvoiceQB(String(inv.qb_id), job, inv.kind, row); } catch (e: any) { r = { fixed: [], problems: [`couldn't check: ${String(e?.message || e)}`] }; }
+  // CORRECTIONS STICK (10/11/26): the app writes every invoice to the map's customer, so an invoice written AFTER the row was
+  // confirmed that now sits on another QuickBooks customer = he moved it. His move becomes the row — never the same mistake twice.
+  // An older invoice on the wrong customer is only flagged (the app never moves an invoice).
+  if (r.moved && row) {
+    const [ir] = norm(await sql`SELECT created_at FROM invoices WHERE id = ${inv.id}`);
+    const his = ir?.created_at && row.confirmed_at && String(ir.created_at) > String(row.confirmed_at) && r.moved.id;
+    if (his) {
+      let path = r.moved.name;
+      try { const c = (await qb("GET", `customer/${r.moved.id}`)).Customer; path = String(c?.FullyQualifiedName || c?.DisplayName || path).split(":").map((x: string) => x.trim()).join(" › "); } catch { /* keep the name */ }
+      await sql`UPDATE whoswho SET qb_customer_id = ${r.moved.id}, qb_path = ${path}, status = 'confirmed', confirmed_by = 'his move in QuickBooks', confirmed_at = NOW(), updated_at = NOW() WHERE id = ${row.id}`;
+      await sql`INSERT INTO whoswho_log (row_id, what) VALUES (${row.id}, ${`invoice #${inv.number} moved in QuickBooks: ${row.qb_path} → ${path} — saved as the rule`})`;
+      r.fixed.push(`Who's Who learned your move: ${path}`);
+    } else r.problems.push(`QuickBooks customer "${r.moved.name}" is not the Who's Who spot "${row.qb_path}"`);
+  }
   await sql`UPDATE invoices SET check_problems = ${r.problems.join(" · ")}, checked_at = NOW() WHERE id = ${inv.id}`;
   return r;
 }
@@ -217,12 +350,9 @@ async function pushInvoiceToQB(sql: any, invoiceId: number, job: any) {
     // 10/6/26, his order: it can NEVER hold up work complete — the QB invoice always gets written and the placeholder always zeroed.
     // SAME CUSTOMER AS ITS PLACEHOLDER (10/4/26): the real invoice goes to the QuickBooks customer its placeholder is already on.
     // A name lookup could miss a spelling (6101 Windhaven Pkwy vs Parkway) and make a duplicate customer; the placeholder never lies.
-    let cust: any = null;
-    const [phRow] = norm(await sql`SELECT qb_id FROM invoices WHERE job_id = ${inv.job_id} AND kind = 'placeholder' AND COALESCE(qb_id, '') <> '' ORDER BY id DESC LIMIT 1`);
-    if (phRow?.qb_id) {
-      try { const phInv = (await qb('GET', `invoice/${phRow.qb_id}`)).Invoice; if (phInv?.CustomerRef?.value) cust = { Id: phInv.CustomerRef.value, DisplayName: phInv.CustomerRef.name || '' }; } catch (e: any) { /* fall back to the lookup */ }
-    }
-    if (!cust) cust = await qbCustomerFor(job, sql);
+    // WHO'S WHO (10/11/26): the map row's QuickBooks customer and Bill To — no exceptions, no guessing.
+    const cust: any = await qbCustomerFor(job, sql);
+    job = withMapBill(job, cust.row);
     const DocNumber = await qbNextNumber();
     const made = (await qb("POST", "invoice", {
       CustomerRef: { value: cust.Id }, DocNumber, TxnDate: inv.inv_date, DueDate: inv.inv_date, PrivateNote: inv.memo, ...billTo(job), ...noPay(job),
@@ -379,10 +509,9 @@ async function pushPlaceholderToQB(sql: any, o: any, amount: number) {
   }
   // No open placeholder on this ticket → ONE new QuickBooks invoice. The customer follows THIS ticket: the customer its
   // earlier placeholders were on; else the lookup (a change order's own title before its parent job's).
-  let cust: any = null;
-  const [prev] = norm(await sql`SELECT qb_id FROM invoices WHERE job_id = ${o.job.id} AND kind = 'placeholder' AND COALESCE(qb_id, '') <> '' ORDER BY id DESC LIMIT 1`);
-  if (prev?.qb_id) { try { const pi = (await qb("GET", `invoice/${prev.qb_id}`)).Invoice; if (pi?.CustomerRef?.value) cust = { Id: pi.CustomerRef.value, DisplayName: pi.CustomerRef.name || "" }; } catch { cust = null; } }
-  if (!cust) { try { cust = await qbCustomerFor(o.job, sql); } catch (e: any) { throw new Error(`${label}: QuickBooks couldn't match a customer — ${String(e?.message || e)}`); } }
+  // WHO'S WHO (10/11/26): a new placeholder goes to the map row's QuickBooks customer — no match, no write.
+  let cust: any;
+  try { cust = await qbCustomerFor(o.job, sql); } catch (e: any) { throw new Error(`${label}: ${String(e?.message || e)}`); }
   const DocNumber = await qbNextNumber();
   const inv_date = M.addDays(o.work_date, 14);
   const memo = M.placeholderMemo(o.job, o.work_date);
@@ -1779,6 +1908,106 @@ export default async function handler(req: Request) {
     // CUSTOMER LAYERS (10/8/26): GET /w/qb-customer/:id → its full company › building › tenant name.
     // POST /w/qb-customer-create {name, parent_name} → a new building (or tenant) customer under its parent; an existing one is reused.
     // EVERY QUICKBOOKS CUSTOMER (10/9/26, read-only): GET /w/qb-customers → id, name, full name, parent, level, balance — for putting past customers in their layers.
+    // ================= WHO'S WHO — THE LOCKED CUSTOMER MAP (10/11/26) =================
+    // GET  /w/whoswho              → every row + per-company QuickBooks tree and flags (builds itself the first time)
+    // POST /w/whoswho/prefill      → re-check from the app; confirmed rows are never touched
+    // PUT  /w/whoswho/:id          → HIS confirm / fix (the only way a confirmed row ever changes)
+    // GET  /w/whoswho/ask          → tickets the app stopped on (the popup)
+    // POST /w/whoswho/answer       → his popup answer: {job_id, qb_customer_id} or {job_id, new_tenant_under}
+    // POST /w/whoswho/test         → read-only proof: one open ticket per company resolves to its spot; every outstanding invoice read back from QuickBooks vs the map
+    if (kind === "whoswho") {
+      const built = async () => (norm(await sql`SELECT v, at FROM whoswho_meta WHERE k = 'built'`)[0]?.v) || null;
+      if (m === "GET" && !idRaw) {
+        let pre: any = null;
+        if (!(await built())) { try { pre = await whoswhoPrefill(sql); } catch (e: any) { return refuse(`Couldn't build the map from QuickBooks: ${String(e?.message || e)}`, 502); } }
+        const rows = norm(await sql`SELECT w.*, c.name AS customer_name FROM whoswho w LEFT JOIN customers c ON c.id = w.customer_id ORDER BY c.name, w.building, w.tenant`);
+        const meta = norm(await sql`SELECT k, v, at FROM whoswho_meta`);
+        const log = norm(await sql`SELECT * FROM whoswho_log ORDER BY id DESC LIMIT 60`);
+        return json({ rows, companies: meta.find((x: any) => x.k === "companies")?.v || {}, built: meta.find((x: any) => x.k === "built") || null, log, pre });
+      }
+      if (idRaw === "prefill" && m === "POST") return json(await whoswhoPrefill(sql));
+      if (id && m === "PUT") {
+        const b = await body();
+        const [cur] = norm(await sql`SELECT * FROM whoswho WHERE id = ${id}`);
+        if (!cur) return refuse("That Who's Who row doesn't exist.", 404);
+        const next: any = { bill_name: cur.bill_name, bill_addr: cur.bill_addr, called_in: cur.called_in, qb_customer_id: cur.qb_customer_id, qb_path: cur.qb_path };
+        for (const f of ["bill_name", "bill_addr", "called_in"]) if (f in b) next[f] = String(b[f] ?? "").trim();
+        const changed: string[] = [];
+        if (b.new_tenant_under) {
+          const job = norm(await sql`${JOB_COLS(sql)} WHERE j.property_id = ${cur.property_id} ORDER BY j.id DESC`).find((j: any) => W.tenantKey(j.tenant) === cur.tenant_key);
+          if (!job) return refuse("No ticket at this spot to name the tenant from.");
+          const row = await whoswhoAnswer(sql, job, "", String(b.new_tenant_under), "him (Who's Who screen)");
+          next.qb_customer_id = row.qb_customer_id; next.qb_path = row.qb_path; changed.push(`new tenant customer ${row.qb_path}`);
+        } else if (b.qb_customer_id && String(b.qb_customer_id) !== String(cur.qb_customer_id)) {
+          const c = (await qb("GET", `customer/${String(b.qb_customer_id)}`)).Customer;
+          if (!c) return refuse("That QuickBooks customer wasn't found.");
+          next.qb_customer_id = String(c.Id); next.qb_path = String(c.FullyQualifiedName || c.DisplayName).split(":").map((x: string) => x.trim()).join(" › ");
+          changed.push(`QuickBooks spot → ${next.qb_path}`);
+        }
+        for (const f of ["bill_name", "bill_addr", "called_in"]) if (next[f] !== cur[f]) changed.push(`${f.replace("_", " ")} → ${next[f] || "(blank)"}`);
+        await sql`UPDATE whoswho SET bill_name = ${next.bill_name}, bill_addr = ${next.bill_addr}, called_in = ${next.called_in}, qb_customer_id = ${next.qb_customer_id}, qb_path = ${next.qb_path},
+          status = 'confirmed', conflicts = '[]'::jsonb, confirmed_by = 'him', confirmed_at = NOW(), updated_at = NOW() WHERE id = ${id}`;
+        await sql`INSERT INTO whoswho_log (row_id, what) VALUES (${id}, ${changed.length ? "fixed: " + changed.join(" · ") : "confirmed as shown"})`;
+        const [back] = norm(await sql`SELECT * FROM whoswho WHERE id = ${id}`);       // read back in a separate request
+        return json(back);
+      }
+      if (idRaw === "ask" && m === "GET") {
+        const b0 = await built();
+        if (!b0) return json({ asks: [] });
+        const rows = norm(await sql`SELECT * FROM whoswho`);
+        const asked = norm(await sql`SELECT job_id, why FROM whoswho_ask`);
+        // New tickets since the map was built (old customers join the map only when a new ticket comes in), plus every ticket a QuickBooks write stopped on.
+        const fresh = norm(await sql`${JOB_COLS(sql)} WHERE j.tag <> 'BID' AND j.done_at IS NULL AND j.created_at > ${b0.at}::timestamptz`);
+        const stopped = asked.length ? norm(await sql`${JOB_COLS(sql)} WHERE j.id = ANY(${asked.map((a: any) => Number(a.job_id))}::int[])`) : [];
+        const companies = norm(await sql`SELECT v FROM whoswho_meta WHERE k = 'companies'`)[0]?.v || {};
+        const seen = new Set<number>(), asks: any[] = [];
+        for (const j of [...stopped, ...fresh]) {
+          if (seen.has(Number(j.id))) continue; seen.add(Number(j.id));
+          const d = W.mapDecision(rows, mapTicket(j));
+          if (d.ok) { await sql`DELETE FROM whoswho_ask WHERE job_id = ${j.id}`; continue; }
+          const bk = W.canonicalBuilding(j.address, j.city);
+          const same = rows.filter((r: any) => W.canonicalBuilding(r.building, r.city) === bk && W.sameCity(r.city, j.city));
+          const bld = same.find((r: any) => r.building_qb_id) || null;
+          asks.push({ job_id: j.id, ticket: M.ticketName(j), customer: j.customer_name, address: j.address, city: j.city, tenant: j.tenant,
+            why: asked.find((a: any) => Number(a.job_id) === Number(j.id))?.why || d.why,
+            row_id: d.row?.id || null,
+            choices: same.filter((r: any) => r.qb_customer_id).map((r: any) => ({ qb_customer_id: r.qb_customer_id, label: r.qb_path, tenant: r.tenant })),
+            new_under: bld && String(j.tenant || "").trim() ? { id: bld.building_qb_id, label: bld.building_qb_path } : null,
+            tree: (companies[j.customer_id]?.tree || []) });
+        }
+        return json({ asks });
+      }
+      if (idRaw === "answer" && m === "POST") {
+        const b = await body();
+        const job = norm(await loadJob(Number(b.job_id)));
+        if (!job) return refuse("That ticket doesn't exist.", 404);
+        if (!b.qb_customer_id && !b.new_tenant_under) return refuse("Pick a customer or a building.");
+        const row = await whoswhoAnswer(sql, job, String(b.qb_customer_id || ""), String(b.new_tenant_under || ""), "him (popup)");
+        const back = W.mapDecision(norm(await sql`SELECT * FROM whoswho`), mapTicket(job));   // read back: the ticket now matches his row
+        return json({ row, matches: back.ok && back.row.id === row.id });
+      }
+      if (idRaw === "test" && m === "POST") {
+        const rows = norm(await sql`SELECT * FROM whoswho`);
+        const open = norm(await OUTSTANDING_JOBS(sql));
+        const invs = open.length ? norm(await sql`SELECT i.* FROM invoices i WHERE i.job_id = ANY(${open.map((j: any) => Number(j.id))}::int[]) AND COALESCE(i.qb_id, '') <> '' AND i.amount > 0 AND i.paid_at IS NULL AND i.zeroed_by IS NULL`) : [];
+        const qbI = new Map((await qbInvoicesById(invs.map((i: any) => i.qb_id))).map((x: any) => [String(x.Id), x]));
+        const out: any = {};
+        for (const j of open) {
+          const co = out[j.customer_id] ||= { customer: j.customer_name, ticket: null, invoices: [] };
+          const d = W.mapDecision(rows, mapTicket(j));
+          if (!co.ticket || (!co.ticket.ok && d.ok)) co.ticket = { ticket: M.ticketName(j), id: j.id, ok: d.ok, lands: d.ok ? d.row.qb_path : "", why: d.ok ? "" : d.why };
+          for (const i of invs.filter((x: any) => Number(x.job_id) === Number(j.id))) {
+            const q: any = qbI.get(String(i.qb_id));
+            const want = d.ok ? d.row : null;
+            const billLine = String(q?.BillAddr?.Line1 || "").trim();
+            co.invoices.push({ number: i.number, kind: i.kind, ticket: M.ticketName(j), in_qb: q ? String(q.CustomerRef?.name || "") : "not found in QuickBooks",
+              map: want ? want.qb_path : "(no confirmed row)", spot_ok: !!(q && want && String(q.CustomerRef?.value) === String(want.qb_customer_id)),
+              bill_ok: i.kind !== "real" || !!(want && billLine.toLowerCase() === String(want.bill_name || "").trim().toLowerCase()), bill_in_qb: billLine });
+          }
+        }
+        return json(out);
+      }
+    }
     if (kind === "qb-customers" && m === "GET") {
       const out: any[] = [];
       for (let start = 1; start < 5000; start += 1000) {

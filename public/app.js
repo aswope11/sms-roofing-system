@@ -15,6 +15,7 @@ import { shopPage } from './shop.js';
 import { talkButton } from './talk.js';
 import { todoButton } from './todo.js';
 import { ticketName, isWork } from './money.js';
+import { whosWhoPage, whosWhoPopup, whosWhoLine } from './whoswho.js';
 
 const $app = document.getElementById('app');
 const $crumbs = document.getElementById('crumbs');
@@ -64,11 +65,13 @@ async function home() {
       </form>
     </details>
     <h1>Customers</h1>
+    <div id="ww-line" style="margin-bottom:12px"></div>
     <div class="card">
       ${list.length ? list.map(c => `<div class="row"><a href="#/customer/${c.id}">${esc(c.name)}</a><span class="mute">${c.property_count} ${c.property_count === 1 ? 'property' : 'properties'} ${delX('customer', c.id)}</span></div>`).join('')
         : '<div class="empty">No customers yet.</div>'}
     </div>`;
   // 10/8/26 his order: the Mail / Import problems box is OFF the customer page. He never uses it here.
+  whosWhoLine();
   document.getElementById('f').onsubmit = async ev => {
     ev.preventDefault(); const btn = ev.submitter; btn.disabled = true;
     try {
@@ -420,7 +423,8 @@ async function route() {
   const [, page, id, sub] = location.hash.split('/');
   try {
     setTab(page === 'payroll' ? 'crew' : ['schedule', 'bids', 'invoicing', 'ar', 'supply', 'subs', 'crew', 'shop'].includes(page) ? page : 'customers');
-    if (page === 'customer') await customer(id);
+    if (page === 'whoswho') await whosWhoPage();
+    else if (page === 'customer') await customer(id);
     else if (page === 'property') await property(id);
     else if (page === 'job') await job(id);
     else if (page === 'jobcost') await jobCostPage(id, sub);
@@ -438,6 +442,7 @@ async function route() {
     else if (page === 'shop') await shopPage();
     else await home();
     window.scrollTo(0, 0);
+    whosWhoPopup();   // WHO'S WHO (10/11/26): any ticket the app stopped on gets asked, one at a time
   } catch (e) { $app.innerHTML = `<div class="card err">${esc(e.message)}</div>`; }
 }
 let st;
