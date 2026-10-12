@@ -235,6 +235,79 @@ async function whoswhoAnswer(sql: any, job: any, qbCustomerId: string, newUnder:
   await sql`DELETE FROM whoswho_ask WHERE job_id = ${job.id}`;
   return row;
 }
+// ================= QUICKBOOKS SPOT FIX (10/12/26, his order: "fix every one of these", approved "push the quickbooks fix button") =================
+// Runs ONLY when he taps the button on Who's Who. Open invoices on tenants with no building above them go into Company › Building › Tenant:
+// 1) move the old tenant customer itself under its building (its history goes with it — his old customer wins);
+// 2) if QuickBooks refuses, use the tenant already under the building, else make "Address - Tenant" there, and move ONLY the open invoices.
+// Never deletes anything. Every step is logged on Who's Who and each moved invoice is read back from QuickBooks.
+type Fix = { company: string; building: string; invoices: string[]; name: string; alt?: string[]; reparent: boolean };
+const QB_SPOT_FIXES: Fix[] = [
+  { company: "Four Corners Property Company", building: "1743", invoices: ["4363", "4439"], name: "1480 N. Custer Rd - Burrito Bar", reparent: true },
+  { company: "Four Corners Property Company", building: "1743", invoices: ["4863"], name: "1480 N. Custer Rd - Reformed Pilates", reparent: true },
+  { company: "Four Corners Property Company", building: "1744", invoices: ["4848"], name: "8155 Custer Rd - 4Korners Jiu Jitsu", reparent: true },
+  // Elegant Dentistry's old customer sits under Med-Tech with Med-Tech's history — it stays; only the open invoice moves (his answer: Four Corners).
+  { company: "Four Corners Property Company", building: "1750", invoices: ["4882"], name: "3032 FM 720 W - The Elegant Dentistry", reparent: false },
+  { company: "Standridge Companies", building: "313", invoices: ["4851"], name: "6101 Windhaven Parkway - Bellezza Spa", alt: ["1732"], reparent: true },
+  { company: "Standridge Companies", building: "1742", invoices: ["4859", "4889"], name: "670 W Princeton Dr - Scrambler Cafe Princeton", reparent: true },
+  { company: "Standridge Companies", building: "1259", invoices: ["4854"], name: "6751 Abrams Rd - Lake Highlands Cafe", alt: ["1735"], reparent: true },
+  { company: "Wortham Bros., Inc.", building: "1753", invoices: ["4852", "4877", "4890", "4892"], name: "216 W. Mulberry St. - MKOA Studio", reparent: true },
+];
+const fixQuery = async (q: string) => (await qbQuery(q)) || {};
+const fixCust = async (id: string) => (await qb("GET", `customer/${id}`)).Customer;
+const fixRoot = async (c: any) => { let cur = c; for (let i = 0; i < 6 && cur?.ParentRef?.value; i++) cur = await fixCust(cur.ParentRef.value); return cur; };
+async function runFix(f: Fix, log: (s: string) => Promise<void>) {
+  let b = await fixCust(f.building);
+  const company = ((await fixQuery(`SELECT * FROM Customer WHERE DisplayName = '${qEsc(f.company)}'`)).Customer || [])[0];
+  if (!company) return log(`skipped ${f.name}: no company "${f.company}" in QuickBooks`);
+  const bRoot = await fixRoot(b);
+  if (!b.ParentRef?.value) {
+    b = (await qb("POST", "customer", { Id: b.Id, SyncToken: b.SyncToken, sparse: true, DisplayName: b.DisplayName, ParentRef: { value: company.Id }, Job: true })).Customer;
+    await log(`building "${b.DisplayName}" put under ${f.company}`);
+  } else if (String(bRoot?.Id) !== String(company.Id)) return log(`skipped ${f.name}: building "${b.DisplayName}" sits under ${bRoot?.DisplayName}, not ${f.company}`);
+
+  // The open invoices and the customer they sit on now.
+  const invs = (await fixQuery(`SELECT * FROM Invoice WHERE DocNumber IN (${f.invoices.map(n => `'${qEsc(n)}'`).join(",")})`)).Invoice || [];
+  const fromIds = [...new Set(invs.map((i: any) => String(i.CustomerRef?.value || "")))].filter(Boolean);
+  let target: any = null;
+  // 1) move the old tenant customer itself under the building (only when every invoice sits on that one customer)
+  if (f.reparent && fromIds.length === 1) {
+    const t = await fixCust(fromIds[0]);
+    if (String(t.ParentRef?.value || "") === String(b.Id)) target = t;
+    else {
+      try {
+        target = (await qb("POST", "customer", { Id: t.Id, SyncToken: t.SyncToken, sparse: true, DisplayName: t.DisplayName, ParentRef: { value: b.Id }, Job: true })).Customer;
+        await log(`"${t.DisplayName}" moved under "${b.DisplayName}" (its history went with it)`);
+      } catch (e: any) { await log(`"${t.DisplayName}" could not be moved under "${b.DisplayName}" — ${String(e?.message || e)}; making a tenant under the building instead`); }
+    }
+  }
+  // 2) else the tenant already under the building (alt / same name), or a new one
+  if (!target) {
+    for (const id of f.alt || []) { try { const a = await fixCust(id); if (a?.Active && String(a.ParentRef?.value || "") === String(b.Id)) { target = a; break; } } catch { /* next */ } }
+    if (!target) for (const id of f.alt || []) {
+      try {
+        const a = await fixCust(id);
+        if (a?.Active && !a.ParentRef?.value) { target = (await qb("POST", "customer", { Id: a.Id, SyncToken: a.SyncToken, sparse: true, DisplayName: a.DisplayName, ParentRef: { value: b.Id }, Job: true })).Customer; await log(`"${a.DisplayName}" moved under "${b.DisplayName}"`); break; }
+      } catch (e: any) { await log(`"${id}" could not be moved under "${b.DisplayName}" — ${String(e?.message || e)}`); }
+    }
+    if (!target) {
+      const have = ((await fixQuery(`SELECT * FROM Customer WHERE DisplayName = '${qEsc(f.name)}'`)).Customer || [])[0];
+      if (have && String(have.ParentRef?.value || "") === String(b.Id)) target = have;
+      else if (have) return log(`skipped ${f.name}: a customer with that name already sits somewhere else`);
+      else { target = (await qb("POST", "customer", { DisplayName: f.name, ParentRef: { value: b.Id }, Job: true, BillWithParent: false })).Customer; await log(`made "${f.name}" under "${b.DisplayName}"`); }
+    }
+  }
+  for (const inv of invs) {
+    if (String(inv.CustomerRef?.value) === String(target.Id)) { await log(`#${inv.DocNumber} now on "${target.FullyQualifiedName || target.DisplayName}"`); continue; }
+    try {
+      await qb("POST", "invoice", { Id: inv.Id, SyncToken: inv.SyncToken, sparse: true, CustomerRef: { value: target.Id } });
+      const back = (await qb("GET", `invoice/${inv.Id}`)).Invoice;
+      await log(`#${inv.DocNumber} moved → ${String(back.CustomerRef?.value) === String(target.Id) ? "on" : "NOT on"} "${target.FullyQualifiedName || target.DisplayName}"`);
+    } catch (e: any) { await log(`#${inv.DocNumber} could not be moved — ${String(e?.message || e)}`); }
+  }
+  const missing = f.invoices.filter(n => !invs.some((i: any) => String(i.DocNumber) === n));
+  if (missing.length) await log(`not found in QuickBooks: #${missing.join(", #")}`);
+}
+
 async function qbNextNumber() {
   const rows = (await qbQuery("SELECT DocNumber FROM Invoice ORDERBY MetaData.CreateTime DESC MAXRESULTS 100")).Invoice || [];
   const nums = rows.map((r: any) => Number(r.DocNumber)).filter((n: number) => Number.isFinite(n) && n > 0);
@@ -1926,6 +1999,12 @@ export default async function handler(req: Request) {
         return json({ rows, companies: meta.find((x: any) => x.k === "companies")?.v || {}, built: meta.find((x: any) => x.k === "built") || null, log, pre });
       }
       if (idRaw === "prefill" && m === "POST") return json(await whoswhoPrefill(sql));
+      if (idRaw === "fix-qb" && m === "POST") {
+        const lines: string[] = [];
+        const log = async (t: string) => { lines.push(t); await sql`INSERT INTO whoswho_log (row_id, what) VALUES (NULL, ${"QB FIX: " + t})`; };
+        for (const f of QB_SPOT_FIXES) { try { await runFix(f, log); } catch (e: any) { await log(`${f.name} stopped — ${String(e?.message || e)}`); } }
+        return json({ lines });
+      }
       if (id && m === "PUT") {
         const b = await body();
         const [cur] = norm(await sql`SELECT * FROM whoswho WHERE id = ${id}`);
