@@ -1654,6 +1654,40 @@ export default async function handler(req: Request) {
       const job = norm(await loadJob(id));
       if (!job) return refuse("That ticket doesn't exist.", 404);
 
+      // WHY IS THE LABOR ON A PLACEHOLDER AND NOT IN QUICKBOOKS (10/14/26, his ask): the red pill on the ticket.
+      // GET  /w/job/:id/labor-why → each owed day + the plain reasons + what the app needs from him (nothing written).
+      // POST /w/job/:id/labor-fix {work_date, amount?, qb_customer_id?, new_tenant_under?} → his answer is saved,
+      //      then that day goes to QuickBooks the normal way (same path as Send to QuickBooks on Invoicing).
+      if (action === "labor-why" && m === "GET") {
+        const { owed } = await owedList();
+        const mine = owed.filter((o: any) => Number(o.job.id) === id);
+        if (!mine.length) return json({ days: [] });
+        const decision = await mapDecisionFor(sql, mine[0].job);
+        const [ph] = await openPlaceholders(sql, id);
+        let pick: any = null;
+        if (!decision.ok) {
+          const companies = norm(await sql`SELECT v FROM whoswho_meta WHERE k = 'companies'`)[0]?.v || {};
+          let tree = (companies[job.customer_id]?.tree || []).map((c: any) => ({ id: String(c.id), path: c.path }));
+          if (!tree.length) tree = (await qbAllCustomers()).map((c: any) => ({ id: String(c.Id), path: String(c.FullyQualifiedName || c.DisplayName).split(":").map((x: string) => x.trim()).join(" › ") }))
+            .sort((a: any, b: any) => a.path.localeCompare(b.path));
+          const rows = norm(await sql`SELECT * FROM whoswho`);
+          const bk = W.canonicalBuilding(job.address, job.city);
+          const bld = rows.find((r: any) => W.canonicalBuilding(r.building, r.city) === bk && W.sameCity(r.city, job.city) && r.building_qb_id) || null;
+          pick = { tree, new_under: bld && String(job.tenant || "").trim() ? { id: bld.building_qb_id, label: bld.building_qb_path } : null };
+        }
+        return json({ days: mine.map((o: any) => ({ work_date: o.work_date, suggested: o.suggested, labor: o.labor, reasons: M.laborWhy({ owed: o, decision, openPlaceholder: ph }) })), pick });
+      }
+      if (action === "labor-fix" && m === "POST") {
+        const b = await body();
+        if (b.qb_customer_id || b.new_tenant_under) await whoswhoAnswer(sql, job, String(b.qb_customer_id || ""), String(b.new_tenant_under || ""), "him (ticket pill)");
+        const { owed } = await owedList();
+        const o = owed.find((x: any) => Number(x.job.id) === id && x.work_date === b.work_date);
+        if (!o) return refuse("That day isn't owed a placeholder any more — it's already in QuickBooks or covered by a real invoice.");
+        const amount = b.amount === "" || b.amount == null ? o.suggested : Number(b.amount);
+        if (amount == null) return refuse("This day still has no price — type the price and it goes.");
+        return json(await pushPlaceholderToQB(sql, o, M.round2(Number(amount))), 201);
+      }
+
       if (m === "GET") {
         const invoices = norm(await sql`SELECT * FROM invoices WHERE job_id = ${id} ORDER BY COALESCE(inv_date, created_at::date), id`);
         const bidSystems = job.tag === "BID" ? norm(await sql`SELECT * FROM bid_systems WHERE job_id = ${id} ORDER BY id`) : [];
@@ -2093,7 +2127,17 @@ export default async function handler(req: Request) {
         if (!b.qb_customer_id && !b.new_tenant_under) return refuse("Pick a customer or a building.");
         const row = await whoswhoAnswer(sql, job, String(b.qb_customer_id || ""), String(b.new_tenant_under || ""), "him (popup)");
         const back = W.mapDecision(norm(await sql`SELECT * FROM whoswho`), mapTicket(job));   // read back: the ticket now matches his row
-        return json({ row, matches: back.ok && back.row.id === row.id });
+        // 10/14/26: once he answers, any green day this ticket was stopped on goes to QuickBooks now — not left sitting as owed.
+        const sent: string[] = [], notSent: string[] = [];
+        if (back.ok && back.row.id === row.id) {
+          const { owed } = await owedList();
+          for (const o of owed.filter((x: any) => Number(x.job.id) === Number(job.id))) {
+            if (o.suggested == null) { notSent.push(`${mdyy(o.work_date)}: not priced — open the ticket's red pill`); continue; }
+            try { const r = await pushPlaceholderToQB(sql, o, o.suggested); sent.push(`${mdyy(o.work_date)} → #${r.number}`); }
+            catch (e: any) { notSent.push(`${mdyy(o.work_date)}: ${String(e?.message || e)}`); }
+          }
+        }
+        return json({ row, matches: back.ok && back.row.id === row.id, sent, notSent });
       }
       if (idRaw === "test" && m === "POST") {
         const rows = norm(await sql`SELECT * FROM whoswho`);
