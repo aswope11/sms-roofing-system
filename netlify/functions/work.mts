@@ -561,6 +561,17 @@ async function foldOpenPlaceholders(sql: any, job: any) {
   }
   return { folded: extra.length, into: keep.number, total, errors };
 }
+// A PLACEHOLDER HE DELETED IN QUICKBOOKS BY HAND (10/14/26 — 331 Sutton #4792/#4793 blocked his Send): it is not open any
+// more, so it can never stop a send again. The app's copy goes to $0 (old price kept in zeroed_from) so it matches QuickBooks.
+// Its days stay seated on it — nothing is billed twice; he deleted it, so the app does not put it back.
+async function dropGonePlaceholders(sql: any, jobId: number) {
+  for (const p of await openPlaceholders(sql, jobId)) {
+    if (!p.qb_id) continue;
+    let gone = false;
+    try { const r = await qb("GET", `invoice/${p.qb_id}`); gone = !r?.Invoice; } catch (e: any) { gone = qbGone(e); }
+    if (gone) await sql`UPDATE invoices SET zeroed_from = amount, amount = 0, memo = ${(p.memo ? p.memo + " · " : "") + "deleted in QuickBooks " + today()} WHERE id = ${p.id}`;
+  }
+}
 async function pushPlaceholderToQB(sql: any, o: any, amount: number) {
   const label = tixLabel(o.job);
   if (!(amount > 0)) throw new Error(`${label}: can't do that yet — missing: a price — a $0 placeholder puts nothing in AR`);
@@ -568,6 +579,7 @@ async function pushPlaceholderToQB(sql: any, o: any, amount: number) {
   const day = String(o.work_date).slice(0, 10);
   const desc = [`Date: ${mdyy(o.work_date)}`, ...o.labor.map((l: any) => l.how + (l.amount != null ? ` = ${M.money(l.amount)}` : "")),
     ...(o.material_cost ? [`Material ${M.money(o.material_cost)}${o.job.tag === "JC" ? "" : " × 1.2"} = ${M.money(M.billMaterial(o.material_cost, o.job.tag))}`] : [])].join("\n\n");
+  await dropGonePlaceholders(sql, o.job.id);
   await foldOpenPlaceholders(sql, o.job);
   const [ph] = await openPlaceholders(sql, o.job.id);
   if (ph) { // ADD this day to the ticket's open placeholder — never a second QuickBooks invoice
