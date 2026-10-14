@@ -713,3 +713,19 @@ test('Liberty pull-outs: counter flashing add-on + coping/cleat/I&W are here byt
   assert.ok(!readdirSync('public/sheets').some(f => /iso_swap/i.test(f)));
   assert.ok(readFileSync('public/bids.js', 'utf8').includes('...PULLOUT_TEMPLATES'));
 });
+
+// 10/14/26, his ask: the ticket's red pill says WHY a green day's labor is still owed, and what it needs from him.
+test('laborWhy: plain reasons for an owed day, each with what the app needs', () => {
+  const ok = { ok: true }, no = { ok: false, why: 'no Who\'s Who row for this building + tenant' };
+  const priced = { suggested: 400, labor: [{ amount: 400, how: 'Hugo 8 hrs × $50' }] };
+  const unpriced = { suggested: null, labor: [{ amount: null, how: 'Hugo made 0 stops that day — NOT PRICED' }] };
+  assert.deepEqual(M.laborWhy({ owed: priced, decision: ok }).map(r => r.code), ['send']);
+  assert.deepEqual(M.laborWhy({ owed: unpriced, decision: ok }).map(r => r.code), ['price']);
+  assert.deepEqual(M.laborWhy({ owed: priced, decision: no }).map(r => r.code), ['customer']);
+  assert.deepEqual(M.laborWhy({ owed: unpriced, decision: no }).map(r => r.code), ['price', 'customer']);
+  assert.deepEqual(M.laborWhy({ owed: priced, decision: ok, openPlaceholder: { number: '4900', qb_id: '' } }).map(r => r.code), ['seat']);
+  assert.ok(M.laborWhy({ owed: priced, decision: no })[0].text.includes('no Who\'s Who row'));
+  // no labor dollars on the ticket (10/12 rule): the box shows reasons, not prices
+  const box = readFileSync('public/laborwhy.js', 'utf8');
+  assert.ok(!/suggested|toLocaleString/.test(box), 'the why-box shows no labor dollars');
+});
