@@ -561,15 +561,18 @@ async function foldOpenPlaceholders(sql: any, job: any) {
   }
   return { folded: extra.length, into: keep.number, total, errors };
 }
-// A PLACEHOLDER HE DELETED IN QUICKBOOKS BY HAND (10/14/26 — 331 Sutton #4792/#4793 blocked his Send): it is not open any
-// more, so it can never stop a send again. The app's copy goes to $0 (old price kept in zeroed_from) so it matches QuickBooks.
-// Its days stay seated on it — nothing is billed twice; he deleted it, so the app does not put it back.
+// A PLACEHOLDER DELETED IN QUICKBOOKS (10/14/26 — 331 Sutton #4792/#4793 blocked his Send; his answer: "assume you deleted it"):
+// it can never block a send again, and its days let go of it, so they come back as owed and show on the ticket's red pill —
+// labor is never silently lost. Only rows nothing zeroed; a QuickBooks error that isn't "gone" changes nothing.
 async function dropGonePlaceholders(sql: any, jobId: number) {
-  for (const p of await openPlaceholders(sql, jobId)) {
-    if (!p.qb_id) continue;
+  const rows = norm(await sql`SELECT * FROM invoices WHERE job_id = ${jobId} AND kind = 'placeholder' AND zeroed_by IS NULL AND COALESCE(qb_id, '') <> ''
+    AND (work_date IS NOT NULL OR COALESCE(days, '{}'::jsonb) <> '{}'::jsonb)`);   // one already let go is not checked again
+  for (const p of rows) {
     let gone = false;
     try { const r = await qb("GET", `invoice/${p.qb_id}`); gone = !r?.Invoice; } catch (e: any) { gone = qbGone(e); }
-    if (gone) await sql`UPDATE invoices SET zeroed_from = amount, amount = 0, memo = ${(p.memo ? p.memo + " · " : "") + "deleted in QuickBooks " + today()} WHERE id = ${p.id}`;
+    // nothing is deleted (locked rule): the record stays at $0 with its old price and days written in the memo; it just stops holding the days
+    if (gone) await sql`UPDATE invoices SET zeroed_from = COALESCE(NULLIF(zeroed_from, 0), amount), amount = 0, days = '{}'::jsonb, work_date = NULL,
+      memo = ${`${String(p.memo || "").replace(/ · deleted in QuickBooks.*$/, "")} · deleted in QuickBooks ${today()} — held ${Object.keys(dayMap(p)).join(", ")}`} WHERE id = ${p.id}`;
   }
 }
 async function pushPlaceholderToQB(sql: any, o: any, amount: number) {
@@ -1671,6 +1674,7 @@ export default async function handler(req: Request) {
       // POST /w/job/:id/labor-fix {work_date, amount?, qb_customer_id?, new_tenant_under?} → his answer is saved,
       //      then that day goes to QuickBooks the normal way (same path as Send to QuickBooks on Invoicing).
       if (action === "labor-why" && m === "GET") {
+        await dropGonePlaceholders(sql, id);
         const { owed } = await owedList();
         const mine = owed.filter((o: any) => Number(o.job.id) === id);
         if (!mine.length) return json({ days: [] });
