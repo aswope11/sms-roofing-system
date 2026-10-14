@@ -10,6 +10,7 @@ import { supplyPage, supplyInvoicePage, supplyHousePage } from './supply.js';
 import { crewPage } from './crew.js';
 import { subsPage } from './subs.js';
 import { renderTicket } from './ledger.js';
+import { laborWhyPill } from './laborwhy.js';
 import { jobCostPage } from './jobcost.js';
 import { shopPage } from './shop.js';
 import { talkButton } from './talk.js';
@@ -349,7 +350,7 @@ async function job(id) {
       </form>
     </div>
     <p class="sub">${esc(j.address)}${j.city ? ', ' + esc(j.city) : ''} · ${esc(j.customer_name)}${j.tenant ? ' · Tenant: ' + esc(j.tenant) : ''}</p>
-    ${isWork(j.tag) ? `<div class="btnrow"><a class="jcpill" href="#/jobcost/${j.id}">Job cost sheet ›</a></div>` : ''}
+    ${isWork(j.tag) ? `<div class="btnrow"><a class="jcpill" href="#/jobcost/${j.id}">Job cost sheet ›</a> <span id="whyPill"></span></div><div id="whyBox" hidden></div>` : ''}
     ${kids.length ? `<div class="card"><h2>Inside ${esc(j.title)}</h2>${kids.map(({ j: k }) => `<div class="row"><a href="#/job/${k.id}">${k.tag ? `<span class="tag">${k.tag}</span>` : ''}${esc(k.title)}</a></div>`).join('')}</div>` : ''}
     <div id="ticketMount"></div>
     <div class="card">
@@ -378,6 +379,7 @@ async function job(id) {
     drop.ondragleave = () => drop.classList.remove('over');
     drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); go(e.dataTransfer.files); };
   });
+  if (isWork(j.tag)) laborWhyPill(id, document.getElementById('whyPill'), document.getElementById('whyBox'));
   (j.tag === 'BID' ? renderBid(id, document.getElementById('ticketMount')) : renderTicket(id, document.getElementById('ticketMount'))).catch(e => { document.getElementById('ticketMount').innerHTML = `<div class="card err">${esc(e.message)}</div>`; });
   document.getElementById('editJob').onclick = () => { const b = document.getElementById('editBox'); b.hidden = !b.hidden; };
   document.getElementById('ej').onsubmit = async ev => {

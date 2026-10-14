@@ -573,3 +573,19 @@ export function sortBids(bids, today) {
   return [...bids].map(b => ({ ...b, state: bidState(b, today) }))
     .sort((a, x) => (rank[a.state.level] - rank[x.state.level]) || String(a.bid_due || '9999').localeCompare(String(x.bid_due || '9999')) || String(a.address).localeCompare(String(x.address)));
 }
+
+// WHY IS THIS LABOR ON A PLACEHOLDER AND NOT IN QUICKBOOKS (10/14/26, his ask): the red pill on a ticket.
+// One owed day in, the plain reasons out — each with what the app needs from him to send it. Nothing here writes.
+// owed = one Placeholders-owed day ({ labor, suggested }); decision = the Who's Who answer for the ticket;
+// openPlaceholder = the ticket's open placeholder, if it has one.
+export function laborWhy({ owed, decision, openPlaceholder }) {
+  const out = [];
+  if (owed.suggested == null) {
+    const lines = (owed.labor || []).filter(l => l.amount == null).map(l => l.how);
+    out.push({ code: 'price', text: `The labor has no price, and the app never sends a $0 placeholder. ${lines.join(' · ')}`.trim(), ask: 'Price for this day' });
+  }
+  if (decision && !decision.ok) out.push({ code: 'customer', text: `The app doesn't know which QuickBooks customer this ticket bills to (${decision.why}). It never guesses a customer, so nothing was sent.`, ask: 'Which QuickBooks customer is it?' });
+  if (openPlaceholder && !openPlaceholder.qb_id) out.push({ code: 'seat', text: `This ticket's open placeholder #${openPlaceholder.number || openPlaceholder.id} is in the app but not in QuickBooks, so this day can't be added to it. Put its QuickBooks number on from Invoicing → Placeholders owed.` });
+  if (!out.length) out.push({ code: 'send', text: 'Nothing is blocking it now. The automatic send when the day went green did not land — most often because the customer was answered after the day went green. Tap Send and it goes.' });
+  return out;
+}
