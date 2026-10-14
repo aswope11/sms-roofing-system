@@ -67,6 +67,25 @@ test('LAW: JC never goes to QuickBooks — no placeholder on a JC', () => {
   for (const t of ['R', 'CO', 'UC']) assert.equal(M.canPlaceholder(t), true);
 });
 
+test('LAW: W is warranty work — same name as other tags, never QuickBooks or a contract', () => {
+  assert.ok(M.WORK_TAGS.includes('W'));
+  assert.deepEqual(M.QB_TAGS, ['R', 'CO', 'UC']);
+  assert.equal(M.isWork('W'), true);
+  assert.equal(M.canPlaceholder('W'), false);
+  assert.equal(M.isContractJob('W'), false);
+  assert.equal(M.contractFor({ id: 1, tag: 'W', contract_amount: 1000, job_contract: 1000 }, [], []), null);
+  assert.equal(M.readyToBill({ id: 1, tag: 'W' }, [{ job_id: 1, work_date: '2026-10-01' }], [], []), null);
+  assert.equal(M.ticketName({ tag: 'W', address: '100 Main St', city: 'Dallas', title: 'Leak' }), 'W - 100 Main St, Dallas - Leak');
+  assert.deepEqual(M.whereIs({ tag: 'W', done_at: null }, []), ['Schedule']);
+  assert.ok(readFileSync('public/supply.js', 'utf8').includes("'W'"));
+  assert.ok(readFileSync('public/app.js', 'utf8').includes("W: 'Warranty'"));
+  assert.ok(!readFileSync('netlify/functions/work.mts', 'utf8').includes('!SMS/W'));
+  assert.ok(!readFileSync('public/mail.js', 'utf8').includes('!SMS/W'));
+  const mig = readFileSync('netlify/database/migrations/042_warranty-tag/migration.sql', 'utf8');
+  assert.ok(mig.includes("'W'"));
+  assert.ok(!/INSERT/i.test(mig) && !/UPDATE/i.test(mig));
+});
+
 test('LAW: an estimate is not work — BID never on schedule, payroll or money screens', () => {
   assert.equal(M.isWork('BID'), false);
   assert.deepEqual(M.whereIs({ tag: 'BID', done_at: null }, []), ['Bids']);
@@ -125,7 +144,7 @@ test('LAW: a ticket can never vanish — every combination lands on at least one
       assert.ok(places.length > 0, JSON.stringify({ tag, done_at, tabled_at, no_charge, invSet }));
       checked++;
     }
-  assert.equal(checked, 192);
+  assert.equal(checked, 240);
 });
 
 test('LAW: a UC is a mini job cost — its own contract, every trip bills off it (2155 Marsh = $2,000); a JC contract excludes COs and UCs', () => {
