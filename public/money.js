@@ -527,8 +527,13 @@ export function doneNotPaid(job, invoices) {
   const mine = invoices.filter(i => i.job_id === job.id);
   const bills = mine.filter(isBill);
   if (bills.length && bills.every(b => b.paid_at)) return null;
-  const phNumbers = new Set(mine.filter(i => i.kind === 'placeholder').map(i => String(i.number || '').trim()).filter(Boolean));
-  const open = bills.filter(b => !b.paid_at);
+  // ZEROED DUPLICATES ARE NOT MONEY OWED (10/15/26, his order on the pink "done, not paid" rows: Mulberry Fascia #4877,
+  // Gravel stop #4892, Midbury #4900 — each a $0 copy, sent, next to the real invoice that carries the dollars).
+  // A sent bill at $0 is closed. A zeroed placeholder that never went to QuickBooks doesn't own its number
+  // (Midbury: that placeholder row said 4814, and QuickBooks #4814 is the real 1st draw).
+  const phNumbers = new Set(mine.filter(i => i.kind === 'placeholder' && !(i.zeroed_by && !String(i.qb_id || '').trim())).map(i => String(i.number || '').trim()).filter(Boolean));
+  const open = bills.filter(b => !b.paid_at && !(b.sent_at && !(Number(b.amount) > 0)));
+  if (bills.length && !open.length) return null;
   const why = [];
   if (!bills.length || open.some(b => !(Number(b.amount) > 0))) why.push('no dollar amount');
   if (!bills.length || open.some(b => { const n = String(b.number || '').trim(); return !n || phNumbers.has(n); })) why.push('no real invoice number');
