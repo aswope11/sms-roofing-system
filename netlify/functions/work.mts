@@ -159,6 +159,42 @@ async function followPlaceholder(sql: any, job: any, cust: any) {
   }
   return cust;
 }
+// THE DUPLICATE IS NOTHING (10/15/26, his order): "whenever the invoice comes in and it's a new number, the old one gets deleted
+// like it never existed... The duplicate is just supposed to go into the goddamn job file." FINAL STEP ONLY — the normal process
+// (placeholder → work complete → the app writes the invoice → placeholder to $0) is untouched.
+// When a bill with money is marked sent, any invoice the app wrote on that same ticket under a DIFFERENT number (unsent, or $0)
+// is the duplicate: its QuickBooks PDF goes in the job file (Documents), it is set to $0 in QuickBooks so QuickBooks AR never
+// counts it, its placeholders now point at the invoice that was sent, and its row is removed from the app.
+async function dropDuplicates(sql: any, sent: any) {
+  if (!(Number(sent.amount) > 0)) return [];
+  const num = String(sent.number || "").trim();
+  const dups = norm(await sql`SELECT * FROM invoices WHERE job_id = ${sent.job_id} AND id <> ${sent.id} AND kind = 'real' AND COALESCE(qb_id, '') <> ''
+    AND paid_at IS NULL AND (sent_at IS NULL OR amount <= 0) AND COALESCE(number, '') <> ${num}`);
+  const gone: string[] = [];
+  for (const d of dups) {
+    const t = await qbToken();
+    const res = await fetch(`${QB_API}/${t.realm_id}/invoice/${d.qb_id}/pdf?minorversion=75`, { headers: { authorization: `Bearer ${t.access_token}`, accept: "application/pdf" } });
+    if (!res.ok) continue;                                                        // no PDF saved → it is NOT removed
+    const bytes = Buffer.from(await res.arrayBuffer());
+    const name = `Duplicate - Invoice ${d.number || d.qb_id}.pdf`;
+    const chunks = chunkCount(bytes.length);
+    const key = `job-${d.job_id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const store = getStore({ name: "job-files", consistency: "strong" });
+    for (let n = 0; n < chunks; n++) await store.set(`${key}/${n}`, bytes.subarray(n * CHUNK_BYTES, (n + 1) * CHUNK_BYTES));
+    await sql`INSERT INTO files (job_id, drawer, name, content_type, size_bytes, chunks, blob_key, complete)
+      VALUES (${d.job_id}, 'Documents', ${name}, 'application/pdf', ${bytes.length}, ${chunks}, ${key}, TRUE)`;
+    const cur = (await qb("GET", `invoice/${d.qb_id}`)).Invoice;
+    if (Number(cur?.TotalAmt) > 0) {
+      const ls = (cur.Line || []).filter((l: any) => l.DetailType === "SalesItemLineDetail")
+        .map((l: any) => ({ ...l, Amount: 0, SalesItemLineDetail: { ...l.SalesItemLineDetail, UnitPrice: 0 } }));
+      await qb("POST", "invoice", { Id: d.qb_id, SyncToken: cur.SyncToken, sparse: true, Line: ls });
+    }
+    await sql`UPDATE invoices SET zeroed_by = ${sent.id} WHERE zeroed_by = ${d.id}`;
+    await sql`DELETE FROM invoices WHERE id = ${d.id}`;
+    gone.push(String(d.number || d.qb_id));
+  }
+  return gone;
+}
 // Every active QuickBooks customer (read-only).
 async function qbAllCustomers() {
   const out: any[] = [];
@@ -2038,8 +2074,10 @@ export default async function handler(req: Request) {
               ON CONFLICT (message_id) DO UPDATE SET job_id = EXCLUDED.job_id, state = EXCLUDED.state, what = EXCLUDED.what, attachments = EXCLUDED.attachments`;
           }
         }
-        if (b.value && inv.qb_id) { try { await qbSetDate(inv.qb_id, norm(r).inv_date); } catch (e: any) { return json({ ...norm(r), qb_error: "Marked sent, but QuickBooks date didn't change: " + String(e?.message || e) }); } }
-        return json({ ...norm(r), filed_email: !!sentMsg, filed_files: filed });
+        let dropped: string[] = [];
+        if (b.value) { try { dropped = await dropDuplicates(sql, norm(r)); } catch (e: any) { /* the duplicate stays until the next Mark sent */ } }
+        if (b.value && inv.qb_id) { try { await qbSetDate(inv.qb_id, norm(r).inv_date); } catch (e: any) { return json({ ...norm(r), dropped, qb_error: "Marked sent, but QuickBooks date didn't change: " + String(e?.message || e) }); } }
+        return json({ ...norm(r), filed_email: !!sentMsg, filed_files: filed, dropped });
       }
       if (m === "POST" && action === "qb") {
         const job = norm(await loadJob(inv.job_id));
