@@ -117,6 +117,35 @@ async function qbCustomerFor(job: any, sql: any) {
   await sql`INSERT INTO whoswho_ask (job_id, why) VALUES (${job.id}, ${d.why}) ON CONFLICT (job_id) DO UPDATE SET why = EXCLUDED.why, asked_at = NOW()`;
   throw new Error(`WHO'S WHO — STOPPED: ${M.ticketName(job)} (ticket #${job.id}): ${d.why}. Nothing went to QuickBooks. Answer the Who's Who popup and it goes.`);
 }
+// THE INVOICE FOLLOWS THE PLACEHOLDER (10/15/26, Playa Bowls: placeholder #4839 was on the right customer, the map pointed at a
+// new one, and the real invoice #4899 landed there). If this ticket already has a placeholder in QuickBooks, its customer wins and
+// the Who's Who row is corrected to it. Different company at the top → STOP, nothing is written (two tickets for a while, never none).
+async function qbRootOf(id: string) {
+  let cur = (await qb("GET", `customer/${id}`)).Customer;
+  for (let i = 0; i < 6 && cur?.ParentRef?.value; i++) cur = (await qb("GET", `customer/${cur.ParentRef.value}`)).Customer;
+  return cur;
+}
+async function followPlaceholder(sql: any, job: any, cust: any) {
+  const phs = norm(await sql`SELECT * FROM invoices WHERE job_id = ${job.id} AND kind = 'placeholder' AND COALESCE(qb_id, '') <> ''
+    ORDER BY (zeroed_by IS NULL AND amount > 0) DESC, created_at DESC`);
+  for (const p of phs) {
+    let ref = "";
+    try { ref = String((await qb("GET", `invoice/${p.qb_id}`)).Invoice?.CustomerRef?.value || ""); } catch (e) { if (qbGone(e)) continue; throw e; }
+    if (!ref) continue;
+    if (ref === String(cust.Id)) return cust;
+    const c = (await qb("GET", `customer/${ref}`)).Customer;
+    if (!c?.Active) return cust;                                                       // an inactive leftover never wins
+    const [a, b] = [await qbRootOf(ref), await qbRootOf(String(cust.Id))];
+    const path = String(c.FullyQualifiedName || c.DisplayName).split(":").map((x: string) => x.trim()).join(" › ");
+    if (String(a?.Id) !== String(b?.Id)) throw new Error(`${M.ticketName(job)}: its placeholder #${p.number} is on "${path}" but Who's Who says "${cust.DisplayName}" — different companies. Nothing went to QuickBooks. Fix one and it goes.`);
+    if (cust.row?.id) {
+      await sql`UPDATE whoswho SET qb_customer_id = ${String(c.Id)}, qb_path = ${path}, updated_at = NOW() WHERE id = ${cust.row.id}`;
+      await sql`INSERT INTO whoswho_log (row_id, what) VALUES (${cust.row.id}, ${`app: ticket #${job.id} placeholder #${p.number} is on ${path} — row moved there from ${cust.DisplayName}`})`;
+    }
+    return { Id: String(c.Id), DisplayName: path, row: cust.row ? { ...cust.row, qb_customer_id: String(c.Id), qb_path: path } : cust.row };
+  }
+  return cust;
+}
 // Every active QuickBooks customer (read-only).
 async function qbAllCustomers() {
   const out: any[] = [];
@@ -213,10 +242,17 @@ async function whoswhoAnswer(sql: any, job: any, qbCustomerId: string, newUnder:
     if (!String(job.tenant || "").trim()) throw new Error("This ticket has no tenant — pick the building itself instead.");
     const name = W.newTenantName(job.address, job.tenant);
     const parent = (await qb("GET", `customer/${newUnder}`)).Customer;
-    const have = ((await qbQuery(`SELECT * FROM Customer WHERE DisplayName = '${qEsc(name)}'`)).Customer || [])[0];
-    cust = have || (await qb("POST", "customer", { DisplayName: name, ParentRef: { value: parent.Id }, Job: true, BillWithParent: false })).Customer;
-    cust = (await qb("GET", `customer/${cust.Id}`)).Customer;                    // read it back from QuickBooks
-    if (String(cust?.ParentRef?.value || "") !== String(parent.Id)) throw new Error(`"${name}" is in QuickBooks but not under ${parent.DisplayName} — check it there.`);
+    // NEVER A SECOND CUSTOMER FOR THE SAME TENANT (10/15/26, Playa Bowls): search QuickBooks by building + tenant first,
+    // any spelling, anywhere. One found → his old customer wins, it's used. More than one → stop, he picks.
+    const existing = W.findTenantCustomers(await qbAllCustomers(), job.address, job.city, job.tenant);
+    if (existing.length > 1) throw new Error(`${existing.length} QuickBooks customers are already this tenant: ${existing.map((c: any) => `"${c.DisplayName}"`).join(", ")} — pick one, nothing was made.`);
+    if (existing.length === 1) cust = (await qb("GET", `customer/${existing[0].Id}`)).Customer;
+    else {
+      const have = ((await qbQuery(`SELECT * FROM Customer WHERE DisplayName = '${qEsc(name)}'`)).Customer || [])[0];
+      cust = have || (await qb("POST", "customer", { DisplayName: name, ParentRef: { value: parent.Id }, Job: true, BillWithParent: false })).Customer;
+      cust = (await qb("GET", `customer/${cust.Id}`)).Customer;                    // read it back from QuickBooks
+      if (String(cust?.ParentRef?.value || "") !== String(parent.Id)) throw new Error(`"${name}" is in QuickBooks but not under ${parent.DisplayName} — check it there.`);
+    }
   } else cust = (await qb("GET", `customer/${qbCustomerId}`)).Customer;
   if (!cust) throw new Error("That QuickBooks customer wasn't found.");
   const path = String(cust.FullyQualifiedName || cust.DisplayName).split(":").map((x: string) => x.trim()).join(" › ");
@@ -424,7 +460,7 @@ async function pushInvoiceToQB(sql: any, invoiceId: number, job: any) {
     // SAME CUSTOMER AS ITS PLACEHOLDER (10/4/26): the real invoice goes to the QuickBooks customer its placeholder is already on.
     // A name lookup could miss a spelling (6101 Windhaven Pkwy vs Parkway) and make a duplicate customer; the placeholder never lies.
     // WHO'S WHO (10/11/26): the map row's QuickBooks customer and Bill To — no exceptions, no guessing.
-    const cust: any = await qbCustomerFor(job, sql);
+    const cust: any = await followPlaceholder(sql, job, await qbCustomerFor(job, sql));
     job = withMapBill(job, cust.row);
     const DocNumber = await qbNextNumber();
     const made = (await qb("POST", "invoice", {
@@ -599,7 +635,7 @@ async function pushPlaceholderToQB(sql: any, o: any, amount: number) {
   // earlier placeholders were on; else the lookup (a change order's own title before its parent job's).
   // WHO'S WHO (10/11/26): a new placeholder goes to the map row's QuickBooks customer — no match, no write.
   let cust: any;
-  try { cust = await qbCustomerFor(o.job, sql); } catch (e: any) { throw new Error(`${label}: ${String(e?.message || e)}`); }
+  try { cust = await followPlaceholder(sql, o.job, await qbCustomerFor(o.job, sql)); } catch (e: any) { throw new Error(`${label}: ${String(e?.message || e)}`); }
   const DocNumber = await qbNextNumber();
   const inv_date = M.addDays(o.work_date, 14);
   const memo = M.placeholderMemo(o.job, o.work_date);
@@ -2205,6 +2241,10 @@ export default async function handler(req: Request) {
       if (!par) return refuse(`No QuickBooks customer named "${pname}".`);
       const had = ((await qbQuery(`SELECT Id, DisplayName, FullyQualifiedName FROM Customer WHERE DisplayName = '${qEsc(name)}' AND Active = true`)).Customer || [])[0];
       if (had) return json({ id: had.Id, name: had.DisplayName, fully_qualified: had.FullyQualifiedName, existed: true });
+      // Same tenant at the same building under ANY spelling (10/15/26) → never a second customer; the old one is handed back.
+      const pn = W.parseQbName(name);
+      const same = pn.tenant ? W.findTenantCustomers(await qbAllCustomers(), pn.building, "", pn.tenant) : [];
+      if (same.length) return json({ id: same[0].Id, name: same[0].DisplayName, fully_qualified: same[0].FullyQualifiedName, existed: true, also: same.slice(1).map((c: any) => c.DisplayName) });
       const out = (await qb("POST", "customer", { DisplayName: name, ParentRef: { value: par.Id }, Job: true, BillWithParent: false })).Customer;
       return json({ id: out.Id, name: out.DisplayName, fully_qualified: out.FullyQualifiedName, created: true });
     }
