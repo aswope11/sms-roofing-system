@@ -222,7 +222,8 @@ test('nothing is deleted — the work API only removes a stop (a man moved off a
   const api = readFileSync('netlify/functions/work.mts', 'utf8');
   const dels = api.match(/DELETE\s+FROM\s+(\w+)/gi) || [];
   assert.deepEqual([...new Set(dels.map(d => d.split(/\s+/).pop().toLowerCase()))].sort(), ['bid_options', 'bid_systems', 'crew_days', 'invoices', 'stops', 'supply_lines', 'whoswho_ask']);   // whoswho_ask = a question he answered (10/11/26), not a record
-  assert.equal((api.match(/DELETE FROM invoices/g) || []).length, 3);   // un-green, stale QuickBooks copy, reopen undo — every one tied to QuickBooks
+  assert.equal((api.match(/DELETE FROM invoices/g) || []).length, 4);   // un-green, stale QuickBooks copy, reopen undo, the duplicate at Mark sent (10/15/26, his order) — every one tied to QuickBooks
+  assert.ok(api.includes('if (!res.ok) continue;') && api.indexOf("VALUES (${d.job_id}, 'Documents'") < api.indexOf('DELETE FROM invoices WHERE id = ${d.id}'));   // the duplicate's PDF is in the job file before its row goes
   assert.ok(api.includes("SELECT * FROM invoices WHERE kind = 'placeholder' AND work_date = ${b.work_date} AND amount > 0"));
 });
 
