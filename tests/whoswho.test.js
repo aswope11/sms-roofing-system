@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildingKey, splitAddress, canonicalBuilding, matchRow, mapDecision, prefillRow, qbIndex, qbFlags, parseQbName, newTenantName } from '../lib/whoswho.js';
+import { buildingKey, splitAddress, canonicalBuilding, matchRow, mapDecision, prefillRow, qbIndex, qbFlags, parseQbName, newTenantName, findTenantCustomers } from '../lib/whoswho.js';
 
 const C = (Id, DisplayName, parent, full) => ({ Id, DisplayName, ParentRef: parent ? { value: parent } : undefined, FullyQualifiedName: full || DisplayName });
 const QB = [
@@ -108,6 +108,32 @@ test('the server never guesses a QuickBooks customer: no placeCustomer, every cu
   assert.ok(!/L\.placeCustomer\(/.test(src), 'placeCustomer (the guess) must not be called');
   const creates = src.match(/qb\("POST", "invoice", \{\s*CustomerRef: \{ value: cust\.Id \}/g) || [];
   assert.equal(creates.length, 2, 'both invoice writes use the map customer');
-  assert.equal((src.match(/= await qbCustomerFor\(/g) || []).length, 2);
+  // 10/15/26: both picks still start from the map, then the ticket's own placeholder customer wins
+  assert.equal((src.match(/followPlaceholder\(sql, [a-z.]+, await qbCustomerFor\(/g) || []).length, 2);
   assert.ok(/async function qbCustomerFor\(job: any, sql: any\) \{\s*const d = await mapDecisionFor/.test(src));
+});
+
+// 10/15/26 — Playa Bowls ended up as 3 QuickBooks customers because tenant-first names were invisible.
+test('tenant-first QuickBooks names are read as a tenant at a building', () => {
+  const p = parseQbName('Playa Bowls - 1480 Custer - Allen');
+  assert.equal(p.isAddress, true);
+  assert.equal(p.building, '1480 custer');
+  assert.equal(p.tenant, 'Playa Bowls');
+  assert.equal(parseQbName('1480 N. Custer Rd - Allen - Bread Zeppelin').tenant, 'Bread Zeppelin');   // address-first unchanged
+  assert.equal(parseQbName('Four Corners Property Company').isAddress, false);
+});
+test('every existing customer for a tenant is found, any spelling, anywhere', () => {
+  const all = [
+    C('1667', 'Playa Bowls - 1480 Custer - Allen', '1'),
+    C('1631', '1480 N. Custer Rd Ste 150 - Playa Bowls'),
+    C('1744', '1480 N. Custer Rd - Allen - Bread Zeppelin', '1743'),
+    { ...C('9', '1480 Custer - Allen - Playa Bowls', '1743'), Active: false },
+  ];
+  const hits = findTenantCustomers(all, '1480 N. Custer Rd Ste 150', 'Allen', 'Playa Bowls').map(c => c.Id).sort();
+  assert.deepEqual(hits, ['1631', '1667']);                       // inactive leftover and other tenants left out
+  assert.deepEqual(findTenantCustomers(all, '1480 N. Custer Rd', 'Allen', 'Smoothie King'), []);
+});
+test('a duplicate with the tenant written first is flagged', () => {
+  const f = qbFlags([...QB, C('91', 'Playa Bowls - 1480 Custer - Allen', '1')], ['1480 custer']);
+  assert.ok(f.some(x => x.kind === 'duplicate' && /Playa Bowls - 1480 Custer - Allen/.test(x.text)));
 });
