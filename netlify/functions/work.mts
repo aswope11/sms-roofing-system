@@ -114,6 +114,19 @@ const withMapBill = (job: any, row: any) => row && String(row.bill_name || "").t
 async function qbCustomerFor(job: any, sql: any) {
   const d = await mapDecisionFor(sql, job);
   if (d.ok) return { Id: String(d.row.qb_customer_id), DisplayName: d.row.qb_path, row: d.row };
+  // THE PLACEHOLDER IS THE ANSWER (10/15/26, his order: "these jobs have placeholders... do your job"). No confirmed Who's Who row,
+  // but this ticket already has a placeholder in QuickBooks → that placeholder's customer is the answer, newest placeholder first.
+  // Only stop and ask when the ticket has NO placeholder in QuickBooks.
+  const phs = norm(await sql`SELECT * FROM invoices WHERE job_id = ${job.id} AND kind = 'placeholder' AND COALESCE(qb_id, '') <> '' ORDER BY created_at DESC`);
+  for (const p of phs) {
+    let ref = "";
+    try { ref = String((await qb("GET", `invoice/${p.qb_id}`)).Invoice?.CustomerRef?.value || ""); } catch (e) { if (qbGone(e)) continue; throw e; }
+    if (!ref) continue;
+    const c = (await qb("GET", `customer/${ref}`)).Customer;
+    if (!c?.Active) continue;
+    await sql`DELETE FROM whoswho_ask WHERE job_id = ${job.id}`;
+    return { Id: String(c.Id), DisplayName: String(c.FullyQualifiedName || c.DisplayName).split(":").map((x: string) => x.trim()).join(" › "), row: null };
+  }
   await sql`INSERT INTO whoswho_ask (job_id, why) VALUES (${job.id}, ${d.why}) ON CONFLICT (job_id) DO UPDATE SET why = EXCLUDED.why, asked_at = NOW()`;
   throw new Error(`WHO'S WHO — STOPPED: ${M.ticketName(job)} (ticket #${job.id}): ${d.why}. Nothing went to QuickBooks. Answer the Who's Who popup and it goes.`);
 }
