@@ -470,6 +470,9 @@ test('LAW step 6: DONE MEANS MONEY — done + unpaid + (no amount | no real numb
   assert.equal(M.doneNotPaid(job, [{ job_id: 5, kind: 'real', number: '', amount: 0, paid_at: '2026-09-12' }]), null);     // paid
   assert.equal(M.doneNotPaid({ ...job, no_charge: true }, []), null);                                                        // no charge
   assert.equal(M.doneNotPaid({ ...job, done_at: null }, []), null);
+  // 10/15/26: a $0 duplicate marked sent is closed, and a zeroed never-pushed placeholder doesn't own the real invoice's number
+  assert.equal(M.doneNotPaid(job, [{ job_id: 5, kind: 'real', number: '4877', amount: 0, sent_at: '2026-10-15' }, { job_id: 5, kind: 'real', number: '4801', amount: 4000, sent_at: '2026-10-15' }]), null);
+  assert.equal(M.doneNotPaid(job, [{ job_id: 5, kind: 'placeholder', number: '4814', amount: 0, zeroed_by: 86 }, { job_id: 5, kind: 'draw', number: '4814', amount: 4037.5, sent_at: '2026-10-15' }]), null);
   assert.equal(M.doneNotPaid({ ...job, tabled_at: '2026-09-11' }, []).length, 3);                                           // tabling does not hide it
 });
 
