@@ -752,3 +752,11 @@ test('laborWhy: plain reasons for an owed day, each with what the app needs', ()
   const box = readFileSync('public/laborwhy.js', 'utf8');
   assert.ok(!/suggested|toLocaleString/.test(box), 'the why-box shows no labor dollars');
 });
+
+// 10/16/26 his words: "on uc-r-w etc, the invoice needs to go straight into qb. jcs continue to go directly into the job cost sheet on the app only"
+test('supply bill on R / CO / UC / W goes onto the QuickBooks placeholder; JC never; never counted twice', () => {
+  const api = readFileSync('netlify/functions/work.mts', 'utf8');
+  assert.ok(api.includes('const SUPPLY_QB_TAGS = ["R", "CO", "UC", "W"];'));
+  assert.ok(api.includes('qbOut = await supplyToQB(sql, Number(invId), loadJob)'));
+  assert.equal((api.match(/AND NOT EXISTS \(SELECT 1 FROM supply_qb q WHERE q\.invoice_id = l\.invoice_id AND q\.job_id = l\.job_id AND q\.amount > 0\)/g) || []).length, 3);
+});

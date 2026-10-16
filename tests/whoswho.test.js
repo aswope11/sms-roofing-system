@@ -107,9 +107,9 @@ test('the server never guesses a QuickBooks customer: no placeCustomer, every cu
   const src = readFileSync(new URL('../netlify/functions/work.mts', import.meta.url), 'utf8');
   assert.ok(!/L\.placeCustomer\(/.test(src), 'placeCustomer (the guess) must not be called');
   const creates = src.match(/qb\("POST", "invoice", \{\s*CustomerRef: \{ value: cust\.Id \}/g) || [];
-  assert.equal(creates.length, 2, 'both invoice writes use the map customer');
+  assert.equal(creates.length, 3, 'every invoice write uses the map customer (10/16/26: + supply bill placeholder)');
   // 10/15/26: both picks still start from the map, then the ticket's own placeholder customer wins
-  assert.equal((src.match(/followPlaceholder\(sql, [a-z.]+, await qbCustomerFor\(/g) || []).length, 2);
+  assert.equal((src.match(/followPlaceholder\(sql, [a-z.]+, await qbCustomerFor\(/g) || []).length, 3);
   assert.ok(/async function qbCustomerFor\(job: any, sql: any\) \{\s*const d = await mapDecisionFor/.test(src));
 });
 
