@@ -735,6 +735,83 @@ async function qbDeleteInvoice(qbId: string) {
   await qb("POST", "invoice?operation=delete", { Id: qbId, SyncToken: cur.SyncToken });
 }
 
+// ================= SUPPLY INVOICE → QUICKBOOKS (10/16/26) =================
+// His words: "on uc-r-w etc, the invoice needs to go straight into qb. jcs continue to go directly into the job cost sheet on the app only."
+// A supply bill's lines on an R / CO / UC / W ticket go onto that ticket's QuickBooks placeholder as money (his 10/4 format:
+// "ABC Invoice #… (date)", each item, tax, total, × 1.2). Where: the open placeholder; none open but one zeroed → onto that one
+// as money, never zeroed out (his 10/16 answer); none at all → a new placeholder. JC never touches QuickBooks here.
+// Saving the bill again swaps that one line (matched word for word), so it is never on QuickBooks twice.
+const SUPPLY_QB_TAGS = ["R", "CO", "UC", "W"];
+async function supplyToQB(sql: any, invId: number, loadJob: (id: number) => Promise<any>) {
+  const done: string[] = [], errors: string[] = [];
+  const [inv] = norm(await sql`SELECT * FROM supply_invoices WHERE id = ${invId}`);
+  if (!inv) return { done, errors };
+  const lines = norm(await sql`SELECT l.*, j.tag FROM supply_lines l LEFT JOIN jobs j ON j.id = l.job_id WHERE l.invoice_id = ${invId} ORDER BY l.id`);
+  const allSum = M.round2(lines.reduce((a: number, l: any) => a + Number(l.line_total || 0), 0));
+  const taxAll = M.round2(Math.max(0, Number(inv.amount || 0) - allSum));
+  const prev = norm(await sql`SELECT * FROM supply_qb WHERE invoice_id = ${invId}`);
+  const jobIds = [...new Set([...lines.filter((l: any) => l.job_id && !l.shop && SUPPLY_QB_TAGS.includes(l.tag)).map((l: any) => Number(l.job_id)), ...prev.map((p: any) => Number(p.job_id))])];
+  const head = `${inv.house || "Supply"} Invoice #${inv.number || "(no number yet)"}${inv.inv_date ? ` (${mdyy(inv.inv_date)})` : ""}`;
+  for (const jid of jobIds) {
+    const job = norm(await loadJob(jid));
+    const label = job ? tixLabel(job) : `ticket #${jid}`;
+    try {
+      const mine = job && SUPPLY_QB_TAGS.includes(job.tag) ? lines.filter((l: any) => Number(l.job_id) === jid && !l.shop) : [];
+      const cost = M.round2(mine.reduce((a: number, l: any) => a + Number(l.line_total || 0), 0));
+      const tax = allSum > 0 ? M.round2(taxAll * cost / allSum) : 0;
+      const total = M.round2(cost + tax);
+      const bill = job ? M.billMaterial(total, job.tag) : 0;
+      const desc = [head, ...mine.map((l: any) => `${Number(l.qty) || 0}${l.unit ? " " + l.unit : ""} ${String(l.description || "").trim()}${l.unit_price != null ? ` @ ${M.money(Number(l.unit_price))}` : ""} = ${M.money(Number(l.line_total) || 0)}`),
+        ...(tax ? [`Tax ${M.money(tax)}`] : []), `Total ${M.money(total)}`, `× 1.2 = ${M.money(bill)}`].join("\n");
+      const was = prev.find((p: any) => Number(p.job_id) === jid);
+      if (was && was.description === desc && Math.abs(Number(was.amount) - bill) < 0.005) continue;   // already on QuickBooks exactly like this
+      if (was && !(Number(was.amount) > 0) && !(bill > 0)) continue;                                      // already taken off
+      if (was) {   // take the old line off the placeholder it went on, then put the new one on the same placeholder
+        const [ph] = norm(await sql`SELECT * FROM invoices WHERE id = ${was.placeholder_id}`);
+        const cur = await qbGetPlaceholder({ ...ph, qb_id: was.qb_id }, label);
+        const keep = qbSalesLines(cur).filter((l: any) => String(l.Description || "") !== String(was.description));
+        const next = bill > 0 ? [...keep, qbLine(bill, desc)] : keep;
+        const t = M.round2(next.reduce((a: number, l: any) => a + Number(l.Amount || 0), 0));
+        if (!next.length) throw new Error(`${label}: taking ${head} off placeholder #${ph?.number} would leave it with no lines — left as is, check it in QuickBooks.`);
+        await qbPutLines(was.qb_id, cur, next, t, label, ph?.number || "");
+        const delta = M.round2(bill - Number(was.amount));
+        if (ph) await sql`UPDATE invoices SET amount = amount + ${delta}, zeroed_from = CASE WHEN zeroed_by IS NULL THEN zeroed_from ELSE COALESCE(zeroed_from, 0) + ${delta} END WHERE id = ${ph.id}`;
+        if (bill > 0) await sql`UPDATE supply_qb SET description = ${desc}, amount = ${bill} WHERE id = ${was.id}`;
+        else await sql`UPDATE supply_qb SET description = '', amount = 0 WHERE id = ${was.id}`;   // nothing is deleted — the record stays at $0
+        done.push(bill > 0 ? `${head} on placeholder #${ph?.number} for ${label} → ${M.money(bill)}` : `${head} taken off placeholder #${ph?.number} for ${label}`);
+        continue;
+      }
+      if (!(bill > 0)) continue;
+      // 1) the open placeholder · 2) none open → the newest zeroed one, as money, not zeroed out · 3) none → a new one
+      let [ph] = await openPlaceholders(sql, jid);
+      let zeroed = false;
+      if (!ph) { [ph] = norm(await sql`SELECT * FROM invoices WHERE job_id = ${jid} AND kind = 'placeholder' AND COALESCE(qb_id, '') <> '' ORDER BY created_at DESC, id DESC LIMIT 1`); zeroed = !!ph; }
+      if (ph && !ph.qb_id) throw new Error(`${label}: its placeholder #${ph.number || ph.id} is not in QuickBooks yet, so ${head} could not go on it. No second placeholder was made.`);
+      if (ph) {
+        const cur = await qbGetPlaceholder(ph, label);
+        const t = M.round2((Number(cur.TotalAmt) || 0) + bill);
+        await qbPutLines(ph.qb_id, cur, [...qbSalesLines(cur), qbLine(bill, desc)], t, label, ph.number);
+        await sql`UPDATE invoices SET amount = amount + ${bill}, zeroed_from = CASE WHEN zeroed_by IS NULL THEN zeroed_from ELSE COALESCE(zeroed_from, 0) + ${bill} END WHERE id = ${ph.id}`;
+        await sql`INSERT INTO supply_qb (invoice_id, job_id, placeholder_id, qb_id, description, amount) VALUES (${invId}, ${jid}, ${ph.id}, ${ph.qb_id}, ${desc}, ${bill})`;
+        done.push(`${head} → placeholder #${ph.number}${zeroed ? " (zeroed one, now carries the money)" : ""} for ${label}: ${M.money(bill)}, now ${M.money(t)}`);
+        continue;
+      }
+      const cust = await followPlaceholder(sql, job, await qbCustomerFor(job, sql));
+      const DocNumber = await qbNextNumber();
+      const day = String(inv.inv_date || today()).slice(0, 10);
+      const memo = M.placeholderMemo(job, day);
+      const made = (await qb("POST", "invoice", { CustomerRef: { value: cust.Id }, DocNumber, TxnDate: today(), DueDate: today(), PrivateNote: memo, ...noPay(job), Line: [qbLine(bill, desc)] })).Invoice;
+      const back = (await qb("GET", `invoice/${made.Id}`)).Invoice;
+      if (!back || Math.abs(Number(back.TotalAmt) - bill) > 0.004 || back.DocNumber !== DocNumber) throw new Error(`${label}: QuickBooks read-back doesn't match — check placeholder #${DocNumber} in QuickBooks.`);
+      const [r] = norm(await sql`INSERT INTO invoices (job_id, kind, name, number, amount, inv_date, memo, qb_id, days)
+        VALUES (${jid}, 'placeholder', '', ${DocNumber}, ${bill}, ${today()}, ${memo}, ${made.Id}, '{}'::jsonb) RETURNING *`);
+      await sql`INSERT INTO supply_qb (invoice_id, job_id, placeholder_id, qb_id, description, amount) VALUES (${invId}, ${jid}, ${r.id}, ${made.Id}, ${desc}, ${bill})`;
+      done.push(`${head} → new placeholder #${DocNumber} on ${cust.DisplayName} for ${label}: ${M.money(bill)}`);
+    } catch (e: any) { errors.push(`${label}: ${String(e?.message || e)}`); }
+  }
+  return { done, errors };
+}
+
 // ================= THE APP'S OWN GMAIL — READ AND FILE ONLY =================
 // It never sends, never replies. Scope is gmail.readonly. What it can't place, it asks about.
 async function gmailToken() {
@@ -1245,7 +1322,7 @@ export default async function handler(req: Request) {
       const seats = jobIds.length ? norm(await sql`SELECT job_id, work_date, amount, days FROM invoices WHERE kind = 'placeholder' AND job_id = ANY(${jobIds}::int[])`) : [];
       const covers = jobIds.length ? norm(await sql`SELECT job_id, covers_through FROM invoices WHERE kind = 'real' AND covers_through IS NOT NULL AND job_id = ANY(${jobIds}::int[])`) : [];
       const mat = jobIds.length ? norm(await sql`SELECT l.job_id, l.line_total, s.inv_date FROM supply_lines l JOIN supply_invoices s ON s.id = l.invoice_id
-        WHERE l.job_id = ANY(${jobIds}::int[]) AND s.inv_date = ANY(${greens}::date[])`) : [];
+        WHERE l.job_id = ANY(${jobIds}::int[]) AND s.inv_date = ANY(${greens}::date[]) AND NOT EXISTS (SELECT 1 FROM supply_qb q WHERE q.invoice_id = l.invoice_id AND q.job_id = l.job_id AND q.amount > 0)`) : [];
       const owed: any[] = [];
       for (const j of owedJobs) {
         if (!M.canPlaceholder(j.tag) || j.no_charge || j.tabled_at) continue;
@@ -2368,7 +2445,7 @@ export default async function handler(req: Request) {
       // Placeholders owed: every stop on a GREEN day on an R / CO / UC ticket with no priced seat for that day. JC never.
       const { owed, greens, shares, jobIds, owedJobs } = await owedList();
       // Ready to bill — fills itself (green day not billed yet; scope and pictures never hold it, 10/2/26), dollars from the rules
-      const allMat = jobIds.length ? norm(await sql`SELECT l.job_id, l.line_total, s.inv_date FROM supply_lines l JOIN supply_invoices s ON s.id = l.invoice_id WHERE l.job_id = ANY(${jobIds}::int[])`) : [];
+      const allMat = jobIds.length ? norm(await sql`SELECT l.job_id, l.line_total, s.inv_date FROM supply_lines l JOIN supply_invoices s ON s.id = l.invoice_id WHERE l.job_id = ANY(${jobIds}::int[]) AND NOT EXISTS (SELECT 1 FROM supply_qb q WHERE q.invoice_id = l.invoice_id AND q.job_id = l.job_id AND q.amount > 0)`) : [];
       const readyInvs = jobIds.length ? norm(await sql`SELECT * FROM invoices WHERE job_id = ANY(${jobIds}::int[])`) : [];
       const ready = owedJobs.map((j: any) => { const mine = readyInvs.filter((i: any) => i.job_id === j.id); const r = M.readyToBill(j, shares, allMat, mine); return r ? { ...r, job: j, invoice: M.writeRealInvoice(j, r, mine, today(), j.bill_price) } : null; }).filter(Boolean);
       // Billed a trip at a time — still working: open tickets with a bill that isn't paid (old board drawTickets)
@@ -2426,7 +2503,7 @@ export default async function handler(req: Request) {
       const { stops, crewDays } = await shareRowsFor(greens);
       const crew = norm(await sql`SELECT * FROM crew`);
       const shares = M.stopShares({ stops, crew, crewDays });
-      const mat = norm(await sql`SELECT l.job_id, l.line_total, s.inv_date FROM supply_lines l JOIN supply_invoices s ON s.id = l.invoice_id WHERE l.job_id = ${id}`);
+      const mat = norm(await sql`SELECT l.job_id, l.line_total, s.inv_date FROM supply_lines l JOIN supply_invoices s ON s.id = l.invoice_id WHERE l.job_id = ${id} AND NOT EXISTS (SELECT 1 FROM supply_qb q WHERE q.invoice_id = l.invoice_id AND q.job_id = l.job_id AND q.amount > 0)`);
       const invs = norm(await sql`SELECT * FROM invoices WHERE job_id = ${id}`);
       const r = M.readyToBill(job, shares, mat, invs);
       if (!r) return refuse("That ticket isn't ready to bill — it needs a green day not billed yet.");
@@ -3379,7 +3456,10 @@ export default async function handler(req: Request) {
               [invId, l.sku || "", String(l.description || "").trim(), Number(l.qty) || 0, l.unit || "", l.unit_price === "" || l.unit_price == null ? null : Number(l.unit_price), Number(l.line_total) || 0, l.job_id, l.shop]);
           }
           await client.query("COMMIT");
-          return json({ id: invId, missing: miss }, id ? 200 : 201);
+          // the bill is saved first — QuickBooks never blocks the save; what it did or couldn't do comes back as words
+          let qbOut: any = { done: [], errors: [] };
+          try { qbOut = await supplyToQB(sql, Number(invId), loadJob); } catch (e: any) { qbOut.errors.push(String(e?.message || e)); }
+          return json({ id: invId, missing: miss, qb: qbOut }, id ? 200 : 201);
         } catch (e) { await client.query("ROLLBACK"); throw e; } finally { client.release(); }
       }
     }
