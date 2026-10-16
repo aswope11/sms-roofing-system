@@ -702,6 +702,8 @@ export async function supplyInvoicePage(idRaw) {
       const back = await call(`/w/supply/${out.id || inv.id}`);
       if (Number(back.amount) !== (Number(f.amount) || 0) || back.lines.length !== lines.length) throw new Error('That did not stick — the read-back does not match. Nothing was assumed.');
       toast(`Saved — ${back.lines.length} line${back.lines.length === 1 ? '' : 's'} (read back and it matches)${miss.length ? ' · still missing: ' + miss.join('; ') : ''}`);
+      // R / CO / UC / W tickets: the bill went onto QuickBooks (10/16/26). JC stays on the job cost sheet only.
+      if (out.qb && (out.qb.done.length || out.qb.errors.length)) alert([...(out.qb.done.length ? ['QuickBooks:', ...out.qb.done] : []), ...(out.qb.errors.length ? ['NOT in QuickBooks:', ...out.qb.errors] : [])].join('\n'));
       location.hash = `#/supply/house/${encodeURIComponent(back.house)}`;
     } catch (e) { fail(e); }
   };
