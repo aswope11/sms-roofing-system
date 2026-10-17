@@ -283,7 +283,7 @@ function jobFilesByTenant(p) {
   }).join('');
 }
 
-// One dropdown for the whole property ("Entire property" — 10/17/26, one name everywhere — work with no tenant on the ticket), then one per tenant.
+// One dropdown for the whole property ("Overall property" — work with no tenant on the ticket), then one per tenant.
 // A ticket's own tenant wins; a ticket inside another ticket takes that ticket's tenant; then the property's tenant.
 function tenantDrops(p) {
   const byId = new Map(p.jobs.map(j => [j.id, j]));
@@ -307,7 +307,7 @@ function tenantDrops(p) {
     return `<details><summary class="row" style="cursor:pointer"><span>${esc([j.tag, mdy(worked(j))].filter(Boolean).join(' - '))}</span><span class="mute">${mine.length} invoice${mine.length === 1 ? '' : 's'}</span></summary><div style="padding-left:26px"><div class="row"><a href="#/job/${j.id}">Open the ticket</a></div>${mine.map(i => `<div class="row"><span>Invoice #${esc(i.number || '—')}</span><span class="mute">${kindName(i.kind)}</span></div>`).join('') || '<div class="empty">No invoice yet.</div>'}</div></details>`; };
   return names.map(t => {
     const js = groups.get(t);
-    return `<details><summary class="row" style="cursor:pointer"><span>${t ? esc(t) : 'Entire property'}</span><span class="mute">${js.length} ticket${js.length === 1 ? '' : 's'}</span></summary><div style="padding-left:26px">${js.length ? js.map(ticket).join('') : '<div class="empty">No tickets yet.</div>'}</div></details>`;
+    return `<details><summary class="row" style="cursor:pointer"><span>${t ? esc(t) : 'Overall property'}</span><span class="mute">${js.length} ticket${js.length === 1 ? '' : 's'}</span></summary><div style="padding-left:26px">${js.length ? js.map(ticket).join('') : '<div class="empty">No tickets yet.</div>'}</div></details>`;
   }).join('');
 }
 
@@ -349,7 +349,7 @@ async function job(id) {
         <div class="err full" id="ee"></div>
       </form>
     </div>
-    <p class="sub">${esc(j.address)}${j.city ? ', ' + esc(j.city) : ''} · ${esc(j.customer_name)}${' · Tenant: ' + (j.tenant ? esc(j.tenant) : 'Entire property')}</p>
+    <p class="sub">${esc(j.address)}${j.city ? ', ' + esc(j.city) : ''} · ${esc(j.customer_name)}${j.tenant ? ' · Tenant: ' + esc(j.tenant) : ''}</p>
     ${isWork(j.tag) ? `<div class="btnrow"><a class="jcpill" href="#/jobcost/${j.id}">Job cost sheet ›</a> <span id="whyPill"></span></div><div id="whyBox" hidden></div>` : ''}
     ${kids.length ? `<div class="card"><h2>Inside ${esc(j.title)}</h2>${kids.map(({ j: k }) => `<div class="row"><a href="#/job/${k.id}">${k.tag ? `<span class="tag">${k.tag}</span>` : ''}${esc(k.title)}</a></div>`).join('')}</div>` : ''}
     <div id="ticketMount"></div>

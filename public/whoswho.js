@@ -6,7 +6,7 @@ import { esc, call, toast, crumbs, $app } from './ui.js';
 
 const blank = '<span style="color:var(--bad);font-weight:700">blank</span>';
 const lines = s => esc(s || '').replace(/\n/g, '<br>');
-const where = r => `${esc(r.building)}${r.city ? ', ' + esc(r.city) : ''}${r.tenant ? ' — <b>' + esc(r.tenant) + '</b>' : ' — Entire property'}`;
+const where = r => `${esc(r.building)}${r.city ? ', ' + esc(r.city) : ''}${r.tenant ? ' — <b>' + esc(r.tenant) + '</b>' : ' — whole building'}`;
 let pick = null;   // company shown
 
 export async function whosWhoPage() {
