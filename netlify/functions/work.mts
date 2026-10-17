@@ -2261,14 +2261,16 @@ export default async function handler(req: Request) {
           if (!job) return refuse("No ticket at this spot to name the tenant from.");
           const row = await whoswhoAnswer(sql, job, "", String(b.new_tenant_under), "him (Who's Who screen)");
           next.qb_customer_id = row.qb_customer_id; next.qb_path = row.qb_path; changed.push(`new tenant customer ${row.qb_path}`);
-        } else if (b.qb_customer_id && String(b.qb_customer_id) !== String(cur.qb_customer_id)) {
+        } else if (b.qb_customer_id) {   // 10/17/26: always re-read the spot from QuickBooks, so a customer moved in QB shows its new path
+          const same = String(b.qb_customer_id) === String(cur.qb_customer_id);
           const c = (await qb("GET", `customer/${String(b.qb_customer_id)}`)).Customer;
           if (!c) return refuse("That QuickBooks customer wasn't found.");
           next.qb_customer_id = String(c.Id); next.qb_path = String(c.FullyQualifiedName || c.DisplayName).split(":").map((x: string) => x.trim()).join(" › ");
-          changed.push(`QuickBooks spot → ${next.qb_path}`);
+          if (!same || next.qb_path !== cur.qb_path) changed.push(`QuickBooks spot → ${next.qb_path}`);
         }
         for (const f of ["bill_name", "bill_addr", "called_in"]) if (next[f] !== cur[f]) changed.push(`${f.replace("_", " ")} → ${next[f] || "(blank)"}`);
-        await sql`UPDATE whoswho SET bill_name = ${next.bill_name}, bill_addr = ${next.bill_addr}, called_in = ${next.called_in}, qb_customer_id = ${next.qb_customer_id}, qb_path = ${next.qb_path},
+        // 10/17/26: the row follows its property's customer (1710 N Greenville moved to Jennifer Hill and the row still said Cook Children's Hospital).
+        await sql`UPDATE whoswho SET customer_id = COALESCE((SELECT customer_id FROM properties WHERE id = ${cur.property_id}), customer_id), bill_name = ${next.bill_name}, bill_addr = ${next.bill_addr}, called_in = ${next.called_in}, qb_customer_id = ${next.qb_customer_id}, qb_path = ${next.qb_path},
           status = 'confirmed', conflicts = '[]'::jsonb, confirmed_by = 'him', confirmed_at = NOW(), updated_at = NOW() WHERE id = ${id}`;
         await sql`INSERT INTO whoswho_log (row_id, what) VALUES (${id}, ${changed.length ? "fixed: " + changed.join(" · ") : "confirmed as shown"})`;
         const [back] = norm(await sql`SELECT * FROM whoswho WHERE id = ${id}`);       // read back in a separate request
