@@ -8,6 +8,8 @@ const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
 // NOTHING IN THIS APP EVER REFUSES TO SAVE (locked 9/20/26). What is still missing rides back on
 // the saved record as `missing`, so the screen can write it down. It is never a 400.
+// ENTIRE PROPERTY (10/17/26): "Entire property" is the name for no tenant — saved as blank so QuickBooks never gets a tenant customer for it.
+const noTenant = (t: any) => /^\s*entire\s+property\s*$/i.test(String(t || "")) ? "" : String(t || "").trim();
 const note = (row: any, missing: string[]) => json(missing.length ? { ...row, missing } : row);
 
 export default async (req: Request, context: Context) => {
@@ -89,13 +91,13 @@ export default async (req: Request, context: Context) => {
           WHERE p.address_key=${key} AND p.city=${(b.city || "").trim()}` : [];
         if (dupe) return json({ error: `This address is already on file under ${dupe.customer_name}.`, existing_id: dupe.id }, 409);
         const [p] = await sql`INSERT INTO properties (customer_id, address, address_key, city, tenant, gc, notes)
-          VALUES (${b.customer_id || null}, ${addr}, ${key}, ${(b.city || "").trim()}, ${b.tenant || ""}, ${b.gc || ""}, ${b.notes || ""})
+          VALUES (${b.customer_id || null}, ${addr}, ${key}, ${(b.city || "").trim()}, ${noTenant(b.tenant)}, ${b.gc || ""}, ${b.notes || ""})
           RETURNING *`;
         return note(p, miss);
       }
       if (m === "PUT" && id) {
         const [p] = await sql`UPDATE properties SET customer_id=${b.customer_id || null}, address=${addr}, address_key=${key},
-          city=${(b.city || "").trim()}, tenant=${b.tenant || ""}, gc=${b.gc || ""}, notes=${b.notes || ""},
+          city=${(b.city || "").trim()}, tenant=${noTenant(b.tenant)}, gc=${b.gc || ""}, notes=${b.notes || ""},
           bill_name=COALESCE(${b.bill_name ?? null}, bill_name), bill_addr=COALESCE(${b.bill_addr ?? null}, bill_addr), ship_addr=COALESCE(${b.ship_addr ?? null}, ship_addr)
           WHERE id=${id} RETURNING *`;
         return note(p, miss);
@@ -129,7 +131,7 @@ export default async (req: Request, context: Context) => {
         // TENANT ON THE TICKET (10/4/26): one property can hold several tenants (6101 Windhaven: whole-property inspection, Carries Pilates, Bellezza).
         // A ticket's own tenant wins over the property's; sending tenant_name sets it, leaving it out keeps it.
         const [j] = await sql`UPDATE jobs SET tag=${tag}, title=${title}, notes=${b.notes || ""},
-          tenant_name=CASE WHEN ${"tenant_name" in b}::boolean THEN ${String(b.tenant_name || "").trim()} ELSE tenant_name END,
+          tenant_name=CASE WHEN ${"tenant_name" in b}::boolean THEN ${noTenant(b.tenant_name)} ELSE tenant_name END,
           property_id=COALESCE(${b.property_id ? Number(b.property_id) : null}, property_id),
           parent_job_id=CASE WHEN ${hasPid}::boolean THEN ${pid}::int ELSE parent_job_id END
           WHERE id=${id} RETURNING *`;
