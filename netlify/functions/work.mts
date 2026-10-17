@@ -113,7 +113,9 @@ async function mapDecisionFor(sql: any, job: any) {
 const withMapBill = (job: any, row: any) => row && String(row.bill_name || "").trim() ? { ...job, bill_name: row.bill_name, bill_addr: row.bill_addr } : job;
 async function qbCustomerFor(job: any, sql: any) {
   const d = await mapDecisionFor(sql, job);
-  if (d.ok) return { Id: String(d.row.qb_customer_id), DisplayName: d.row.qb_path, row: d.row };
+  // A locked row pointing at a customer that was made inactive in QuickBooks doesn't count — the job gets placed fresh below.
+  if (d.ok) { let live = true; try { live = (await qb("GET", `customer/${d.row.qb_customer_id}`)).Customer?.Active !== false; } catch { live = true; }
+    if (live) return { Id: String(d.row.qb_customer_id), DisplayName: d.row.qb_path, row: d.row }; }
   // THE PLACEHOLDER IS THE ANSWER (10/15/26, his order: "these jobs have placeholders... do your job"). No confirmed Who's Who row,
   // but this ticket already has a placeholder in QuickBooks → that placeholder's customer is the answer, newest placeholder first.
   // Only stop and ask when the ticket has NO placeholder in QuickBooks.
@@ -127,8 +129,30 @@ async function qbCustomerFor(job: any, sql: any) {
     await sql`DELETE FROM whoswho_ask WHERE job_id = ${job.id}`;
     return { Id: String(c.Id), DisplayName: String(c.FullyQualifiedName || c.DisplayName).split(":").map((x: string) => x.trim()).join(" › "), row: null };
   }
+  // GREEN DAY PLACEMENT (10/17/26, his rule): nothing is in QuickBooks until labor is on the job and the day is greened.
+  // This only runs on that push — the app places it itself: Company › "Address, City" › Tenant (only if there is one). Old customers win.
+  const placed = await placeOnGreenDay(sql, job).catch(() => null);
+  if (placed) return placed;
   await sql`INSERT INTO whoswho_ask (job_id, why) VALUES (${job.id}, ${d.why}) ON CONFLICT (job_id) DO UPDATE SET why = EXCLUDED.why, asked_at = NOW()`;
   throw new Error(`WHO'S WHO — STOPPED: ${M.ticketName(job)} (ticket #${job.id}): ${d.why}. Nothing went to QuickBooks. Answer the Who's Who popup and it goes.`);
+}
+async function placeOnGreenDay(sql: any, job: any) {
+  const all = await qbAllCustomers();
+  const parent = W.companyQbParent(all, job.customer_name);
+  if (!parent) return null;                                         // no company customer in QuickBooks → he's asked (rare)
+  let bld = W.findBuildingCustomer(all, parent.Id, job.address, job.city);
+  if (!bld) { const name = W.newBuildingName(job.address, job.city);
+    bld = ((await qbQuery(`SELECT * FROM Customer WHERE DisplayName = '${qEsc(name)}' AND Active = true`)).Customer || [])[0]
+      || (await qb("POST", "customer", { DisplayName: name, ParentRef: { value: parent.Id }, Job: true, BillWithParent: false })).Customer; }
+  let target = bld;
+  if (String(job.tenant || "").trim()) {
+    const have = W.findTenantCustomers(all, job.address, job.city, job.tenant);
+    if (have.length > 1) return null;                                // two old customers for one tenant → he picks
+    target = have[0] || (await qb("POST", "customer", { DisplayName: W.newTenantName(job.address, job.tenant), ParentRef: { value: bld.Id }, Job: true, BillWithParent: false })).Customer;
+  }
+  await whoswhoAnswer(sql, job, String(target.Id), "", "app (green day)");
+  const c = (await qb("GET", `customer/${target.Id}`)).Customer;        // read it back from QuickBooks
+  return { Id: String(c.Id), DisplayName: String(c.FullyQualifiedName || c.DisplayName).split(":").map((x: string) => x.trim()).join(" › "), row: null };
 }
 // THE INVOICE FOLLOWS THE PLACEHOLDER (10/15/26, Playa Bowls: placeholder #4839 was on the right customer, the map pointed at a
 // new one, and the real invoice #4899 landed there). If this ticket already has a placeholder in QuickBooks, its customer wins and
@@ -2286,7 +2310,7 @@ export default async function handler(req: Request) {
         const stopped = asked.length ? norm(await sql`${JOB_COLS(sql)} WHERE j.id = ANY(${asked.map((a: any) => Number(a.job_id))}::int[])`) : [];
         const companies = norm(await sql`SELECT v FROM whoswho_meta WHERE k = 'companies'`)[0]?.v || {};
         const seen = new Set<number>(), asks: any[] = [];
-        for (const j of [...stopped, ...fresh]) {
+        for (const j of stopped) {   // 10/17/26: a new ticket with no greened day is never asked about
           if (seen.has(Number(j.id))) continue; seen.add(Number(j.id));
           const d = W.mapDecision(rows, mapTicket(j));
           if (d.ok) { await sql`DELETE FROM whoswho_ask WHERE job_id = ${j.id}`; continue; }

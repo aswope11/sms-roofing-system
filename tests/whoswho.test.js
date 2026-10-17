@@ -137,3 +137,17 @@ test('a duplicate with the tenant written first is flagged', () => {
   const f = qbFlags([...QB, C('91', 'Playa Bowls - 1480 Custer - Allen', '1')], ['1480 custer']);
   assert.ok(f.some(x => x.kind === 'duplicate' && /Playa Bowls - 1480 Custer - Allen/.test(x.text)));
 });
+
+test('green day placement: company parent, existing building wins, new building name', async () => {
+  const W = await import('../lib/whoswho.js');
+  const qb = [
+    { Id: '385', DisplayName: 'Wortham Bros., Inc.', Active: true },
+    { Id: '9', DisplayName: '175 Stonebridge, Southlake', ParentRef: { value: '385' }, Active: true },
+    { Id: '10', DisplayName: '2264 Vantage, Dallas (deleted)', ParentRef: { value: '385' }, Active: false },
+  ];
+  const assert = (await import('node:assert')).strict;
+  assert.equal(W.companyQbParent(qb, 'Wortham Brothers Roofing').Id, '385');
+  assert.equal(W.findBuildingCustomer(qb, '385', '175 Stonebridge Dr', 'Southlake').Id, '9');
+  assert.equal(W.findBuildingCustomer(qb, '385', '2264 Vantage', 'Dallas'), null);
+  assert.equal(W.newBuildingName('2264 Vantage', 'Dallas'), '2264 Vantage, Dallas');
+});
