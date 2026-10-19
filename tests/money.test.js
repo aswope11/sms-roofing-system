@@ -556,7 +556,9 @@ test('bids server + page: list, add, due/price, sent, awarded makes the ticket a
   // ONE APP: a bid starts at the customer and lives in its job file. No Bids tab, no second job-file system.
   // The Bids tab is one page: calendar, bids owed, templates. The bid itself still lives in its job file under the customer.
   const card = readFileSync('public/bid.js', 'utf8');
-  for (const s of ['never chased', 'Awarded — make the ticket', 'I sent it', 'BID_CATS']) assert.ok(card.includes(s), s);
+  // BID COMPLETE (10/19/26) replaced "I sent it": it finds the sent email, files it + the proposal + the price; no email = he's told.
+  for (const s of ['Awarded — make the ticket', 'Bid complete', 'No sent email found', 'BID_CATS']) assert.ok(card.includes(s), s);
+  for (const s of ['action === "complete"', 'fileEmail(sql, id, msg.id', 'found: false']) assert.ok(w.includes(s), s);
   const page = readFileSync('public/bids.js', 'utf8');
   for (const s of ['bidcal', 'Bids owed', '>New bid<', '>Templates<', 'templatesPage', 'Awarded — ticket made']) assert.ok(page.includes(s), s);
   // STEP 1: customer, then the address, then the tenant — each its own field, each one new-or-known.
