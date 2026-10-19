@@ -3281,6 +3281,40 @@ export default async function handler(req: Request) {
         const [r] = await sql`UPDATE jobs SET bid_sent_at = ${b.value === false ? null : (b.on || today())} WHERE id = ${id} RETURNING *`;
         return json(norm(r));
       }
+      // BID COMPLETE (10/19/26, his standard procedure): "when I say a bid is complete, move it where it belongs AND find
+      // the sent email — the email, the proposal and the numbers go in the job file. No sent email = tell me." Finds his sent
+      // email by the street number + street name, files it whole with every attachment, marks the bid sent on the day the
+      // email went out, and fills the price off the email when the bid has none. Nothing found = nothing marked; he gets told.
+      if (m === "POST" && action === "complete") {
+        const b = await body();
+        const key = addressKey(bid.address), words = key.split(" "), num = words[0] || "", street = words[1] || "";
+        let msg: any = null;
+        if (num && street) {
+          for (const extra of ["has:attachment ", ""]) {
+            const hit = await gmail(`messages?q=${encodeURIComponent(`in:sent ${extra}"${num}" "${street}" newer_than:365d`)}&maxResults=10`);
+            for (const h of hit?.messages || []) {
+              const full = await gmail(`messages/${h.id}?format=full`);
+              const subj = String((full.payload?.headers || []).find((x: any) => String(x.name).toLowerCase() === "subject")?.value || "");
+              const text = (subj + " " + bodyText(full.payload) + " " + attachmentsOf(full.payload).map((a: any) => a.name).join(" ")).toLowerCase();
+              if (new RegExp(`\\b${num}\\b`).test(text) && text.includes(street)) { msg = { ...full, subj }; break; }
+            }
+            if (msg) break;
+          }
+        }
+        if (!msg) {
+          if (!b.anyway) return json({ found: false, looked: `${num} ${street}`.trim() });
+          const [r] = await sql`UPDATE jobs SET bid_sent_at = ${today()} WHERE id = ${id} RETURNING *`;
+          return json({ found: false, marked: true, job: norm(r) });
+        }
+        const sentDay = new Date(Number(msg.internalDate) - 5 * 3600 * 1000).toISOString().slice(0, 10);
+        await fileEmail(sql, id, msg.id, msg.subj, sentDay);
+        const atts = attachmentsOf(msg.payload);
+        for (const a of atts) await fileAttachment(sql, id, msg.id, a);
+        const amounts = [...bodyText(msg.payload).matchAll(/\$\s?([\d,]+(?:\.\d{2})?)/g)].map(x => Number(x[1].replace(/,/g, ""))).filter(n => n >= 100);
+        const price = bid.bid_amount == null && amounts.length ? amounts[0] : null;
+        const [r] = await sql`UPDATE jobs SET bid_sent_at = ${sentDay}, bid_amount = COALESCE(bid_amount, ${price}) WHERE id = ${id} RETURNING *`;
+        return json({ found: true, subject: msg.subj, sent: sentDay, files: atts.length + 1, price_filled: price, amounts, job: norm(r) });
+      }
       if (m === "POST" && action === "awarded") {
         // Awarded makes the real ticket, opens its ledger, and sets the contract the draws bill off.
         const b = await body();

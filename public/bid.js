@@ -73,10 +73,11 @@ export async function renderBid(jobId, mount) {
       <button class="small ghost" id="bSave">Save</button>
     </div>
     <p class="help ${['late', 'today'].includes(st.level) ? 'redtxt' : ['tomorrow', 'soon'].includes(st.level) ? 'ambertxt' : ''}">${esc(st.say)} — reminders show on the Bids page 3 days out and 1 day out.</p>
-    ${priced ? `<div class="btnrow">
-      ${j.bid_sent_at ? '' : '<button class="small ghost" id="bSent">I sent it</button>'}
-      <button id="bAward">Awarded — make the ticket</button>
-    </div>` : '<p class="help">Put a price on it and the "I sent it" and "Awarded" buttons show up.</p>'}
+    <div class="btnrow">
+      ${j.bid_sent_at ? `<span class="help">Complete — sent ${shortDateYY(j.bid_sent_at)}</span>` : '<button class="small ghost" id="bSent">Bid complete</button>'}
+      ${priced ? '<button id="bAward">Awarded — make the ticket</button>' : ''}
+    </div>
+    <p class="help">Bid complete finds your sent email for this address and puts the email, the proposal and the price in this job file. No sent email found = it tells you and nothing is marked.</p>
     ${j.bid_said ? `<p class="help">From the email: "${esc(j.bid_said)}"</p>` : ''}
     `}</div>`;
 
@@ -89,11 +90,20 @@ export async function renderBid(jobId, mount) {
     const bid_due = q('#bDue').value || null, bid_amount = q('#bAmt').value || null;
     run(() => put({ bid_due, bid_amount }, bk => String(bk.job.bid_due || '') === String(bid_due || '') && String(bk.job.bid_amount == null ? '' : Number(bk.job.bid_amount)) === String(bid_amount ? Number(bid_amount) : ''), 'Saved — read back and it matches'));
   };
-  if (q('#bSent')) q('#bSent').onclick = () => {
-    if (!confirm('Mark it sent? It gets filed with the customer and never chased again.')) return;
-    run(() => doAndProve(`/w/bids/${jobId}/sent`, { method: 'POST', body: { value: true } }, `/w/job/${jobId}`,
-      bk => !!bk.job.bid_sent_at, 'Sent — filed with the customer (read back and it matches)'));
-  };
+  // BID COMPLETE (10/19/26): finds the sent email, files it + the proposal + the price, then moves it off Bids owed.
+  if (q('#bSent')) q('#bSent').onclick = () => run(async () => {
+    q('#bSent').disabled = true; q('#bSent').textContent = 'Looking in your sent mail…';
+    let out = await call(`/w/bids/${jobId}/complete`, { method: 'POST', body: {} });
+    if (!out.found) {
+      if (!confirm(`No sent email found for ${j.address} (searched sent mail for "${out.looked}").\n\nIt was NOT marked complete.\n\nOK = "I know, it's ok" — mark it complete anyway.\nCancel = leave it on Bids owed.`)) return;
+      out = await call(`/w/bids/${jobId}/complete`, { method: 'POST', body: { anyway: true } });
+    }
+    const bk = await call(`/w/job/${jobId}`);
+    if (!bk.job.bid_sent_at) throw new Error('That did not stick — the read-back does not show it complete. Nothing was assumed.');
+    toast(out.found
+      ? `Complete — email "${out.subject}" (sent ${shortDateYY(out.sent)}) + ${out.files - 1} attachment(s) in the job file${out.price_filled != null ? ' · price ' + money(out.price_filled) : ''} (read back and it matches)`
+      : 'Complete — no sent email on file (read back and it matches)');
+  });
   mount.querySelectorAll('.tpl').forEach(b => b.onclick = () => {
     const cat = b.dataset.cat;
     if (picked(cat)) return;
