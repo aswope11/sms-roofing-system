@@ -464,7 +464,10 @@ export function readyToBill(job, greenShares, materialLines, invoices) {
   if (!job.done_at && !isContractJob(job.tag)) return null;   // reopened = back on the schedule, not ready to bill (a UC bills a trip at a time)
   const covered = invoices.filter(i => i.kind === 'real' || i.kind === 'draw').map(i => i.covers_through || i.inv_date).filter(Boolean).sort();
   const prev = covered.length ? covered[covered.length - 1] : null;
-  const dates = [...new Set(greenShares.filter(s => s.job_id === job.id && (!prev || s.work_date > prev)).map(s => s.work_date))].sort();
+  // A day sitting on a ZEROED placeholder is already billed — a placeholder only goes to $0 once its money is on a real
+  // invoice (10/20/26, 1710 N Greenville: 10/17 on $0 placeholder #4915 was inside #4914's $3,000 and got billed again as $800).
+  const zeroedDays = new Set(invoices.filter(i => i.kind === 'placeholder' && !(Number(i.amount) > 0)).flatMap(placeholderDays));
+  const dates = [...new Set(greenShares.filter(s => s.job_id === job.id && (!prev || s.work_date > prev) && !zeroedDays.has(String(s.work_date).slice(0, 10))).map(s => s.work_date))].sort();
   if (!dates.length) return null;
   const days = dates.map(d => {
     const labor = greenShares.filter(s => s.job_id === job.id && s.work_date === d).map(s => ({ ...billLabor(s), man: s.shows_as }));

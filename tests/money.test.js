@@ -762,3 +762,13 @@ test('supply bill on R / CO / UC / W goes onto the QuickBooks placeholder; JC ne
   assert.ok(api.includes('qbOut = await supplyToQB(sql, Number(invId), loadJob)'));
   assert.equal((api.match(/AND NOT EXISTS \(SELECT 1 FROM supply_qb q WHERE q\.invoice_id = l\.invoice_id AND q\.job_id = l\.job_id AND q\.amount > 0\)/g) || []).length, 3);
 });
+
+test('a day on a zeroed placeholder is already billed (10/20/26, 1710 N Greenville #4914/#4915)', () => {
+  const job = { id: 78, tag: 'UC', done_at: '2026-10-18' };
+  const shares = [{ job_id: 78, work_date: '2026-10-17', kind: 'employee', man: 'Charlie', shows_as: 'Charlie', stops: 1, days: 1, cost: 200 }];
+  const invs = [{ kind: 'real', number: '4914', amount: 3000, covers_through: '2026-10-10' },
+                { kind: 'placeholder', number: '4915', amount: 0, work_date: '2026-10-17', days: { '2026-10-17': 800 } }];
+  assert.equal(M.readyToBill(job, shares, [], invs), null);
+  invs[1].amount = 800;   // still carrying money = not billed yet → still ready
+  assert.notEqual(M.readyToBill(job, shares, [], invs), null);
+});
