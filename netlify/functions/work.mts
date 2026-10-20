@@ -2391,6 +2391,13 @@ export default async function handler(req: Request) {
       const out = (await qb("POST", "customer", { Id: c.Id, SyncToken: c.SyncToken, sparse: true, Active: false })).Customer;
       return json({ id: out.Id, name: out.DisplayName, active: out.Active });
     }
+    // POST /w/qb-customer/:id/active → bring back a customer that was made inactive ("deleted") in QuickBooks, under its original name.
+    if (kind === "qb-customer" && id && action === "active" && m === "POST") {
+      const c = (await qb("GET", `customer/${id}`)).Customer;
+      const name = String(c.DisplayName || "").replace(/\s*\(deleted(?:-\d+)?\)\s*$/i, "").trim();
+      const out = (await qb("POST", "customer", { Id: c.Id, SyncToken: c.SyncToken, sparse: true, Active: true, DisplayName: name })).Customer;
+      return json({ id: out.Id, name: out.DisplayName, fully_qualified: out.FullyQualifiedName, active: out.Active });
+    }
     if (kind === "qb-customer-create" && m === "POST") {
       const b = await body();
       const name = String(b.name || "").trim(), pname = String(b.parent_name || "").trim();
