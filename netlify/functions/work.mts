@@ -1233,6 +1233,10 @@ async function syncQbTotals(sql: any, jobId: number | null) {
 // that the app never marked sent goes BACKWARDS: if his Gmail shows it went out (invoice # in a sent subject) it is marked
 // sent on that day; if not, it is moved back to tomorrow so it drops out of AR and sits on Invoicing as "not sent".
 // Runs every time AR, Invoicing or a ticket opens.
+// ONE place that finds his sent invoice email (10/20/26): the invoice # in the SUBJECT or in an ATTACHMENT name
+// ("Invoice 4914.pdf") — a reply on an old thread ("Re: Allen primary Roof") still counts as sent.
+function sentInvoiceQuery(num: string) { return `in:sent {subject:"${num}" filename:"${num}"}`; }
+
 async function unsentOutOfAR(sql: any, rows: any[], txn: Record<string, string>) {
   const tday = today(), tomorrow = M.addDays(tday, 1);
   for (const r of rows) {
@@ -1243,7 +1247,7 @@ async function unsentOutOfAR(sql: any, rows: any[], txn: Record<string, string>)
     const num = String(r.number || "").trim();
     if (num) {
       try {
-        const hit = await gmail(`messages?q=${encodeURIComponent(`in:sent subject:"${num}"`)}&maxResults=1`);
+        const hit = await gmail(`messages?q=${encodeURIComponent(sentInvoiceQuery(num))}&maxResults=1`);
         if (hit?.messages?.length) { const msg = await gmail(`messages/${hit.messages[0].id}?format=minimal`); sentDay = new Date(Number(msg.internalDate) - 5 * 3600 * 1000).toISOString().slice(0, 10); }
       } catch { continue; }   // can't see Gmail → change nothing
     }
@@ -2133,11 +2137,11 @@ export default async function handler(req: Request) {
         if (b.value) {
           if (num) {
             try {
-              const hit = await gmail(`messages?q=${encodeURIComponent(`in:sent subject:"${num}"`)}&maxResults=1`);
+              const hit = await gmail(`messages?q=${encodeURIComponent(sentInvoiceQuery(num))}&maxResults=1`);
               if (hit?.messages?.length) sentMsg = await gmail(`messages/${hit.messages[0].id}?format=full`);
             } catch (e: any) { if (!b.anyway) return refuse("No sent email found — couldn't look in Gmail: " + String(e?.message || e)); }
           }
-          if (!sentMsg && !b.anyway) return refuse(`No sent email with "${num || "this invoice's number"}" in the subject — not marked sent.`);
+          if (!sentMsg && !b.anyway) return refuse(`No sent email with "${num || "this invoice's number"}" in the subject or an attachment name — not marked sent.`);
           // THE CHECKER GATE (10/8/26): fix what it can, and anything it can't fix stops Mark sent until he says "I know, it's ok".
           if (inv.qb_id) {
             const chk = await checkAndRecord(sql, inv, norm(await loadJob(inv.job_id)));
