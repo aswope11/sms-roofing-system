@@ -96,7 +96,7 @@ export async function invoicingPage() {
   const prove = (path, method, body, check, msg) => doAndProve(path, { method, body }, '/w/invoicing', check, msg);
   $app().querySelectorAll('.bill').forEach(b => b.onclick = () => {
     const r = d.ready[Number(b.dataset.k)];
-    const v = ask(`${r.invoice.name}\nMemo: ${r.invoice.memo}\nDated ${shortDate(r.invoice.inv_date)} (tomorrow — stays future until Mark it sent)\n\nPrice on the invoice:`, r.invoice.amount > 0 ? String(r.invoice.amount) : '');
+    const v = ask(`${r.invoice.name}\nMemo: ${r.invoice.memo}\nDated ${shortDate(r.invoice.inv_date)} (2 days out — stays future until Mark it sent)\n\nPrice on the invoice:`, r.invoice.amount > 0 ? String(r.invoice.amount) : '');
     if (v === null) return;   // blank price still writes the invoice — it reads $0 until he knows it
     const amount = Number(v);
     b.disabled = true;

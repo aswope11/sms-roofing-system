@@ -622,6 +622,23 @@ async function openPlaceholders(sql: any, jobId: number) {
 }
 const qbSalesLines = (inv: any) => (inv?.Line || []).filter((l: any) => l.DetailType === "SalesItemLineDetail");
 const qbLine = (amount: number, desc: string) => ({ DetailType: "SalesItemLineDetail", Amount: amount, Description: desc, SalesItemLineDetail: { ItemRef: { value: "1" }, Qty: 1, UnitPrice: amount } });
+// One green day on a placeholder (rule 6, 10/21/26): SMS employees go on their own line —
+// "Date: 10/6/26 / 2 men @ 4 hours / $400", Qty = man-hours, Rate = $50, no names in QuickBooks.
+// Subs (Puma) and material stay on a second line, worded as before. If the price was typed lower than
+// the employees' hours, it stays one line at that price (Qty × $50 would not add up).
+function placeholderDayLines(o: any, amount: number) {
+  const date = `Date: ${mdyy(o.work_date)}`;
+  const emp = M.menAtHours(o.labor);
+  const mat = o.material_cost ? [`Material ${M.money(o.material_cost)}${o.job.tag === "JC" ? "" : " × 1.2"} = ${M.money(M.billMaterial(o.material_cost, o.job.tag))}`] : [];
+  const how = (l: any) => l.how + (l.amount != null ? ` = ${M.money(l.amount)}` : "");
+  if (!emp || amount < emp.amount - 0.004) return [qbLine(amount, [date, ...o.labor.map(how), ...mat].join("\n\n"))];
+  const out: any[] = [{ DetailType: "SalesItemLineDetail", Amount: emp.amount, Description: [date, emp.words, M.money(emp.amount)].join("\n"),
+    SalesItemLineDetail: { ItemRef: { value: "1" }, Qty: emp.qty, UnitPrice: emp.rate } }];
+  const rest = M.round2(amount - emp.amount);
+  const others = o.labor.filter((l: any) => !(l.kind === "employee" && l.amount != null));
+  if (rest > 0) out.push(qbLine(rest, [date, ...others.map(how), ...mat].join("\n\n")));
+  return out;
+}
 async function qbGetPlaceholder(p: any, label: string) {
   let cur: any = null;
   try { cur = (await qb("GET", `invoice/${p.qb_id}`)).Invoice; }
@@ -689,8 +706,7 @@ async function pushPlaceholderToQB(sql: any, o: any, amount: number) {
   if (!(amount > 0)) throw new Error(`${label}: can't do that yet — missing: a price — a $0 placeholder puts nothing in AR`);
   if (!M.canPlaceholder(o.job.tag)) throw new Error(`${label}: a JC never gets a placeholder — its draw schedule bills it.`);
   const day = String(o.work_date).slice(0, 10);
-  const desc = [`Date: ${mdyy(o.work_date)}`, ...o.labor.map((l: any) => l.how + (l.amount != null ? ` = ${M.money(l.amount)}` : "")),
-    ...(o.material_cost ? [`Material ${M.money(o.material_cost)}${o.job.tag === "JC" ? "" : " × 1.2"} = ${M.money(M.billMaterial(o.material_cost, o.job.tag))}`] : [])].join("\n\n");
+  const lines = placeholderDayLines(o, amount);
   await dropGonePlaceholders(sql, o.job.id);
   await foldOpenPlaceholders(sql, o.job);
   const [ph] = await openPlaceholders(sql, o.job.id);
@@ -699,7 +715,7 @@ async function pushPlaceholderToQB(sql: any, o: any, amount: number) {
     if (!ph.qb_id) throw new Error(`${label}: its open placeholder #${ph.number || ph.id} is not in QuickBooks yet, so ${mdyy(day)} could not be added to it. No second placeholder was made.`);
     const cur = await qbGetPlaceholder(ph, label);
     const total = M.round2((Number(cur.TotalAmt) || 0) + amount);
-    await qbPutLines(ph.qb_id, cur, [...qbSalesLines(cur), qbLine(amount, desc)], total, label, ph.number);
+    await qbPutLines(ph.qb_id, cur, [...qbSalesLines(cur), ...lines], total, label, ph.number);
     const days = { ...dayMap(ph), [day]: amount };
     const [r] = norm(await sql`UPDATE invoices SET amount = ${total}, days = ${JSON.stringify(days)}::jsonb WHERE id = ${ph.id} RETURNING *`);
     return { number: ph.number, customer: cur.CustomerRef?.name || "", amount, total, added: true, invoice: r };
@@ -710,11 +726,11 @@ async function pushPlaceholderToQB(sql: any, o: any, amount: number) {
   let cust: any;
   try { cust = await followPlaceholder(sql, o.job, await qbCustomerFor(o.job, sql)); } catch (e: any) { throw new Error(`${label}: ${String(e?.message || e)}`); }
   const DocNumber = await qbNextNumber();
-  const inv_date = M.addDays(o.work_date, 14);
+  const inv_date = M.addDays(o.work_date, M.PLACEHOLDER_DAYS_OUT);
   const memo = M.placeholderMemo(o.job, o.work_date);
   const made = (await qb("POST", "invoice", {
     CustomerRef: { value: cust.Id }, DocNumber, TxnDate: inv_date, DueDate: inv_date, PrivateNote: memo, ...noPay(o.job),
-    Line: [qbLine(amount, desc)],
+    Line: lines,
   })).Invoice;
   const back = (await qb("GET", `invoice/${made.Id}`)).Invoice;
   if (!back || Number(back.TotalAmt) !== amount || back.DocNumber !== DocNumber) throw new Error(`${label}: QuickBooks read-back doesn't match — check placeholder #${DocNumber} in QuickBooks.`);
@@ -1238,7 +1254,7 @@ async function syncQbTotals(sql: any, jobId: number | null) {
 function sentInvoiceQuery(num: string) { return `in:sent {subject:"${num}" filename:"${num}"}`; }
 
 async function unsentOutOfAR(sql: any, rows: any[], txn: Record<string, string>) {
-  const tday = today(), tomorrow = M.addDays(tday, 1);
+  const tday = today(), tomorrow = M.addDays(tday, M.REAL_INVOICE_DAYS_OUT);   // rule 5: real invoice = 2 days out
   for (const r of rows) {
     if (r.kind !== "real" || r.sent_at || r.paid_at) continue;
     const d = txn[String(r.qb_id)];
@@ -2472,8 +2488,8 @@ export default async function handler(req: Request) {
       }
     }
     if (kind === "invoicing" && m === "GET") {
-      // Step 5 rule: an unsent real invoice written from Ready to bill stays future-dated (tomorrow) so it never hits AR early.
-      await sql`UPDATE invoices SET inv_date = ${M.addDays(today(), 1)}::date WHERE kind = 'real' AND sent_at IS NULL AND covers_through IS NOT NULL AND inv_date <= ${today()}::date`;
+      // Rule 5: an unsent real invoice stays future-dated (2 days out) so it never hits AR early.
+      await sql`UPDATE invoices SET inv_date = ${M.addDays(today(), M.REAL_INVOICE_DAYS_OUT)}::date WHERE kind = 'real' AND sent_at IS NULL AND covers_through IS NOT NULL AND inv_date <= ${today()}::date`;
       const done = norm(await sql`${JOB_COLS(sql)} WHERE j.tag <> 'BID' AND j.done_at IS NOT NULL ORDER BY j.done_at`);
       const ids = done.map((j: any) => j.id);
       const invs = ids.length ? norm(await sql`SELECT * FROM invoices WHERE job_id = ANY(${ids}::int[])`) : [];

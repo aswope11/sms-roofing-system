@@ -75,7 +75,7 @@ test('LAW: W is warranty work — same name as other tags, never QuickBooks or a
   assert.equal(M.isContractJob('W'), false);
   assert.equal(M.contractFor({ id: 1, tag: 'W', contract_amount: 1000, job_contract: 1000 }, [], []), null);
   assert.equal(M.readyToBill({ id: 1, tag: 'W' }, [{ job_id: 1, work_date: '2026-10-01' }], [], []), null);
-  assert.equal(M.ticketName({ tag: 'W', address: '100 Main St', city: 'Dallas', title: 'Leak' }), 'W - 100 Main St, Dallas - Leak');
+  assert.equal(M.ticketName({ tag: 'W', address: '100 Main St', city: 'Dallas', title: 'Leak' }), 'Leak - 100 Main St');
   assert.deepEqual(M.whereIs({ tag: 'W', done_at: null }, []), ['Schedule']);
   assert.ok(readFileSync('public/supply.js', 'utf8').includes("'W'"));
   assert.ok(readFileSync('public/app.js', 'utf8').includes("W: 'Warranty'"));
@@ -197,10 +197,11 @@ test('LAW: dispatch shows address, city, tenant — never the owner or GC', () =
   assert.equal(M.dispatchLine({ address: '2155 Marsh Lane', city: 'Carrollton', tenant: 'Ozan Laundry Lab', gc: 'Keller Springs 72 LLC' }), '2155 Marsh Lane · Carrollton · Ozan Laundry Lab');
 });
 
-test('LAW: every ticket and invoice reads TAG - address, city - detail', () => {
+test('RULE 8: active ticket name = job label - address', () => {
   const job = { tag: 'R', title: 'Two pipe boots', done_at: '2026-09-04' };
   const stops = [{ job_id: 5, work_date: '2026-08-26' }, { job_id: 5, work_date: '2026-08-27' }];
-  assert.equal(M.ticketName({ tag: 'JC', address: '1721 John McCain', city: 'Colleyville', title: 'Building 4' }), 'JC - 1721 John McCain, Colleyville - Building 4');
+  assert.equal(M.ticketName({ tag: 'JC', address: '1721 John McCain', city: 'Colleyville', title: 'Building 4' }), 'Building 4 - 1721 John McCain');
+  assert.equal(M.ticketName({ tag: 'R', address: '2155 Marsh Lane', title: '' }), '2155 Marsh Lane');   // no label = address only
 });
 
 test('pay week runs Saturday to Friday', () => {
@@ -422,15 +423,15 @@ test('Invoicing has Ready to bill with one button; AR is one pile per customer w
   assert.ok(w.includes('kind === "bill" && id && m === "POST"') && w.includes('M.readyToBill(job, shares, mat, invs)'));
 });
 
-test('LAW step 5: real invoice = ticket name, placeholder memo word for word, scope word for word, dated tomorrow, placeholder price, placeholder → $0 renamed', () => {
+test('LAW step 5: real invoice = ticket name, placeholder memo word for word, scope word for word, dated 2 days out, placeholder price, placeholder → $0 renamed', () => {
   const job = { id: 7, tag: 'R', address: '7900 Sovereign Row', city: 'Dallas', title: "O'Donnell Garage", scope: 'Removed and replaced 2 pipe boots.\n- Sealed curb.' };
   const ready = { days: [{ date: '2026-09-14', labor_total: 400 }], material: 120, through: '2026-09-14' };
   const invs = [{ id: 1, kind: 'placeholder', amount: 575, work_date: '2026-09-14', memo: 'R: 9/14/26', name: '' }];
   const w = M.writeRealInvoice(job, ready, invs, '2026-09-16', null);
-  assert.equal(w.name, "R - 7900 Sovereign Row, Dallas - O'Donnell Garage");
+  assert.equal(w.name, "O'Donnell Garage - 7900 Sovereign Row");
   assert.equal(w.memo, 'R: 9/14/26');                           // same memo as the placeholder, word for word
   assert.equal(w.scope, job.scope);                             // scope word for word
-  assert.equal(w.inv_date, '2026-09-17');                       // tomorrow
+  assert.equal(w.inv_date, '2026-09-18');                       // rule 5: 2 days out
   assert.equal(w.amount, 575);                                  // the placeholder's price, not a fresh guess
   assert.deepEqual(w.zero, [{ id: 1, name: 'Job Cost 1', memo: 'R: 9/14/26' }]);
   assert.equal(M.writeRealInvoice(job, ready, invs, '2026-09-16', 650).amount, 650);   // his price wins
@@ -771,4 +772,29 @@ test('a day on a zeroed placeholder is already billed (10/20/26, 1710 N Greenvil
   assert.equal(M.readyToBill(job, shares, [], invs), null);
   invs[1].amount = 800;   // still carrying money = not billed yet → still ready
   assert.notEqual(M.readyToBill(job, shares, [], invs), null);
+});
+
+test('RULE 5: placeholder = 2 weeks out, real invoice = 2 days out — one number each, used everywhere', () => {
+  assert.equal(M.PLACEHOLDER_DAYS_OUT, 14);
+  assert.equal(M.REAL_INVOICE_DAYS_OUT, 2);
+  const w = readFileSync('netlify/functions/work.mts', 'utf8');
+  assert.ok(!/addDays\([^)]*,\s*1\)/.test(w), 'nothing in work.mts dates an invoice 1 day out');
+  assert.ok(w.includes('M.addDays(o.work_date, M.PLACEHOLDER_DAYS_OUT)'));
+  assert.equal((w.match(/M\.REAL_INVOICE_DAYS_OUT/g) || []).length, 2);
+});
+
+test('RULE 6: SMS employees = "X men @ Y hours", Qty = man-hours, Rate = $50, no names; subs not on it', () => {
+  const two = [M.billLabor({ kind: 'employee', man: 'Tony', stops: 2, days: 1 }), M.billLabor({ kind: 'employee', man: 'Oscar', stops: 2, days: 1 })];
+  const l = M.menAtHours(two);
+  assert.equal(l.words, '2 men @ 4 hours');
+  assert.equal(l.qty, 8); assert.equal(l.rate, 50); assert.equal(l.amount, 400);
+  assert.ok(!/Tony|Oscar/.test(l.words));
+  const one = M.menAtHours([M.billLabor({ kind: 'employee', man: 'Tony', stops: 2, days: 1 })]);
+  assert.equal(one.words, '1 man @ 4 hours'); assert.equal(one.amount, 200);       // matches #4870
+  const mixed = M.menAtHours([M.billLabor({ kind: 'employee', man: 'A', stops: 1, days: 1 }), M.billLabor({ kind: 'employee', man: 'B', stops: 2, days: 1 })]);
+  assert.equal(mixed.words, '1 man @ 8 hours, 1 man @ 4 hours'); assert.equal(mixed.qty, 12); assert.equal(mixed.amount, 600);
+  const sub = M.billLabor({ kind: 'sub', shows_as: 'Puma', cost: 315 });
+  assert.equal(M.menAtHours([sub]), null);                                          // Puma is not on the men line
+  const odd = M.menAtHours([M.billLabor({ kind: 'employee', man: 'A', stops: 7, days: 1 })]);
+  assert.equal(Math.round(odd.qty * odd.rate * 100) / 100, odd.amount);            // Qty × $50 always = the amount
 });
