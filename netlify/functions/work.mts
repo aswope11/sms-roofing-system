@@ -1253,6 +1253,80 @@ async function syncQbTotals(sql: any, jobId: number | null) {
 // ("Invoice 4914.pdf") — a reply on an old thread ("Re: Allen primary Roof") still counts as sent.
 function sentInvoiceQuery(num: string) { return `in:sent {subject:"${num}" filename:"${num}"}`; }
 
+// FIND WHAT WAS SENT BY THE ADDRESS (10/21/26, 2264 Vantage): he emails "2264 Vantage - Invoice" with "Invoice 4920.pdf"
+// attached. If the app's invoice has no number, no QuickBooks link, or $0, it can't search by number — so it searches his
+// SENT mail by the ticket's address, reads the invoice # off the subject or attachment name, and pulls that invoice's
+// total from QuickBooks. He never has to go look up what he billed and type it in.
+const addrKeyOf = (job: any) => String(job?.address || "").trim().toLowerCase().split(/[\s,.#]+/).filter(Boolean).slice(0, 2).join(" ");
+async function findSentByAddress(sql: any, job: any, after: string | null) {
+  const key = addrKeyOf(job);
+  if (!key || !/^\d/.test(key)) return null;
+  const since = after ? `after:${String(after).slice(0, 10).replace(/-/g, "/")} ` : "";
+  const hit = await gmail(`messages?q=${encodeURIComponent(`in:sent ${since}subject:(${key}) {subject:invoice subject:draw filename:invoice}`)}&maxResults=5`);
+  for (const h of (hit?.messages || [])) {
+    const msg = await gmail(`messages/${h.id}?format=full`);
+    const names = [headerOf(msg, "Subject"), ...attachmentsOf(msg.payload).map((a: any) => String(a.filename || ""))];
+    const nums = [...new Set(names.flatMap((s: string) => [...s.matchAll(/(?:invoice|draw)\s*#?\s*(\d{3,6})/gi)].map((x) => x[1])))];
+    for (const n of nums) {
+      const q = ((await qbQuery(`SELECT Id, DocNumber, TotalAmt, CustomerRef FROM Invoice WHERE DocNumber = '${qEsc(n)}'`)).Invoice || [])[0];
+      if (!q) continue;
+      const [used] = norm(await sql`SELECT 1 FROM invoices WHERE qb_id = ${String(q.Id)} AND (sent_at IS NOT NULL OR paid_at IS NOT NULL)`);
+      if (used) continue;   // an invoice already filed as sent on some ticket is never taken twice
+      const cust = String(q.CustomerRef?.name || "").toLowerCase().replace(/[,.#]/g, " ").replace(/\s+/g, " ");
+      if (!cust.includes(key)) continue;   // a number that belongs to another job is never taken
+      return { msg, number: String(q.DocNumber), qb_id: String(q.Id), amount: Math.round(Number(q.TotalAmt) * 100) / 100,
+        day: new Date(Number(msg.internalDate || Date.now()) - 5 * 3600 * 1000).toISOString().slice(0, 10) };
+    }
+  }
+  return null;
+}
+// Put the found invoice on the ticket: an unlinked row becomes it; a row tied to a different QuickBooks invoice is the
+// duplicate (dropDuplicates files its PDF and takes it out). Then the email + attachments go in the job file → AR.
+async function linkSentInvoice(sql: any, inv: any, f: any) {
+  const [taken] = norm(await sql`SELECT id, job_id FROM invoices WHERE qb_id = ${f.qb_id} AND id <> ${inv.id}`);
+  let row: any;
+  if (taken) {
+    if (Number(taken.job_id) !== Number(inv.job_id)) return null;
+    [row] = norm(await sql`UPDATE invoices SET number = ${f.number}, amount = ${f.amount}, sent_at = COALESCE(sent_at, ${f.day}::date), inv_date = ${f.day}::date WHERE id = ${taken.id} RETURNING *`);
+  } else if (!inv.qb_id || String(inv.qb_id) === f.qb_id) {
+    [row] = norm(await sql`UPDATE invoices SET number = ${f.number}, qb_id = ${f.qb_id}, amount = ${f.amount}, sent_at = ${f.day}::date, inv_date = ${f.day}::date WHERE id = ${inv.id} RETURNING *`);
+  } else {
+    [row] = norm(await sql`INSERT INTO invoices (job_id, kind, name, number, amount, qb_id, memo, scope, work_date, inv_date, sent_at, covers_through)
+      VALUES (${inv.job_id}, ${inv.kind}, ${inv.name || ""}, ${f.number}, ${f.amount}, ${f.qb_id}, ${inv.memo || ""}, ${inv.scope || ""}, ${inv.work_date || null}, ${f.day}::date, ${f.day}::date, ${inv.covers_through || null}) RETURNING *`);
+    await sql`UPDATE invoices SET zeroed_by = ${row.id} WHERE zeroed_by = ${inv.id}`;
+  }
+  const [had] = norm(await sql`SELECT job_id FROM mail_items WHERE message_id = ${f.msg.id}`);
+  if (!had || Number(had.job_id) !== Number(inv.job_id)) {
+    const subject = headerOf(f.msg, "Subject");
+    const atts = attachmentsOf(f.msg.payload);
+    await fileEmail(sql, inv.job_id, f.msg.id, subject, f.day);
+    for (const a of atts) await fileAttachment(sql, inv.job_id, f.msg.id, a);
+    await sql`INSERT INTO mail_items (message_id, from_addr, subject, sent_at, snippet, job_id, state, what, attachments)
+      VALUES (${f.msg.id}, ${headerOf(f.msg, "From")}, ${subject}, ${f.day}, ${(f.msg.snippet || "").slice(0, 400)}, ${inv.job_id}, 'filed', ${`Sent ${f.number} → email + ${atts.length} file${atts.length === 1 ? "" : "s"} filed`}, ${atts.length})
+      ON CONFLICT (message_id) DO UPDATE SET job_id = EXCLUDED.job_id, state = EXCLUDED.state, what = EXCLUDED.what, attachments = EXCLUDED.attachments`;
+  }
+  try { await dropDuplicates(sql, row); } catch { /* the duplicate stays until the next pass */ }
+  try { await qbSetDate(f.qb_id, f.day); } catch { /* date syncs next pass */ }
+  return row;
+}
+// Runs when Invoicing, AR or a ticket opens: every unsent bill on a finished ticket that the number search can't settle.
+async function linkUnsentByAddress(sql: any, jobId: number | null) {
+  try {
+    const rows = norm(jobId
+      ? await sql`SELECT i.*, j.address, j.done_at FROM invoices i JOIN jobs j ON j.id = i.job_id WHERE i.job_id = ${jobId}
+          AND i.kind IN ('real','draw') AND i.sent_at IS NULL AND i.paid_at IS NULL AND (COALESCE(i.qb_id,'') = '' OR COALESCE(i.number,'') = '' OR i.amount <= 0)`
+      : await sql`SELECT i.*, j.address, j.done_at FROM invoices i JOIN jobs j ON j.id = i.job_id WHERE j.done_at IS NOT NULL
+          AND i.kind IN ('real','draw') AND i.sent_at IS NULL AND i.paid_at IS NULL AND (COALESCE(i.qb_id,'') = '' OR COALESCE(i.number,'') = '' OR i.amount <= 0)`);
+    for (const r of rows) {
+      try {
+        const from = r.done_at || r.created_at;
+        const f = await findSentByAddress(sql, r, from ? M.addDays(String(from).slice(0, 10), -3) : null);
+        if (f) await linkSentInvoice(sql, r, f);
+      } catch { /* Gmail or QuickBooks unreachable: change nothing, try next open */ }
+    }
+  } catch { /* leave it as it is */ }
+}
+
 async function unsentOutOfAR(sql: any, rows: any[], txn: Record<string, string>) {
   const tday = today(), tomorrow = M.addDays(tday, M.REAL_INVOICE_DAYS_OUT);   // rule 5: real invoice = 2 days out
   for (const r of rows) {
@@ -1293,7 +1367,7 @@ export default async function handler(req: Request) {
   const id = idRaw && /^\d+$/.test(idRaw) ? Number(idRaw) : null;
   const m = req.method;
   const body = async () => { try { return await req.json(); } catch { return {}; } };
-  if (m === "GET" && (kind === "ar" || kind === "invoicing" || (kind === "job" && id))) await syncQbTotals(sql, kind === "job" ? id : null);
+  if (m === "GET" && (kind === "ar" || kind === "invoicing" || (kind === "job" && id))) { await linkUnsentByAddress(sql, kind === "job" ? id : null); await syncQbTotals(sql, kind === "job" ? id : null); }
 
   // TALK (10/4/26): reads what he said, returns what it WOULD do. Writes nothing.
   if (kind === "talk" && m === "POST") {
@@ -2156,6 +2230,15 @@ export default async function handler(req: Request) {
               const hit = await gmail(`messages?q=${encodeURIComponent(sentInvoiceQuery(num))}&maxResults=1`);
               if (hit?.messages?.length) sentMsg = await gmail(`messages/${hit.messages[0].id}?format=full`);
             } catch (e: any) { if (!b.anyway) return refuse("No sent email found — couldn't look in Gmail: " + String(e?.message || e)); }
+          }
+          // No number, or the number isn't in his sent mail (10/21/26): look by the address, take the invoice # and total he actually sent.
+          if (!sentMsg) {
+            try {
+              const [jb] = norm(await sql`SELECT address, done_at FROM jobs WHERE id = ${inv.job_id}`);
+              const from = jb?.done_at || inv.created_at;
+              const f = await findSentByAddress(sql, jb, from ? M.addDays(String(from).slice(0, 10), -3) : null);
+              if (f) { const row = await linkSentInvoice(sql, inv, f); if (row) return json({ ...row, filed_email: true, found_by_address: f.number }); }
+            } catch { /* fall through to the normal not-found message */ }
           }
           if (!sentMsg && !b.anyway) return refuse(`No sent email with "${num || "this invoice's number"}" in the subject or an attachment name — not marked sent.`);
           // THE CHECKER GATE (10/8/26): fix what it can, and anything it can't fix stops Mark sent until he says "I know, it's ok".
