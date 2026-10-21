@@ -568,7 +568,7 @@ async function zeroReplacedPlaceholders(sql: any, inv: any, job: any) {
   for (const p of covered) {
     const name = M.nextJobCostName(names); names.push({ name });
     await sql`UPDATE invoices SET zeroed_from = amount, zeroed_by = ${inv.id}, amount = 0, name = ${name}, memo = ${p.memo || M.placeholderMemo(job, p.work_date)} WHERE id = ${p.id}`;
-    if (p.qb_id) { try { await qbZeroPlaceholder(p.qb_id, name); } catch (e: any) { errs.push(`placeholder #${p.number} not zeroed in QuickBooks: ${String(e?.message || e)}`); } }
+    if (p.qb_id) { try { await qbZeroPlaceholder(p.qb_id, name); await qbDeleteInvoice(p.qb_id); } catch (e: any) { errs.push(`placeholder #${p.number} not zeroed/deleted in QuickBooks: ${String(e?.message || e)}`); } }
   }
   return errs;
 }
