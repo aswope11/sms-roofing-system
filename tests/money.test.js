@@ -212,6 +212,7 @@ test('pay week runs Saturday to Friday', () => {
 
 test('browser copy of money rules matches the server copy', () => {
   assert.equal(readFileSync('public/money.js', 'utf8'), readFileSync('lib/money.js', 'utf8'));
+  assert.equal(readFileSync('public/rules.js', 'utf8'), readFileSync('lib/rules.js', 'utf8'));   // 10/22/26: build copies lib → public
 });
 
 test('no invoice ever carries terms — there is no terms field anywhere', () => {
@@ -222,7 +223,7 @@ test('no invoice ever carries terms — there is no terms field anywhere', () =>
 test('nothing is deleted — the work API only removes a stop (a man moved off a day), rewrites the lines of an invoice being corrected, or deletes a priced placeholder when its day is taken back (step 2 locked rule)', () => {
   const api = readFileSync('netlify/functions/work.mts', 'utf8');
   const dels = api.match(/DELETE\s+FROM\s+(\w+)/gi) || [];
-  assert.deepEqual([...new Set(dels.map(d => d.split(/\s+/).pop().toLowerCase()))].sort(), ['bid_options', 'bid_systems', 'crew_days', 'invoices', 'stops', 'supply_lines', 'whoswho_ask']);   // whoswho_ask = a question he answered (10/11/26), not a record
+  assert.deepEqual([...new Set(dels.map(d => d.split(/\s+/).pop().toLowerCase()))].sort(), ['bid_options', 'bid_systems', 'crew_days', 'invoices', 'supply_lines', 'whoswho_ask']);   // stops come off only through /d/stop (10/22/26, built once — paid check first). whoswho_ask = a question he answered (10/11/26), not a record
   assert.equal((api.match(/DELETE FROM invoices/g) || []).length, 4);   // un-green, stale QuickBooks copy, reopen undo, the duplicate at Mark sent (10/15/26, his order) — every one tied to QuickBooks
   assert.ok(api.includes('if (!res.ok) continue;') && api.indexOf("VALUES (${d.job_id}, 'Documents'") < api.indexOf('DELETE FROM invoices WHERE id = ${d.id}'));   // the duplicate's PDF is in the job file before its row goes
   assert.ok(api.includes("SELECT * FROM invoices WHERE kind = 'placeholder' AND work_date = ${b.work_date} AND amount > 0"));
@@ -780,7 +781,7 @@ test('RULE 5: placeholder = 2 weeks out, real invoice = 2 days out — one numbe
   const w = readFileSync('netlify/functions/work.mts', 'utf8');
   assert.ok(!/addDays\([^)]*,\s*1\)/.test(w), 'nothing in work.mts dates an invoice 1 day out');
   assert.ok(w.includes('M.addDays(o.work_date, M.PLACEHOLDER_DAYS_OUT)'));
-  assert.equal((w.match(/M\.REAL_INVOICE_DAYS_OUT/g) || []).length, 2);
+  assert.equal((w.match(/M\.REAL_INVOICE_DAYS_OUT/g) || []).length, 1);   // 10/22/26: built once — settleUnsent is the only place
 });
 
 test('RULE 6: SMS employees = "X men @ Y hours", Qty = man-hours, Rate = $50, no names; subs not on it', () => {

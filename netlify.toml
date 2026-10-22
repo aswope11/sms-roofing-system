@@ -1,4 +1,5 @@
 [build]
-  command = "npm test"
+  # BUILT ONCE (10/22/26): lib/money.js and lib/rules.js are the only copies anyone edits — the browser gets them copied in at build.
+  command = "cp lib/money.js lib/rules.js public/ && npm test"
   publish = "public"
   functions = "netlify/functions"
