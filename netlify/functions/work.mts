@@ -521,6 +521,37 @@ async function checkAndRecord(sql: any, inv: any, job: any) {
   await sql`UPDATE invoices SET check_problems = ${r.problems.join(" · ")}, checked_at = NOW() WHERE id = ${inv.id}`;
   return r;
 }
+// STEP ONE, DONE RIGHT (10/22/26, his order after 206 W. Rusk): before anything is written on a QuickBooks customer, that customer
+// must sit under its company (Company › Building › Tenant). 206 W. Rusk was a loose customer with "Wortham Brothers Roofing" in its
+// NAME but no Wortham parent. A loose customer whose company has a parent in QuickBooks is moved under it first; the map row follows.
+// Never holds anything up: if QuickBooks won't move it, the write goes on as it was.
+async function nestUnderCompany(sql: any, job: any, cust: any) {
+  try {
+    const c = (await qb("GET", `customer/${cust.Id}`)).Customer;
+    if (!c || c.ParentRef?.value) return cust;
+    const parent = W.companyQbParent(await qbAllCustomers(), job.customer_name);
+    if (!parent || String(parent.Id) === String(c.Id)) return cust;
+    const out = (await qb("POST", "customer", { Id: c.Id, SyncToken: c.SyncToken, sparse: true, DisplayName: c.DisplayName, ParentRef: { value: parent.Id }, Job: true })).Customer;
+    const path = String(out.FullyQualifiedName || out.DisplayName).split(":").map((x: string) => x.trim()).join(" › ");
+    await sql`UPDATE whoswho SET qb_path = ${path}, updated_at = NOW() WHERE qb_customer_id = ${String(c.Id)}`;
+    await sql`INSERT INTO whoswho_log (row_id, what) VALUES (NULL, ${`moved "${c.DisplayName}" under "${parent.DisplayName}" before writing ${M.ticketName(job)}`})`;
+    return { ...cust, DisplayName: path, row: cust.row ? { ...cust.row, qb_path: path } : cust.row };
+  } catch { return cust; }
+}
+// RE-SEND WHAT WHO'S WHO STOPPED (10/22/26): 206 W. Rusk's real invoice was stopped 10/13 for an unconfirmed row, the row was
+// confirmed 8 minutes later, and nothing re-sent it — it sat out of QuickBooks for 9 days. Confirming or answering a row now
+// pushes every unsent real invoice on those tickets that never made it to QuickBooks.
+async function resendStopped(sql: any, jobIds: number[]) {
+  const sent: string[] = [], notSent: string[] = [];
+  if (!jobIds.length) return { sent, notSent };
+  const invs = norm(await sql`SELECT * FROM invoices WHERE job_id = ANY(${jobIds}::int[]) AND kind = 'real' AND COALESCE(qb_id, '') = ''
+    AND sent_at IS NULL AND paid_at IS NULL AND amount > 0 ORDER BY id`);
+  for (const inv of invs) {
+    try { const job = norm((await sql`${JOB_COLS(sql)} WHERE j.id = ${Number(inv.job_id)}`)[0]); const r = await pushInvoiceToQB(sql, inv.id, job); sent.push(`${inv.name || "invoice"} → #${r.number}`); }
+    catch (e: any) { notSent.push(`${inv.name || "invoice"}: ${String(e?.message || e)}`); }
+  }
+  return { sent, notSent };
+}
 async function pushInvoiceToQB(sql: any, invoiceId: number, job: any) {
   const [inv] = norm(await sql`SELECT * FROM invoices WHERE id = ${invoiceId}`);
   if (!inv) throw new Error("That invoice doesn't exist.");
@@ -533,7 +564,7 @@ async function pushInvoiceToQB(sql: any, invoiceId: number, job: any) {
     // SAME CUSTOMER AS ITS PLACEHOLDER (10/4/26): the real invoice goes to the QuickBooks customer its placeholder is already on.
     // A name lookup could miss a spelling (6101 Windhaven Pkwy vs Parkway) and make a duplicate customer; the placeholder never lies.
     // WHO'S WHO (10/11/26): the map row's QuickBooks customer and Bill To — no exceptions, no guessing.
-    const cust: any = await followPlaceholder(sql, job, await qbCustomerFor(job, sql));
+    const cust: any = await nestUnderCompany(sql, job, await followPlaceholder(sql, job, await qbCustomerFor(job, sql)));
     job = withMapBill(job, cust.row);
     const DocNumber = await qbNextNumber();
     const made = (await qb("POST", "invoice", {
@@ -725,6 +756,7 @@ async function pushPlaceholderToQB(sql: any, o: any, amount: number) {
   // WHO'S WHO (10/11/26): a new placeholder goes to the map row's QuickBooks customer — no match, no write.
   let cust: any;
   try { cust = await followPlaceholder(sql, o.job, await qbCustomerFor(o.job, sql)); } catch (e: any) { throw new Error(`${label}: ${String(e?.message || e)}`); }
+  cust = await nestUnderCompany(sql, o.job, cust);   // STEP ONE (10/22/26): a loose building customer goes under its company first
   const DocNumber = await qbNextNumber();
   const inv_date = M.addDays(o.work_date, M.PLACEHOLDER_DAYS_OUT);
   const memo = M.placeholderMemo(o.job, o.work_date);
@@ -2426,7 +2458,9 @@ export default async function handler(req: Request) {
           status = 'confirmed', conflicts = '[]'::jsonb, confirmed_by = 'him', confirmed_at = NOW(), updated_at = NOW() WHERE id = ${id}`;
         await sql`INSERT INTO whoswho_log (row_id, what) VALUES (${id}, ${changed.length ? "fixed: " + changed.join(" · ") : "confirmed as shown"})`;
         const [back] = norm(await sql`SELECT * FROM whoswho WHERE id = ${id}`);       // read back in a separate request
-        return json(back);
+        const here = norm(await sql`${JOB_COLS(sql)} WHERE j.property_id = ${cur.property_id}`).filter((j: any) => W.tenantKey(j.tenant) === cur.tenant_key);
+        const resent = await resendStopped(sql, here.map((j: any) => Number(j.id)));
+        return json({ ...back, resent });
       }
       if (idRaw === "ask" && m === "GET") {
         const b0 = await built();
@@ -2471,6 +2505,7 @@ export default async function handler(req: Request) {
             catch (e: any) { notSent.push(`${mdyy(o.work_date)}: ${String(e?.message || e)}`); }
           }
         }
+        if (back.ok && back.row.id === row.id) { const r = await resendStopped(sql, [Number(job.id)]); sent.push(...r.sent); notSent.push(...r.notSent); }
         return json({ row, matches: back.ok && back.row.id === row.id, sent, notSent });
       }
       if (idRaw === "test" && m === "POST") {
