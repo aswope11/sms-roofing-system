@@ -1378,6 +1378,15 @@ export default async function handler(req: Request) {
   const id = idRaw && /^\d+$/.test(idRaw) ? Number(idRaw) : null;
   const m = req.method;
   const body = async () => { try { return await req.json(); } catch { return {}; } };
+  // GET /w/sent-lookup/:jobId — read-only: what the address search finds in his sent mail for this ticket, or why it can't.
+  if (m === "GET" && kind === "sent-lookup" && id) {
+    try {
+      const [jb] = norm(await sql`SELECT id, address, done_at FROM jobs WHERE id = ${id}`);
+      const from = jb?.done_at;
+      const f = await findSentByAddress(sql, jb, from ? M.addDays(String(from).slice(0, 10), -3) : null);
+      return json({ job: jb, key: addrKeyOf(jb), found: f ? { number: f.number, qb_id: f.qb_id, amount: f.amount, day: f.day, subject: headerOf(f.msg, "Subject") } : null });
+    } catch (e: any) { return json({ error: String(e?.stack || e) }); }
+  }
   if (m === "GET" && (kind === "ar" || kind === "invoicing" || (kind === "job" && id))) { await linkUnsentByAddress(sql, kind === "job" ? id : null); await syncQbTotals(sql, kind === "job" ? id : null); }
 
   // TALK (10/4/26): reads what he said, returns what it WOULD do. Writes nothing.
