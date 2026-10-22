@@ -1258,19 +1258,23 @@ function sentInvoiceQuery(num: string) { return `in:sent {subject:"${num}" filen
 // SENT mail by the ticket's address, reads the invoice # off the subject or attachment name, and pulls that invoice's
 // total from QuickBooks. He never has to go look up what he billed and type it in.
 const addrKeyOf = (job: any) => String(job?.address || "").trim().toLowerCase().split(/[\s,.#]+/).filter(Boolean).slice(0, 2).join(" ");
-async function findSentByAddress(sql: any, job: any, after: string | null) {
+async function findSentByAddress(sql: any, job: any, after: string | null, tr: string[] = []) {
   const key = addrKeyOf(job);
   if (!key || !/^\d/.test(key)) return null;
   const since = after ? `after:${String(after).slice(0, 10).replace(/-/g, "/")} ` : "";
   const hit = await gmail(`messages?q=${encodeURIComponent(`in:sent ${since}subject:(${key}) {subject:invoice subject:draw filename:invoice}`)}&maxResults=5`);
+  tr.push(`gmail hits: ${(hit?.messages || []).length}`);
   for (const h of (hit?.messages || [])) {
     const msg = await gmail(`messages/${h.id}?format=full`);
     const names = [headerOf(msg, "Subject"), ...attachmentsOf(msg.payload).map((a: any) => String(a.filename || ""))];
     const nums = [...new Set(names.flatMap((s: string) => [...s.matchAll(/(?:invoice|draw)\s*#?\s*(\d{3,6})/gi)].map((x) => x[1])))];
+    tr.push(`msg ${h.id}: names=${JSON.stringify(names)} nums=${JSON.stringify(nums)}`);
     for (const n of nums) {
       const q = ((await qbQuery(`SELECT Id, DocNumber, TotalAmt, CustomerRef FROM Invoice WHERE DocNumber = '${qEsc(n)}'`)).Invoice || [])[0];
+      tr.push(`qb ${n}: ${q ? q.Id + ' ' + q.CustomerRef?.name + ' ' + q.TotalAmt : 'none'}`);
       if (!q) continue;
       const [used] = norm(await sql`SELECT 1 FROM invoices WHERE qb_id = ${String(q.Id)} AND (sent_at IS NOT NULL OR paid_at IS NOT NULL)`);
+      if (used) tr.push('already used');
       if (used) continue;   // an invoice already filed as sent on some ticket is never taken twice
       const cust = String(q.CustomerRef?.name || "").toLowerCase().replace(/[,.#]/g, " ").replace(/\s+/g, " ");
       if (!cust.includes(key)) continue;   // a number that belongs to another job is never taken
@@ -1383,8 +1387,9 @@ export default async function handler(req: Request) {
     try {
       const [jb] = norm(await sql`SELECT j.id, p.address, j.done_at FROM jobs j JOIN properties p ON p.id = j.property_id WHERE j.id = ${id}`);
       const from = jb?.done_at;
-      const f = await findSentByAddress(sql, jb, from ? M.addDays(String(from).slice(0, 10), -3) : null);
-      return json({ job: jb, key: addrKeyOf(jb), found: f ? { number: f.number, qb_id: f.qb_id, amount: f.amount, day: f.day, subject: headerOf(f.msg, "Subject") } : null });
+      const tr: string[] = [];
+      const f = await findSentByAddress(sql, jb, from ? M.addDays(String(from).slice(0, 10), -3) : null, tr);
+      return json({ trace: tr, job: jb, key: addrKeyOf(jb), found: f ? { number: f.number, qb_id: f.qb_id, amount: f.amount, day: f.day, subject: headerOf(f.msg, "Subject") } : null });
     } catch (e: any) { return json({ error: String(e?.stack || e) }); }
   }
   if (m === "GET" && (kind === "ar" || kind === "invoicing" || (kind === "job" && id))) { await linkUnsentByAddress(sql, kind === "job" ? id : null); await syncQbTotals(sql, kind === "job" ? id : null); }
