@@ -11,6 +11,7 @@ export async function renderTicket(jobId, mount) {
   let flushScope = async () => {};
   const again = async () => { try { await flushScope(); } catch (e) {} return renderTicket(jobId, mount); };
   const aging = drawAging(j, L.invoices, L.today);
+  const coveredThrough = L.invoices.filter(i => i.kind === 'real').map(i => i.covers_through || i.inv_date).filter(Boolean).sort().pop();
 
   mount.innerHTML = `
     ${aging && aging.stale ? `<div class="card stalebar">Unpaid ${money(aging.owed)} · ${aging.days} days — don't send a crew back until it clears</div>` : ''}
