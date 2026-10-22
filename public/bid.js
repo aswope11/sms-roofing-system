@@ -1,7 +1,7 @@
 // THE BID, inside its job file. A bid starts at the customer: customer → property → new job file, tag BID.
 // It is not a ticket. Nothing is a ticket until Awarded. Its sheets live in this job file's drawers.
 import { esc, call, doAndProve, fail, ask, toast } from './ui.js';
-import { money, bidState, sortBids, shortDateYY } from './money.js';
+import { money, bidState, shortDateYY } from './money.js';
 
 // Template structure carried over from the old bid app (structure only — no estimates, no saved bids yet).
 export const BID_CATS = [

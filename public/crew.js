@@ -1,5 +1,5 @@
 import { esc, $app, call, doAndProve, crumbs, setTab, fail, dragRows, saveCrewOrder, delX } from './ui.js';
-import { money, crewColor, groupCrew } from './money.js';
+import { crewColor, groupCrew } from './money.js';
 import { payrollSection } from './payroll.js';
 
 export async function crewPage() {

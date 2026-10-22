@@ -1,6 +1,6 @@
 // The ticket's life, drawn inside the job file page. Money (invoices + general ledger) lives on its own page: jobCostPage.
-import { esc, $app, call, doAndProve, crumbs, fail, ask, toast, qbPdfLink } from './ui.js';
-import { money, round2, isWork, canPlaceholder, isBill, inAR, shortDate, costSoFar, LANES, invoicingLane, ticketName, drawAging, placeholderDays } from './money.js';
+import { esc, call, doAndProve, fail, ask, toast, qbPdfLink } from './ui.js';
+import { money, round2, isWork, shortDate, ticketName, drawAging, placeholderDays } from './money.js';
 
 export async function renderTicket(jobId, mount) {
   const L = await call(`/w/job/${jobId}`);
@@ -10,10 +10,7 @@ export async function renderTicket(jobId, mount) {
   // 10/4/26: any redraw first finishes saving the scope words, so a box tick or button can never wipe what he typed
   let flushScope = async () => {};
   const again = async () => { try { await flushScope(); } catch (e) {} return renderTicket(jobId, mount); };
-  const lane = j.done_at && L.places.includes('Invoicing') ? LANES[invoicingLane(j, L.invoices)] : null;
   const aging = drawAging(j, L.invoices, L.today);
-  const coveredThrough = L.invoices.filter(i => i.kind === 'real').map(i => i.covers_through || i.inv_date).filter(Boolean).sort().pop();
-  const phTotal = round2(L.invoices.filter(i => i.kind === 'placeholder' && Number(i.amount) > 0 && (!coveredThrough || String(i.work_date) > coveredThrough)).reduce((a, i) => a + Number(i.amount), 0));
 
   mount.innerHTML = `
     ${aging && aging.stale ? `<div class="card stalebar">Unpaid ${money(aging.owed)} · ${aging.days} days — don't send a crew back until it clears</div>` : ''}

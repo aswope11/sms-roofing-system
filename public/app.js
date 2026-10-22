@@ -4,7 +4,6 @@ import { schedulePage } from './schedule.js';
 import { invoicingPage } from './invoicing.js';
 import { renderBid } from './bid.js';
 import { bidsPage, templatesPage } from './bids.js';
-import { mailStrip } from './mail.js';
 import { arPage } from './ar.js';
 import { supplyPage, supplyInvoicePage, supplyHousePage } from './supply.js';
 import { crewPage } from './crew.js';

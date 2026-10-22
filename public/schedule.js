@@ -3,7 +3,7 @@
 // the hover that pops up what THIS man did HERE on THIS day, and the pills under the grid that move a ticket around.
 import { esc, $app, call, doAndProve, crumbs, setTab, fail, toast, askDelete } from './ui.js';
 import { subPayLedger } from './payledger.js';
-import { groupCrew, dispatchLine, shortDate, addDays, stopShares, daysFor, manDayPay, payFor, crewColor, ticketName, whyCantSplit, rebalancePcts } from './money.js';
+import { groupCrew, addDays, stopShares, daysFor, manDayPay, payFor, crewColor, ticketName, whyCantSplit, rebalancePcts } from './money.js';
 
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const dayHead = d => { const x = new Date(d + 'T12:00:00'); return `${DOW[x.getDay()]} - ${x.getMonth() + 1}/${x.getDate()}`; };

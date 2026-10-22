@@ -3,7 +3,6 @@
 import { esc, $app, call, doAndProve, crumbs, setTab, fail, ask, toast, stillMissing, qbPdfLink } from './ui.js';
 import { money, ticketName, invoicingLane, isBill, shortDate, round2 } from './money.js';
 
-const age = (from, to) => from ? Math.max(0, Math.round((new Date(to + 'T12:00:00') - new Date(String(from).slice(0, 10) + 'T12:00:00')) / 86400000)) : null;
 
 // TENANT ON THE FRONT OF EVERY TICKET (10/1/26): tenant first, then the customer.
 const who = j => [j.tenant || j.tenant_name, j.customer_name].filter(Boolean).join(' · ');

@@ -12,7 +12,6 @@ import type { Config } from "@netlify/functions";
 import * as M from "../../lib/money.js";
 import * as Q from "../../lib/qb-pdf.js";
 import * as AR from "../../lib/qb-ar.js";
-import * as L from "../../lib/qb-layers.js";
 import * as W from "../../lib/whoswho.js";
 import { repushReason } from "../../lib/mail-label.js";
 import * as TALK from "../../lib/bidtalk.js";
@@ -95,11 +94,6 @@ const qbQuery = (q: string) => qb("GET", `query?query=${encodeURIComponent(q)}`)
 const qEsc = (s: string) => String(s || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 // QuickBooks customer = Company › Building › Tenant (10/9/26, the structure of the app — see lib/qb-layers.js).
 // An old customer this building + tenant was already invoiced under always wins; anything new is made in its layer.
-const qbLayerApi = {
-  query: async (where: string) => (await qbQuery(`SELECT * FROM Customer WHERE ${where} AND Active = true`)).Customer || [],
-  get: async (id: string) => (await qb("GET", `customer/${id}`)).Customer,
-  create: async (payload: any) => (await qb("POST", "customer", payload)).Customer,
-};
 // ================= WHO'S WHO (10/11/26, his order: "The app must never guess again.") =================
 // Every ticket/invoice is matched to ONE row of the locked customer map (lib/whoswho.js) before anything goes to QuickBooks.
 // Confirmed match → that row's QuickBooks customer and Bill To, no exceptions. No confirmed match → STOP: the ticket goes on
