@@ -97,6 +97,8 @@ if (!window._smsDel) {
   document.addEventListener('click', async e => {
     const b = e.target.closest('[data-del]');
     if (!b) return;
+    // Schedule grid owns × on a man's day: same-week reload, one confirm — not this handler too.
+    if (b.matches('.kill[data-del="stop"]') && typeof window._smsSchedReload === 'function') return;
     e.preventDefault(); e.stopPropagation();
     b.disabled = true;
     try {

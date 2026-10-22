@@ -13,13 +13,14 @@ const dayShort = d => { const x = new Date(d + 'T12:00:00'); return `${x.getMont
 // old board BUILTIN_TYPES colours, by billing code
 const TYPE_COLOR = { JC: '#4a90e2', R: '#3ea672', UC: '#e8a53c', CO: '#d4557a', BID: '#c0864a' };
 const typeColor = t => TYPE_COLOR[t] || '#8a93a3';
-// old board STAGES / STAGE_GROUPS. On the schedule page the contract chip reads "Awarded" and its bracket label is blank.
-const STAGES = [{ k: 'ready', l: 'Ready to work' }, { k: 'hold', l: 'the customer' }, { k: 'trades', l: 'other trades' }, { k: 'contract', l: 'Awarded' }];
-// 10/10/26, his ask: "Awarded" pill and the Awarded lane removed from the Schedule page.
+// Stage pills under the grid. No Awarded stage here — old "contract" tickets still read as Ready to work.
+const STAGES = [{ k: 'ready', l: 'Ready to work' }, { k: 'hold', l: 'the customer' }, { k: 'trades', l: 'other trades' }];
 const STAGE_GROUPS = [{ l: '', ks: ['ready'] }, { l: 'Waiting on', ks: ['hold', 'trades'] }];
 const STAGE_LABEL = { ready: 'Ready to work', hold: 'Held up by the customer', trades: 'Waiting on other trades', contract: 'Awarded' };
-let activeDay = null;  // 10/10/26: null = today (default); [] = no day active — he can turn every Active off.  // 10/7/26: he can hold Active on several dates at once — tap a date to add it, tap again to drop it.   // his rule 10/6/26 (changed his mind): tap "Active" on any date and that day works like today — its jobs drop off Ready to work and the + box list. The Today button puts it back on today.
+// Active days: null → today; [] → none; otherwise the dates he tapped. Today button resets to null.
+let activeDay = null;
 let schedOpen = { hold: false, trades: false };           // the two hold buckets start shut on every load
+let greenBusy = new Set();                               // one green tap at a time per day (no double placeholder push)
 const foldState = () => { try { return JSON.parse(localStorage.getItem('smsSchedFold') || '{}') || {}; } catch { return {}; } };
 
 export async function schedulePage(start) {
@@ -58,9 +59,7 @@ export async function schedulePage(start) {
   // ---------- (3) THE PILLS: old stageBarHTML ----------
   const stageBarHTML = j => {
     const st = j.stage || 'ready';
-    const chip = x => `<button type="button" class="stchip ${st === x.k ? 'on' : ''}${x.k === 'contract' ? ' toBids' : ''}" data-stage="${x.k}" data-job="${j.id}"
-      ${x.k === 'contract' ? 'title="Awarded — this ticket sits in the Awarded lane at the bottom of the Schedule tab"' : ''}>${esc(x.l)}</button>`;
-    // 10/10/26, his ask: Priority moved to the far left; Complete pill added (does the same as the ticket's Complete button).
+    const chip = x => `<button type="button" class="stchip ${st === x.k ? 'on' : ''}" data-stage="${x.k}" data-job="${j.id}">${esc(x.l)}</button>`;
     return `<div class="stbar"><span class="stgrp"><button type="button" class="stchip ${j.priority ? 'on' : ''}" data-prio="${j.id}" title="Puts this ticket on top of its list. Tap again to take it off.">Priority</button></span>${
       STAGE_GROUPS.map(g => `<span class="stgrp">${g.l ? `<span class="stgl">${esc(g.l)}</span>` : ''}${g.ks.map(k => chip(STAGES.find(x => x.k === k))).join('')}</span>`).join('')}<span class="stgrp"><button type="button" class="stchip" data-complete="${j.id}" title="Complete — moves it to Invoicing and the invoice gets written now.">Complete</button></span></div>`;
   };
@@ -223,13 +222,17 @@ export async function schedulePage(start) {
   $app().querySelectorAll('button[data-act]').forEach(b => b.onclick = ev => { ev.stopPropagation(); { const d = b.dataset.act, cur = activeDay || [w.today]; activeDay = cur.includes(d) ? cur.filter(x => x !== d) : [...cur, d]; } schedulePage(w.start); });
   $app().querySelectorAll('th[data-green]').forEach(th => th.onclick = () => {
     const d = th.dataset.green, green = !isGreen(d);
+    if (greenBusy.has(d)) return;
+    greenBusy.add(d);
     run(async () => {
-      const { result } = await doAndProve('/w/green', { method: 'PUT', body: { work_date: d, green } }, weekUrl,
-        back => back.green.some(g => g.work_date === d && g.green) === green,
-        green ? `${dayHead(d)} is green — good to bill (read back and it matches)` : `${dayHead(d)} taken back — not accounted for (read back and it matches)`);
-      const done = result.qb_done || [], errs = result.qb_errors || [];
-      if (errs.length) toast(`QuickBooks: ${[...done, ...errs.map(e => 'NOT DONE — ' + e)].join(' · ')}`, false);
-      else if (done.length) toast(`${green ? 'Placeholders in QuickBooks' : 'Placeholders deleted from QuickBooks'}: ${done.join(' · ')}`);
+      try {
+        const { result } = await doAndProve('/w/green', { method: 'PUT', body: { work_date: d, green } }, weekUrl,
+          back => back.green.some(g => g.work_date === d && g.green) === green,
+          green ? `${dayHead(d)} is green — good to bill (read back and it matches)` : `${dayHead(d)} taken back — not accounted for (read back and it matches)`);
+        const done = result.qb_done || [], errs = result.qb_errors || [];
+        if (errs.length) toast(`QuickBooks: ${[...done, ...errs.map(e => 'NOT DONE — ' + e)].join(' · ')}`, false);
+        else if (done.length) toast(`${green ? 'Placeholders in QuickBooks' : 'Placeholders deleted from QuickBooks'}: ${done.join(' · ')}`);
+      } finally { greenBusy.delete(d); }
     });
   });
 
@@ -273,28 +276,43 @@ export async function schedulePage(start) {
     logBack.style.display = 'none';
     run(() => doAndProve(`/w/job/${id}/plan`, { method: 'PUT', body: { scheduled_date: null } }, weekUrl,
       back => back.jobs.some(row => row.id === id && !row.scheduled_date), 'Taken off the day — the job is still there')); });
-  // Crew didn't go: this man off this job for this day only. The job stays. His pay day comes off if it was his only job.
+  // Crew didn't go / drop onto Nobody: this man off this job for this day only. The job stays. Pay day comes off if it was his only job.
   const dayOf = v => String(v || '').slice(0, 10);
   const placeholderWarn = (day, jobIds) => {
     if (!(w.green || []).some(g => g.green && dayOf(g.work_date) === dayOf(day))) return '';
     const hit = [...new Set((jobIds || []).filter(Boolean))].some(id => (w.seated || []).some(row => Number(row.job_id) === Number(id) && dayOf(row.work_date) === dayOf(day)));
     return hit ? `\n\nHEADS UP: ${dayHead(day)} is green and already has a QuickBooks placeholder. That placeholder will not update.` : '';
   };
+  const othersOnDay = s => w.stops.filter(row => row.crew_id === s.crew_id && dayOf(row.work_date) === dayOf(s.work_date) && row.id !== s.id);
+  const offWho = s => { const man = w.crew.find(c => c.id === s.crew_id); return man ? man.name : 'He'; };
   const offJobAsk = s => {
-    const man = w.crew.find(c => c.id === s.crew_id), j = jobsById[s.job_id];
-    const others = w.stops.filter(row => row.crew_id === s.crew_id && dayOf(row.work_date) === dayOf(s.work_date) && row.id !== s.id);
-    const who = man ? man.name : 'He';
+    const j = jobsById[s.job_id], others = othersOnDay(s), who = offWho(s);
     return `${who} didn't go to ${j ? ticketName(j) : 'that job'} on ${dayHead(s.work_date)}?\n\nTakes him off that job for that day only. The job stays.${others.length ? '' : '\n\nIt was his only job that day, so that pay day comes off Payroll too.'}${placeholderWarn(s.work_date, [s.job_id])}`;
+  };
+  // One delete path for ⊘ and for drop onto Nobody — prove the stop is gone, the job stayed, then say so.
+  // opts.planDate: omit opts = leave the job's day alone; a date = put it on that day; null = clear the plan.
+  const takeManOffJob = async (s, opts) => {
+    const j = jobsById[s.job_id], others = othersOnDay(s), who = offWho(s);
+    const setPlan = opts && Object.prototype.hasOwnProperty.call(opts, 'planDate');
+    await call(`/d/stop/${s.id}`, { method: 'DELETE' });
+    if (setPlan) await call(`/w/job/${s.job_id}/plan`, { method: 'PUT', body: { scheduled_date: opts.planDate || null } });
+    const back = await call(weekUrl);
+    if (back.stops.some(row => row.id === s.id)) throw new Error('That did not come off — it is still on the board.');
+    if (j && !back.jobs.some(row => row.id === j.id)) throw new Error('The job was removed. It should have stayed.');
+    if (setPlan && opts.planDate) {
+      const job = back.jobs.find(row => row.id === s.job_id);
+      if (!job || dayOf(job.scheduled_date) !== dayOf(opts.planDate))
+        throw new Error('The job did not move to that day. ' + (job ? 'It is still on the book.' : 'The job is missing.'));
+    }
+    if (setPlan && !opts.planDate && back.jobs.some(row => row.id === s.job_id && row.scheduled_date))
+      throw new Error('It is still on the day — it did not come off the board.');
+    return { who, j, others, back };
   };
   $app().querySelectorAll('[data-miss]').forEach(x => x.onclick = async ev => { ev.preventDefault(); ev.stopPropagation(); hidePeek();
     const id = Number(x.dataset.miss), s = w.stops.find(row => row.id === id); if (!s) return;
-    const man = w.crew.find(c => c.id === s.crew_id), j = jobsById[s.job_id];
     if (!confirm(offJobAsk(s))) return;
     try {
-      await call(`/d/stop/${id}`, { method: 'DELETE' });
-      const back = await call(weekUrl);
-      if (back.stops.some(row => row.id === id)) throw new Error('That did not come off — it is still on the board.');
-      if (j && !back.jobs.some(row => row.id === j.id)) throw new Error('The job was removed. It should have stayed.');
+      const { who, j, others } = await takeManOffJob(s);
       toast(`${who} is off ${j ? ticketName(j) : 'that job'} for ${dayHead(s.work_date)} — the job is still there${others.length ? '' : ', and that pay day is off Payroll'}`);
       reload();
     } catch (e) { fail(e); }
@@ -452,16 +470,14 @@ export async function schedulePage(start) {
   document.getElementById('ledClose').onclick = () => { ledBack.style.display = 'none'; };
   ledBack.onclick = e => { if (e.target === ledBack) ledBack.style.display = 'none'; };
 
-  // the × on a card in a man's cell: take HIM off THIS job on THIS day
+  // the × on a card in a man's cell: take HIM off THIS job on THIS day (schedule owns this — ui.js skips these)
   $app().querySelectorAll('.jobcard .kill').forEach(k => k.addEventListener('mousedown', () => hidePeek()));
-  // DELETE A MAN'S ENTRY (10/1/26): the × deletes it, the card comes off right away, and the board redraws the
-  // SAME week it was on — no page refresh. Same ask-first and read-back-proof as every other delete.
   window._smsSchedReload = reload;
   if (!window._smsStopDel) {
     window._smsStopDel = true;
     window.addEventListener('click', async e => {
       const k = e.target.closest('.kill[data-del="stop"]'); if (!k) return;
-      e.preventDefault(); e.stopPropagation();
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
       try { if (await askDelete('stop', k.dataset.id)) { k.closest('.jobcard')?.remove(); await window._smsSchedReload(); } } catch (err) { fail(err); }
     }, true);
   }
@@ -513,13 +529,11 @@ export async function schedulePage(start) {
     const ids = mine.map(x => x.id);
     const unplan = fromGrid && j.scheduled_date && (!s || dayOf(j.scheduled_date) === dayOf(s.work_date));
     run(async () => {
-      if (s) await call(`/d/stop/${s.id}`, { method: 'DELETE' });
-      if (unplan) await call(`/w/job/${j.id}/plan`, { method: 'PUT', body: { scheduled_date: null } });
+      if (s) await takeManOffJob(s, unplan ? { planDate: null } : undefined);
+      else if (unplan) await call(`/w/job/${j.id}/plan`, { method: 'PUT', body: { scheduled_date: null } });
       if (bucketOf(j) !== bucket) await call(`/w/job/${j.id}/stage`, { method: 'PUT', body: { stage: bucket } });
       await call('/w/sched-order', { method: 'PUT', body: { ids } });
       const back = await call(weekUrl), one = await call(jobUrl(j.id));
-      if (s && back.stops.some(row => row.id === s.id)) throw new Error('He is still on that job — it did not come off the board.');
-      if (unplan && back.jobs.some(row => row.id === j.id && row.scheduled_date)) throw new Error('It is still on the day — it did not come off the board.');
       if (!one || !one.job || (one.job.stage || 'ready') !== bucket) throw new Error(`It did not land in ${STAGE_LABEL[bucket]} — the read-back shows it somewhere else.`);
       const got = back.jobs.filter(x => ids.includes(x.id)).sort((a, c) => (a.sched_rank ?? 9999) - (c.sched_rank ?? 9999)).map(x => x.id);
       if (got.join(',') !== ids.join(',')) throw new Error('It moved, but the order did not stick — the read-back shows a different order.');
@@ -610,15 +624,10 @@ export async function schedulePage(start) {
       const s = w.stops.find(x => x.id === id);
       if (!s || !work_date) return;
       if (!crew_id) {
-        // Onto Nobody: he comes off the job, the pill stays on that day with nobody on it. Same confirm as crew-didn't-go.
+        // Onto Nobody: he comes off the job, the pill stays on that day with nobody on it. Same confirm + delete path as ⊘.
         if (!confirm(offJobAsk(s))) return;
         return run(async () => {
-          await call(`/d/stop/${id}`, { method: 'DELETE' });
-          await call(`/w/job/${s.job_id}/plan`, { method: 'PUT', body: { scheduled_date: work_date } });
-          const back = await call(weekUrl);
-          if (back.stops.some(row => row.id === id)) throw new Error('He is still on that job.');
-          const job = back.jobs.find(row => row.id === s.job_id);
-          if (!job || dayOf(job.scheduled_date) !== work_date) throw new Error('The job did not move to that day. ' + (job ? 'It is still on the book.' : 'The job is missing.'));
+          await takeManOffJob(s, { planDate: work_date });
           toast(`Nobody on it ${dayHead(work_date)} — the job is still there`);
         });
       }
