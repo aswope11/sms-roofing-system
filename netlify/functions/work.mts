@@ -1317,15 +1317,15 @@ async function linkSentInvoice(sql: any, inv: any, f: any) {
 async function linkUnsentByAddress(sql: any, jobId: number | null) {
   try {
     const rows = norm(jobId
-      ? await sql`SELECT i.*, j.address, j.done_at FROM invoices i JOIN jobs j ON j.id = i.job_id WHERE i.job_id = ${jobId}
+      ? await sql`SELECT i.*, p.address, j.done_at FROM invoices i JOIN jobs j ON j.id = i.job_id JOIN properties p ON p.id = j.property_id WHERE i.job_id = ${jobId}
           AND i.kind IN ('real','draw') AND i.sent_at IS NULL AND i.paid_at IS NULL AND (COALESCE(i.qb_id,'') = '' OR COALESCE(i.number,'') = '' OR i.amount <= 0)`
-      : await sql`SELECT i.*, j.address, j.done_at FROM invoices i JOIN jobs j ON j.id = i.job_id WHERE j.done_at IS NOT NULL
+      : await sql`SELECT i.*, p.address, j.done_at FROM invoices i JOIN jobs j ON j.id = i.job_id JOIN properties p ON p.id = j.property_id WHERE j.done_at IS NOT NULL
           AND i.kind IN ('real','draw') AND i.sent_at IS NULL AND i.paid_at IS NULL AND (COALESCE(i.qb_id,'') = '' OR COALESCE(i.number,'') = '' OR i.amount <= 0)`);
     // done tickets with no bill at all — the app never wrote one (no labor, no price), but he billed it from QuickBooks himself
     const bare = norm(jobId
-      ? await sql`SELECT NULL::int AS id, j.id AS job_id, j.address, j.done_at FROM jobs j WHERE j.id = ${jobId} AND j.done_at IS NOT NULL AND j.tag <> 'BID'
+      ? await sql`SELECT NULL::int AS id, j.id AS job_id, p.address, j.done_at FROM jobs j JOIN properties p ON p.id = j.property_id WHERE j.id = ${jobId} AND j.done_at IS NOT NULL AND j.tag <> 'BID'
           AND NOT EXISTS (SELECT 1 FROM invoices i WHERE i.job_id = j.id AND i.kind IN ('real','draw'))`
-      : await sql`SELECT NULL::int AS id, j.id AS job_id, j.address, j.done_at FROM jobs j WHERE j.done_at IS NOT NULL AND j.tag <> 'BID' AND j.done_at >= ${M.addDays(today(), -90)}::date
+      : await sql`SELECT NULL::int AS id, j.id AS job_id, p.address, j.done_at FROM jobs j JOIN properties p ON p.id = j.property_id WHERE j.done_at IS NOT NULL AND j.tag <> 'BID' AND j.done_at >= ${M.addDays(today(), -90)}::date
           AND NOT EXISTS (SELECT 1 FROM invoices i WHERE i.job_id = j.id AND i.kind IN ('real','draw'))`);
     rows.push(...bare);
     for (const r of rows) {
@@ -1381,7 +1381,7 @@ export default async function handler(req: Request) {
   // GET /w/sent-lookup/:jobId — read-only: what the address search finds in his sent mail for this ticket, or why it can't.
   if (m === "GET" && kind === "sent-lookup" && id) {
     try {
-      const [jb] = norm(await sql`SELECT id, address, done_at FROM jobs WHERE id = ${id}`);
+      const [jb] = norm(await sql`SELECT j.id, p.address, j.done_at FROM jobs j JOIN properties p ON p.id = j.property_id WHERE j.id = ${id}`);
       const from = jb?.done_at;
       const f = await findSentByAddress(sql, jb, from ? M.addDays(String(from).slice(0, 10), -3) : null);
       return json({ job: jb, key: addrKeyOf(jb), found: f ? { number: f.number, qb_id: f.qb_id, amount: f.amount, day: f.day, subject: headerOf(f.msg, "Subject") } : null });
@@ -2254,7 +2254,7 @@ export default async function handler(req: Request) {
           // No number, or the number isn't in his sent mail (10/21/26): look by the address, take the invoice # and total he actually sent.
           if (!sentMsg) {
             try {
-              const [jb] = norm(await sql`SELECT address, done_at FROM jobs WHERE id = ${inv.job_id}`);
+              const [jb] = norm(await sql`SELECT p.address, j.done_at FROM jobs j JOIN properties p ON p.id = j.property_id WHERE j.id = ${inv.job_id}`);
               const from = jb?.done_at || inv.created_at;
               const f = await findSentByAddress(sql, jb, from ? M.addDays(String(from).slice(0, 10), -3) : null);
               if (f) { const row = await linkSentInvoice(sql, inv, f); if (row) return json({ ...row, filed_email: true, found_by_address: f.number }); }
