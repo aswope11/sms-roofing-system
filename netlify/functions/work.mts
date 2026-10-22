@@ -1298,7 +1298,7 @@ async function findSentByAddress(sql: any, job: any, after: string | null, tr: s
   tr.push(`gmail hits: ${(hit?.messages || []).length}`);
   for (const h of (hit?.messages || [])) {
     const msg = await gmail(`messages/${h.id}?format=full`);
-    const names = [headerOf(msg, "Subject"), ...attachmentsOf(msg.payload).map((a: any) => String(a.filename || ""))];
+    const names = [headerOf(msg, "Subject"), ...attachmentsOf(msg.payload).map((a: any) => String(a.name || ""))];
     const nums = [...new Set(names.flatMap((s: string) => [...s.matchAll(/(?:invoice|draw)\s*#?\s*(\d{3,6})/gi)].map((x) => x[1])))];
     tr.push(`msg ${h.id}: names=${JSON.stringify(names)} nums=${JSON.stringify(nums)}`);
     for (const n of nums) {
