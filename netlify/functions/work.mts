@@ -480,6 +480,25 @@ async function checkInvoiceQB(qbId: string, job: any, kind = "real", mapRow: any
     const memoLines = new Set(memo.split("\n").map((x: string) => x.replace(/^[\s•\-*]+/, "").trim().toLowerCase()).filter((x: string) => x.length > 12));
     const dup = (cur.Line || []).some((ln: any) => String(ln.Description || "").split("\n").some((x: string) => memoLines.has(x.replace(/^[\s•\-*]+/, "").trim().toLowerCase())));
     if (dup) problems.push("the same scope is in the line AND the bottom-left note — take it out of one");
+    // 7. RULE 12 — CARD FEE (10/22/26): card on = the customer pays the fee. Added/corrected only while nothing is paid on it.
+    const cardOn = !Object.keys(noPay(job)).length && (cur.AllowOnlineCreditCardPayment || cur.AllowOnlinePayment);
+    const unpaid = Number(cur.Balance) === Number(cur.TotalAmt);
+    const feeLine = (cur.Line || []).find(M.isCardFeeLine);
+    const { fee } = M.cardFeeFor(cur.Line || []);
+    if (cardOn && fee > 0 && (!feeLine || M.round2(Number(feeLine.Amount)) !== fee)) {
+      if (!unpaid) problems.push(`card fee is missing or wrong, but money is already in on it — QuickBooks left as is`);
+      else {
+        const keep = (cur.Line || []).filter((ln: any) => ln.DetailType !== "SubTotalLineDetail" && !M.isCardFeeLine(ln));
+        patch.Line = [...keep, { DetailType: "SalesItemLineDetail", Amount: fee, Description: M.CARD_FEE_DESC,
+          SalesItemLineDetail: { ItemRef: { value: "1" }, Qty: 1, UnitPrice: fee } }];
+        fixed.push(`card fee line ${feeLine ? "corrected" : "added"}: $${fee.toFixed(2)} (${M.CARD_FEE_PCT}%) — the customer pays it`);
+      }
+    }
+    // A no-pay company never carries the fee line.
+    if (!cardOn && feeLine && unpaid) {
+      patch.Line = (cur.Line || []).filter((ln: any) => ln.DetailType !== "SubTotalLineDetail" && !M.isCardFeeLine(ln));
+      fixed.push("card fee line taken off (no card on this one)");
+    }
   }
   // 6. WHO'S WHO (10/11/26): the QuickBooks customer must be the map row's. Never moved by the checker.
   let moved: any = null;
@@ -3492,11 +3511,15 @@ export default async function handler(req: Request) {
       try {
         const ids = [...new Set(open.map((r: any) => r.qb_id).filter(Boolean))] as string[];
         for (let k = 0; k < ids.length; k += 100) {
-          const got: any = await qbQuery(`SELECT Id, TotalAmt, Balance FROM Invoice WHERE Id IN (${ids.slice(k, k + 100).map((x) => "'" + x + "'").join(",")}) MAXRESULTS 1000`);
+          const got: any = await qbQuery(`SELECT * FROM Invoice WHERE Id IN (${ids.slice(k, k + 100).map((x) => "'" + x + "'").join(",")}) MAXRESULTS 1000`);
           for (const q of (got.Invoice || [])) qbInv[String(q.Id)] = q;
         }
       } catch (e) { /* QuickBooks down — show what the app has */ }
-      const shown = open.map((r: any) => { const q = qbInv[String(r.qb_id)]; return q ? { ...r, amount: M.round2(Number(q.TotalAmt)), balance: M.round2(Number(q.Balance)), qb_checked: true } : { ...r, balance: M.round2(Number(r.amount)) }; }).filter((r: any) => !(r.qb_checked && r.balance <= 0));
+      // STAYS ON AR UNTIL HE RECONCILES (10/22/26, his order): paid in QuickBooks does NOT take it off AR. It stays, marked
+      // "paid in QuickBooks — reconcile, then Mark it paid", until he hits Mark it paid. Nothing disappears on its own.
+      const shown = open.map((r: any) => { const q = qbInv[String(r.qb_id)]; if (!q) return { ...r, balance: M.round2(Number(r.amount)) };
+        const balance = M.round2(Number(q.Balance));
+        return { ...r, amount: M.round2(Number(q.TotalAmt)), balance, qb_checked: true, qb_paid: balance <= 0, fee_only_left: M.onlyCardFeeLeft(q.Line, balance) }; });
       return json({ rows: shown.map((r: any) => ({ ...r, cost: cost[r.job_id] || 0 })), stuck, today: today() });
     }
 

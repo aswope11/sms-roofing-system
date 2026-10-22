@@ -21,7 +21,7 @@ export async function arPage() {
       <a class="pmain" href="#/job/${r.job_id}">
         <div class="pt">${esc(ticketName(r))}</div>
         <div class="ps">${Number(r.amount) > 0 ? `<b class="greentxt">${money(r.amount)}</b> · balance ${money(r.balance)}` : '<b class="redtxt">NO AMOUNT ON IT — open it and put the invoice on</b>'}${r.number ? ` · ${r.kind === 'draw' ? 'draw' : 'invoice'} ${esc(r.number)}` : ''} · sent ${shortDate(r.sent_at)} · <b class="${late ? 'redtxt' : ''}">${r.days} day${r.days === 1 ? '' : 's'} out</b>${r.cost ? ` · cost so far ${money(r.cost)}` : ''}</div>
-        ${late ? '<div class="ps redtxt"><b>PAST 30 DAYS — call them</b></div>' : ''}
+        ${r.qb_paid ? '<div class="ps greentxt"><b>PAID IN QUICKBOOKS — reconcile it, then Mark it paid</b></div>' : r.fee_only_left ? '<div class="ps"><b>Only the card fee is left — they paid by check/bank. Mark it paid.</b></div>' : late ? '<div class="ps redtxt"><b>PAST 30 DAYS — call them</b></div>' : ''}
       </a>
       <div class="lanebtns"><button class="lb on">Sent ${shortDate(r.sent_at)}</button><button class="lb send paid" data-id="${r.id}" data-job="${r.job_id}">Mark it paid</button></div>
     </div>`;
@@ -41,7 +41,7 @@ export async function arPage() {
       const ct = bucketsOf(byCust[c]);
       return `<tbody class="qbgrp"><tr class="qbparent"><td colspan="8"><span class="qbcar">&#9662;</span>${esc(c)}</td></tr>
         ${jobs.map(js => { const b = bucketsOf(js), t = round2(b.reduce((a, v) => a + v, 0)), id = js[0].job_id;
-          return `<tr class="qbrow" data-hover="${id}"><td class="qbname" title="${esc(ticketName(js[0]))}">${esc(ticketName(js[0]))}</td>${b.map(v => `<td class="qbn">${v ? `<a href="#/job/${id}">${fmt(v)}</a>` : ''}</td>`).join('')}<td class="qbn"><a href="#/job/${id}">${fmt(t) || '0.00'}</a></td><td class="qbpay"><button class="lb send paid" data-ids="${js.map(r => r.id).join(',')}">Paid</button>${js.map(r => qbPdfLink(r)).join('')}</td></tr>`; }).join('')}
+          return `<tr class="qbrow" data-hover="${id}"><td class="qbname" title="${esc(ticketName(js[0]))}">${esc(ticketName(js[0]))}${js.some(r => r.qb_paid) ? ' <b class="greentxt">· paid in QB, reconcile</b>' : ''}</td>${b.map(v => `<td class="qbn">${v ? `<a href="#/job/${id}">${fmt(v)}</a>` : ''}</td>`).join('')}<td class="qbn"><a href="#/job/${id}">${fmt(t) || '0.00'}</a></td><td class="qbpay"><button class="lb send paid" data-ids="${js.map(r => r.id).join(',')}">Paid</button>${js.map(r => qbPdfLink(r)).join('')}</td></tr>`; }).join('')}
         <tr class="qbtot"><td class="qbname">Total for ${esc(c)}</td>${ct.map(v => `<td class="qbn">${fmt(v)}</td>`).join('')}<td class="qbn">${fmtT(round2(ct.reduce((a, v) => a + v, 0)))}</td><td></td></tr></tbody>`;
     }).join('');
     return `<style>

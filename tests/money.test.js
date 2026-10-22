@@ -799,3 +799,15 @@ test('RULE 6: SMS employees = "X men @ Y hours", Qty = man-hours, Rate = $50, no
   const odd = M.menAtHours([M.billLabor({ kind: 'employee', man: 'A', stops: 7, days: 1 })]);
   assert.equal(Math.round(odd.qty * odd.rate * 100) / 100, odd.amount);            // Qty × $50 always = the amount
 });
+
+test('RULE 12: card fee is 3% of the work, never of itself (Jen Hill #4914 $3,000 → $90)', async () => {
+  const M = await import('../lib/money.js');
+  const work = [{ DetailType: 'SalesItemLineDetail', Amount: 3000, Description: 'Scope of work' }];
+  assert.deepEqual(M.cardFeeFor(work), { base: 3000, fee: 90 });
+  const withFee = [...work, { DetailType: 'SalesItemLineDetail', Amount: 90, Description: M.CARD_FEE_DESC }, { DetailType: 'SubTotalLineDetail', Amount: 3090 }];
+  assert.deepEqual(M.cardFeeFor(withFee), { base: 3000, fee: 90 });
+  assert.equal(M.cardFeeFor([{ DetailType: 'SalesItemLineDetail', Amount: 0 }]).fee, 0);
+  assert.equal(M.onlyCardFeeLeft(withFee, 90), true);
+  assert.equal(M.onlyCardFeeLeft(withFee, 3090), false);
+  assert.equal(M.onlyCardFeeLeft(work, 90), false);
+});
