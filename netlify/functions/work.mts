@@ -2567,28 +2567,12 @@ export default async function handler(req: Request) {
       return json({ id: out.Id, name: out.DisplayName, fully_qualified: out.FullyQualifiedName, created: true });
     }
     // ================= INVOICE CHECKER (10/8/26) =================
-    // POST /w/invoice-check/:id → check one invoice (app id) now.  POST /w/invoice-sweep → every open invoice in QuickBooks,
-    // as many as fit in the time budget, oldest-checked first; the nightly sweep calls this until it's done.
+    // POST /w/invoice-check/:id → check one invoice (app id) now. (The hourly sweep was deleted 10/22/26 at his order — never used.)
     if (kind === "invoice-check" && id && m === "POST") {
       const [inv] = norm(await sql`SELECT * FROM invoices WHERE id = ${id}`);
       if (!inv) return refuse("That invoice doesn't exist.", 404);
       const r = await checkAndRecord(sql, inv, norm(await loadJob(inv.job_id)));
       return json({ number: inv.number, ...r });
-    }
-    if (kind === "invoice-sweep" && m === "POST") {
-      const started = Date.now();
-      const rows = norm(await sql`SELECT * FROM invoices WHERE COALESCE(qb_id, '') <> '' AND paid_at IS NULL
-        AND (kind <> 'placeholder' OR amount > 0) AND (checked_at IS NULL OR checked_at < NOW() - INTERVAL '20 hours')
-        ORDER BY checked_at NULLS FIRST, id LIMIT 40`);
-      const out: any[] = [];
-      for (const inv of rows) {
-        if (Date.now() - started > 20000) break;
-        const r = await checkAndRecord(sql, inv, norm(await loadJob(inv.job_id)));
-        if (r.fixed.length || r.problems.length) out.push({ number: inv.number, fixed: r.fixed, problems: r.problems });
-      }
-      const [left] = norm(await sql`SELECT COUNT(*)::int AS n FROM invoices WHERE COALESCE(qb_id, '') <> '' AND paid_at IS NULL
-        AND (kind <> 'placeholder' OR amount > 0) AND (checked_at IS NULL OR checked_at < NOW() - INTERVAL '20 hours')`);
-      return json({ checked: rows.length, results: out, left: left.n });
     }
     // ================= INVOICING PAGE =================
     // INVOICE PDF (10/4/26): the QuickBooks PDF of one invoice (by its QuickBooks id), so it can go into an email draft he sends himself.
