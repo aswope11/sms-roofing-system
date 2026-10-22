@@ -525,13 +525,35 @@ test('DELETE: every delete lives in one place, asks first, and never calls Quick
   assert.ok(w.includes('applyRebalance') && w.includes('He already has that job on that day.'));
   assert.ok(w.includes('already marked paid') && w.includes('Nothing was changed.'));
   assert.ok(del.includes('rebalancePcts') && del.includes('The split was not changed.') && del.includes('That placeholder will not update.'));
-  assert.ok(sch.includes('offJobAsk') && sch.includes("Onto Nobody") && sch.includes('That placeholder will not update.'));
+  assert.ok(sch.includes('offJobAsk') && sch.includes('Onto Nobody') && sch.includes('That placeholder will not update.'));
   assert.ok(sch.includes('Leave the boxes blank for an even share of his day.'));
   const inv = readFileSync('public/invoicing.js', 'utf8');
   assert.ok(inv.includes('#/jobcost/${o.job.id}/labor') && inv.includes('l.how'));
   const led = readFileSync('public/ledger.js', 'utf8');
   assert.ok(led.includes('qb_errors') && led.includes('HEADS UP'));
   assert.ok(!led.includes('Labor detail') && !/L\.shares\s*&&\s*L\.shares\.length/.test(led), 'no labor on the main ticket card — job cost sheet only');
+});
+
+test('Schedule flow: crew-didn\'t-go toasts after a real read-back, × is one confirm, green is one tap', () => {
+  const sch = readFileSync('public/schedule.js', 'utf8');
+  const ui = readFileSync('public/ui.js', 'utf8');
+  // ⊘ and drop-to-Nobody share one delete+prove path; toast uses who/others from that path (not outer scope)
+  assert.ok(sch.includes('takeManOffJob') && sch.includes('othersOnDay') && sch.includes('offWho'));
+  const miss = sch.slice(sch.indexOf('[data-miss]'), sch.indexOf('function openLogForm'));
+  assert.ok(miss.includes('const { who, j, others } = await takeManOffJob(s)'));
+  assert.ok(miss.includes('${who} is off'));
+  assert.ok(sch.includes("takeManOffJob(s, { planDate: work_date })"), 'drop onto Nobody uses the same path');
+  // Schedule owns grid × — global delete listener skips those so he is not asked twice and the week stays put
+  assert.ok(ui.includes(".kill[data-del=\"stop\"]") && ui.includes('_smsSchedReload'));
+  assert.ok(sch.includes('_smsSchedReload') && sch.includes('stopImmediatePropagation'));
+  // Day header green: ignore a second tap while the first is still talking to QuickBooks
+  assert.ok(sch.includes('greenBusy') && sch.includes('greenBusy.has(d)') && sch.includes('greenBusy.add(d)'));
+  // Awarded pill/lane is off the Schedule stage bar (old contract stage still maps to Ready to work)
+  assert.ok(!/Awarded lane|title="Awarded/.test(sch));
+  assert.ok(sch.includes("['ready', 'hold', 'trades'].includes(j.stage)"));
+  const w = readFileSync('netlify/functions/work.mts', 'utf8');
+  const stopDel = w.slice(w.indexOf('if (m === "DELETE" && id)'), w.indexOf('// ================= LOG A MAN'));
+  assert.ok(stopDel.includes('DELETE FROM crew_days') && stopDel.includes('applyRebalance'), 'work DELETE stop clears pay day or rebalances like /d/stop');
 });
 
 test('LAW bids (half 1): only what he owes is chased — 3 days then 1 day then due then late; a sent bid is filed, not chased; awarded is off the list', () => {

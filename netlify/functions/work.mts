@@ -1770,14 +1770,20 @@ export default async function handler(req: Request) {
         } finally { client.release(); }
       }
       if (m === "DELETE" && id) {
+        // Same cleanup as /d/stop: drop the stop, clear his pay day when it was his only job, else rebalance.
         const [cur] = await sql`SELECT work_date, crew_id FROM stops WHERE id = ${id}`;
         await sql`DELETE FROM stops WHERE id = ${id}`;
         const [left] = await sql`SELECT id FROM stops WHERE id = ${id}`;
         if (left) return refuse("The stop is still there.", 500);
         if (cur) {
-          const client = await db.pool.connect();
-          try { await applyRebalance((text, vals) => client.query(text, vals).then((r: any) => r.rows), cur.work_date, Number(cur.crew_id)); }
-          finally { client.release(); }
+          const day = ymd(cur.work_date), crewId = Number(cur.crew_id);
+          const still = norm(await sql`SELECT id FROM stops WHERE work_date = ${day}::date AND crew_id = ${crewId}`);
+          if (!still.length) await sql`DELETE FROM crew_days WHERE work_date = ${day}::date AND crew_id = ${crewId}`;
+          else {
+            const client = await db.pool.connect();
+            try { await applyRebalance((text, vals) => client.query(text, vals).then((r: any) => r.rows), day, crewId); }
+            finally { client.release(); }
+          }
         }
         return json({ removed: id });
       }
