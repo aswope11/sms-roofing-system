@@ -1283,11 +1283,15 @@ async function findSentByAddress(sql: any, job: any, after: string | null) {
 // Put the found invoice on the ticket: an unlinked row becomes it; a row tied to a different QuickBooks invoice is the
 // duplicate (dropDuplicates files its PDF and takes it out). Then the email + attachments go in the job file → AR.
 async function linkSentInvoice(sql: any, inv: any, f: any) {
-  const [taken] = norm(await sql`SELECT id, job_id FROM invoices WHERE qb_id = ${f.qb_id} AND id <> ${inv.id}`);
+  const [taken] = norm(await sql`SELECT id, job_id FROM invoices WHERE qb_id = ${f.qb_id} AND id <> ${inv.id || 0}`);
   let row: any;
   if (taken) {
     if (Number(taken.job_id) !== Number(inv.job_id)) return null;
     [row] = norm(await sql`UPDATE invoices SET number = ${f.number}, amount = ${f.amount}, sent_at = COALESCE(sent_at, ${f.day}::date), inv_date = ${f.day}::date WHERE id = ${taken.id} RETURNING *`);
+  } else if (!inv.id) {
+    // done ticket with NO invoice row in the app at all (2264 Vantage, 10/22/26): the invoice he sent becomes its bill
+    [row] = norm(await sql`INSERT INTO invoices (job_id, kind, number, amount, qb_id, inv_date, sent_at)
+      VALUES (${inv.job_id}, 'real', ${f.number}, ${f.amount}, ${f.qb_id}, ${f.day}::date, ${f.day}::date) RETURNING *`);
   } else if (!inv.qb_id || String(inv.qb_id) === f.qb_id) {
     [row] = norm(await sql`UPDATE invoices SET number = ${f.number}, qb_id = ${f.qb_id}, amount = ${f.amount}, sent_at = ${f.day}::date, inv_date = ${f.day}::date WHERE id = ${inv.id} RETURNING *`);
   } else {
@@ -1317,6 +1321,13 @@ async function linkUnsentByAddress(sql: any, jobId: number | null) {
           AND i.kind IN ('real','draw') AND i.sent_at IS NULL AND i.paid_at IS NULL AND (COALESCE(i.qb_id,'') = '' OR COALESCE(i.number,'') = '' OR i.amount <= 0)`
       : await sql`SELECT i.*, j.address, j.done_at FROM invoices i JOIN jobs j ON j.id = i.job_id WHERE j.done_at IS NOT NULL
           AND i.kind IN ('real','draw') AND i.sent_at IS NULL AND i.paid_at IS NULL AND (COALESCE(i.qb_id,'') = '' OR COALESCE(i.number,'') = '' OR i.amount <= 0)`);
+    // done tickets with no bill at all — the app never wrote one (no labor, no price), but he billed it from QuickBooks himself
+    const bare = norm(jobId
+      ? await sql`SELECT NULL::int AS id, j.id AS job_id, j.address, j.done_at FROM jobs j WHERE j.id = ${jobId} AND j.done_at IS NOT NULL AND j.tag <> 'BID'
+          AND NOT EXISTS (SELECT 1 FROM invoices i WHERE i.job_id = j.id AND i.kind IN ('real','draw'))`
+      : await sql`SELECT NULL::int AS id, j.id AS job_id, j.address, j.done_at FROM jobs j WHERE j.done_at IS NOT NULL AND j.tag <> 'BID' AND j.done_at >= ${M.addDays(today(), -90)}::date
+          AND NOT EXISTS (SELECT 1 FROM invoices i WHERE i.job_id = j.id AND i.kind IN ('real','draw'))`);
+    rows.push(...bare);
     for (const r of rows) {
       try {
         const from = r.done_at || r.created_at;
