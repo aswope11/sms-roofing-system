@@ -1,9 +1,8 @@
 // SUPPLY HOUSES — rebuilt off the old board.
 // The list is what he owes, laid out by due date. A house page groups the bills by the day they are due,
 // credits sit under the bill they come off, and one payment covers many bills. Nothing is ever left unapplied.
-import { esc, $app, call, doAndProve, crumbs, setTab, fail, toast, delBtn, delX } from './ui.js';
+import { esc, $app, call, doAndProve, crumbs, setTab, fail, toast, delBtn, delX, uploadFile } from './ui.js';
 import { money, round2, linesMatchTotal, missingOnSupplyInvoice, paymentTotals, shortDate, shortDateYY, TERMS, termsOf } from './money.js';
-import { CHUNK_BYTES } from './rules.js';
 
 const today = () => new Date(Date.now() - 5 * 3600 * 1000).toISOString().slice(0, 10);
 // THE OLD BOARD'S WORDING, WORD FOR WORD: a due day reads "Due 9-30-26", the blank one "No due date".
@@ -455,12 +454,7 @@ supplyHousePage(name);
         const hit = invs.find(i => i.number && file.name.toUpperCase().includes(String(i.number).toUpperCase()));
         if (!hit) { nomatch.push(file.name); continue; }
         pprog.textContent = `${file.name} → ${hit.number}…`;
-        const meta = await call('/api/files', { method: 'POST', body: { supply_invoice_id: hit.id, name: file.name, content_type: file.type || 'application/pdf', size_bytes: file.size } });
-        for (let n = 0; n < meta.chunks; n++) {
-          const r = await fetch(`/api/files/${meta.id}/chunk/${n}`, { method: 'PUT', headers: { 'content-type': 'application/octet-stream' }, body: file.slice(n * CHUNK_BYTES, (n + 1) * CHUNK_BYTES) });
-          if (!r.ok) throw new Error(`${file.name}: piece ${n + 1} failed`);
-        }
-        await call(`/api/files/${meta.id}/finish`, { method: 'POST' });
+        const meta = await uploadFile(file, { supply_invoice_id: hit.id }, null, 'application/pdf');
         const back = await call(`/w/supply/${hit.id}`);          // proved by a separate read
         if (!back.files.some(f => f.id === meta.id)) throw new Error(`${file.name} did not stick — it is not on ${hit.number} on the read-back`);
         done.push(hit.number);

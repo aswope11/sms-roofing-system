@@ -310,7 +310,7 @@ test('schedule scrolls left/right like the old board (9/22), day reads "Tue - 9/
   const css = readFileSync('public/style.css', 'utf8');
   assert.ok(!s.includes('card scroll') && css.includes('.oldgrid .fitgrid{overflow-x:auto') && css.includes('tr>th:first-child{position:sticky;left:0') && css.includes('.oldgrid table.schedgrid .jobcard{width:auto'));
   assert.ok(s.includes("${DOW[x.getDay()]} - ${x.getMonth() + 1}/${x.getDate()}"));
-  assert.ok(s.includes('data-green=') && s.includes("'/w/green'") && s.includes('pcust'));
+  assert.ok(s.includes('data-green=') && s.includes('setGreen(') && readFileSync('public/ui.js', 'utf8').includes("'/w/green'") && s.includes('pcust'));
 });
 
 test('LAW: half/full is what he is paid; a percent split divides that day — 10% / 90%', () => {

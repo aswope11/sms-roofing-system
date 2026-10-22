@@ -1,9 +1,8 @@
 // SUBS — rebuilt from the old board's Subs page (index.html renderSubs / subLedgerHTML / subProfileHTML).
 // A crew sub like Tenorio Roofing is paid off his pay ledger, not off invoices:
 // "From 'their invoices' all the way down, delete everything. The only number I care about is how much I owe him for that exact week."
-import { esc, $app, call, doAndProve, crumbs, setTab, fail, toast, delX } from './ui.js';
+import { esc, $app, call, doAndProve, crumbs, setTab, fail, toast, delX, uploadFile } from './ui.js';
 import { money, round2, shortDate } from './money.js';
-import { CHUNK_BYTES } from './rules.js';
 import { subPayLedger } from './payledger.js';
 
 let setupOpen = false;
@@ -94,13 +93,7 @@ async function subPage(id) {
   const up = async files => {
     try {
       for (const file of files) {
-        const meta = await call('/api/files', { method: 'POST', body: { sub_id: id, name: file.name, content_type: file.type || 'application/octet-stream', size_bytes: file.size } });
-        for (let n = 0; n < meta.chunks; n++) {
-          prog.textContent = `${file.name}: piece ${n + 1} of ${meta.chunks}`;
-          const r = await fetch(`/api/files/${meta.id}/chunk/${n}`, { method: 'PUT', headers: { 'content-type': 'application/octet-stream' }, body: file.slice(n * CHUNK_BYTES, (n + 1) * CHUNK_BYTES) });
-          if (!r.ok) throw new Error(`Piece ${n + 1} failed`);
-        }
-        await call(`/api/files/${meta.id}/finish`, { method: 'POST' });
+        const meta = await uploadFile(file, { sub_id: id }, prog);
         const back = await call(`/w/subs/${id}`);
         if (!back.files.some(x => x.id === meta.id)) throw new Error(`${file.name} did not stick`);
       }

@@ -1,6 +1,6 @@
 // The ticket's life, drawn inside the job file page. Money (invoices + general ledger) lives on its own page: jobCostPage.
-import { esc, call, doAndProve, fail, ask, toast, qbPdfLink } from './ui.js';
-import { money, round2, isWork, shortDate, ticketName, drawAging, placeholderDays } from './money.js';
+import { esc, call, doAndProve, fail, ask, toast, qbPdfLink, completeTicket } from './ui.js';
+import { money, round2, isWork, shortDate, drawAging } from './money.js';
 
 export async function renderTicket(jobId, mount) {
   const L = await call(`/w/job/${jobId}`);
@@ -11,7 +11,6 @@ export async function renderTicket(jobId, mount) {
   let flushScope = async () => {};
   const again = async () => { try { await flushScope(); } catch (e) {} return renderTicket(jobId, mount); };
   const aging = drawAging(j, L.invoices, L.today);
-  const coveredThrough = L.invoices.filter(i => i.kind === 'real').map(i => i.covers_through || i.inv_date).filter(Boolean).sort().pop();
 
   mount.innerHTML = `
     ${aging && aging.stale ? `<div class="card stalebar">Unpaid ${money(aging.owed)} · ${aging.days} days — don't send a crew back until it clears</div>` : ''}
@@ -70,18 +69,7 @@ export async function renderTicket(jobId, mount) {
   if (q('#scopeNote')) q('#scopeNote').onchange = () => run(() => act(`/w/job/${jobId}/scope-note`, { value: q('#scopeNote').checked }, b => b.job.scope_note === q('#scopeNote').checked));
   q('#picsOk').onchange = () => run(() => act(`/w/job/${jobId}/check`, { which: 'pics', value: q('#picsOk').checked }, b => b.job.pics_ok === q('#picsOk').checked));
   q('#nocharge').onchange = () => run(() => act(`/w/job/${jobId}/no-charge`, { value: q('#nocharge').checked }, b => b.job.no_charge === q('#nocharge').checked));
-  const seatedDays = new Set(L.invoices.filter(i => i.kind === 'placeholder' && Number(i.amount) > 0).flatMap(placeholderDays)); // one placeholder can seat many days (10/7/26)
-  const green = new Set((L.green_dates || []).map(d => String(d).slice(0, 10)));
-  const loggedDays = [...new Set((L.shares || []).map(s => String(s.work_date).slice(0, 10)))];
-  const notGreen = loggedDays.filter(d => !green.has(d) && (!coveredThrough || d > String(coveredThrough).slice(0, 10)));
-  const notSeated = loggedDays.filter(d => !seatedDays.has(d) && (!coveredThrough || d > String(coveredThrough).slice(0, 10)));
-  const stillPlanned = j.scheduled_date && String(j.scheduled_date).slice(0, 10) >= String(L.today).slice(0, 10) ? String(j.scheduled_date).slice(0, 10) : '';
-  const laterWork = loggedDays.filter(d => d > String(L.today).slice(0, 10));
-  const doneWarn = [notGreen.length ? `${notGreen.map(shortDate).join(', ')} ${notGreen.length === 1 ? 'is' : 'are'} logged but not green yet` : '',
-    !notGreen.length && notSeated.length ? `${notSeated.map(shortDate).join(', ')} ${notSeated.length === 1 ? 'has' : 'have'} no placeholder yet` : '',
-    stillPlanned ? `it's still on the schedule for ${shortDate(stillPlanned)}` : '',
-    laterWork.length ? `work is already logged on ${laterWork.map(shortDate).join(', ')}` : ''].filter(Boolean);
-  if (q('#done')) q('#done').onclick = () => { if (confirm(`Are you sure you're done with ${ticketName(j)}?\n\nIt moves to Invoicing and the invoice gets written now.${doneWarn.length ? `\n\nHEADS UP: ${doneWarn.join('; ')}. Anything worked after this goes on a SECOND invoice. Cancel, green the day first, then press Complete.` : ''}`)) run(() => act(`/w/job/${jobId}/done`, {}, b => !!b.job.done_at)); };
+  if (q('#done')) q('#done').onclick = () => run(() => completeTicket(jobId));   // built once (ui.js): same HEADS UP + proof everywhere
   if (q('#reopen')) q('#reopen').onclick = () => {
     const unsent = L.invoices.filter(i => i.kind === 'real' && !i.sent_at && !i.paid_at);
     const backPh = L.invoices.filter(p => p.kind === 'placeholder' && unsent.some(u => u.id === p.zeroed_by));

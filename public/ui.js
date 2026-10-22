@@ -1,4 +1,6 @@
 // Shared screen helpers for the step-2 pages.
+import { placeholderDays, shortDate, ticketName } from './money.js';
+import { CHUNK_BYTES } from './rules.js';
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export const $ = sel => document.querySelector(sel);
 export const $app = () => document.getElementById('app');
@@ -26,6 +28,59 @@ export async function doAndProve(path, opts, readPath, check, okMsg = 'Saved —
   if (!check(back, result)) throw new Error('That did not stick — the read-back does not show it. Nothing was assumed.');
   toast(okMsg + stillMissing(result));      // saved, and whatever is still missing said right after it
   return { result, back };
+}
+// UPLOAD ONE FILE IN PIECES — BUILT ONCE (10/22/26): job files, company pins, supply PDFs and sub W-9s all use this.
+// owner = where it files ({ job_id, drawer } / { customer_id } / { supply_invoice_id } / { sub_id }). Each page still proves it by its own read-back.
+export async function uploadFile(file, owner, prog, fallbackType = 'application/octet-stream') {
+  const meta = await call('/api/files', { method: 'POST', body: { ...owner, name: file.name, content_type: file.type || fallbackType, size_bytes: file.size } });
+  for (let n = 0; n < meta.chunks; n++) {
+    if (prog) prog.textContent = `${file.name}: piece ${n + 1} of ${meta.chunks}`;
+    const r = await fetch(`/api/files/${meta.id}/chunk/${n}`, { method: 'PUT', headers: { 'content-type': 'application/octet-stream' }, body: file.slice(n * CHUNK_BYTES, (n + 1) * CHUNK_BYTES) });
+    if (!r.ok) { let why = ''; try { why = (await r.json()).error || ''; } catch {} throw new Error(why || `${file.name}: piece ${n + 1} failed`); }
+  }
+  await call(`/api/files/${meta.id}/finish`, { method: 'POST' });
+  return meta;
+}
+// COMPLETE — BUILT ONCE (10/22/26): the ticket's Complete button, the Schedule's Complete pill and Talk all use this —
+// same HEADS UP, same proof, and it says so out loud if the invoice did NOT get written.
+export function doneWarnings(L) {
+  const j = L.job, day = d => String(d).slice(0, 10), today = day(L.today);
+  const covered = (L.invoices || []).filter(i => i.kind === 'real').map(i => i.covers_through || i.inv_date).filter(Boolean).sort().pop();
+  const after = d => !covered || d > day(covered);
+  const seated = new Set((L.invoices || []).filter(i => i.kind === 'placeholder' && Number(i.amount) > 0).flatMap(placeholderDays));
+  const green = new Set((L.green_dates || []).map(day));
+  const logged = [...new Set((L.shares || []).map(s => day(s.work_date)))];
+  const notGreen = logged.filter(d => !green.has(d) && after(d));
+  const notSeated = logged.filter(d => !seated.has(d) && after(d));
+  const planned = j.scheduled_date && day(j.scheduled_date) >= today ? day(j.scheduled_date) : '';
+  const later = logged.filter(d => d > today);
+  return [notGreen.length ? `${notGreen.map(shortDate).join(', ')} ${notGreen.length === 1 ? 'is' : 'are'} logged but not green yet` : '',
+    !notGreen.length && notSeated.length ? `${notSeated.map(shortDate).join(', ')} ${notSeated.length === 1 ? 'has' : 'have'} no placeholder yet` : '',
+    planned ? `it's still on the schedule for ${shortDate(planned)}` : '',
+    later.length ? `work is already logged on ${later.map(shortDate).join(', ')}` : ''].filter(Boolean);
+}
+// ask = false only when he already said yes somewhere else (Talk). Returns null if he cancels.
+export async function completeTicket(jobId, { ask = true } = {}) {
+  const read = `/w/job/${jobId}`;
+  const L = await call(read);
+  if (ask) {
+    const warn = doneWarnings(L);
+    if (!confirm(`Are you sure you're done with ${ticketName(L.job)}?\n\nIt moves to Invoicing and the invoice gets written now.${warn.length ? `\n\nHEADS UP: ${warn.join('; ')}. Anything worked after this goes on a SECOND invoice. Cancel, green the day first, then press Complete.` : ''}`)) return null;
+  }
+  const { result } = await doAndProve(`${read}/done`, { method: 'POST', body: {} }, read, b => !!b.job.done_at, `${ticketName(L.job)} → Complete`);
+  const billErr = result.billed && result.billed.error;
+  if (billErr) toast(`Complete — but the invoice was NOT written: ${billErr}`, false);
+  return result;
+}
+// GREEN A DAY — BUILT ONCE (10/22/26): Schedule and Crew both use this, so both show what QuickBooks did or didn't do.
+export async function setGreen(workDate, green, weekUrl, label = workDate) {
+  const { result } = await doAndProve('/w/green', { method: 'PUT', body: { work_date: workDate, green } }, weekUrl,
+    back => back.green.some(g => g.work_date === workDate && g.green) === green,
+    green ? `${label} is green — good to bill (read back and it matches)` : `${label} taken back — not accounted for (read back and it matches)`);
+  const done = result.qb_done || [], errs = result.qb_errors || [];
+  if (errs.length) toast(`QuickBooks: ${[...done, ...errs.map(e => 'NOT DONE — ' + e)].join(' · ')}`, false);
+  else if (done.length) toast(`${green ? 'Placeholders in QuickBooks' : 'Placeholders deleted from QuickBooks'}: ${done.join(' · ')}`);
+  return result;
 }
 export function crumbs(list) {
   document.getElementById('crumbs').innerHTML = list.map(([t, h]) => h ? `<a href="${h}">${esc(t)}</a>` : esc(t)).join(' › ');

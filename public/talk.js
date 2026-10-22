@@ -1,7 +1,7 @@
 // TALK TO THE APP (10/4/26, his ask). The 🎤 in the top bar, on every page.
 // He talks → the app picks the ticket and writes the scope his way → he sees exactly what it will do →
 // only his Yes saves it, using the ticket's own buttons (save scope, tick scope, work is done), each read back.
-import { esc, call, doAndProve, toast, fail } from './ui.js';
+import { esc, call, doAndProve, toast, fail, completeTicket } from './ui.js';
 
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
@@ -89,7 +89,7 @@ function openTalk() {
     try {
       if (q('#tkSave').checked) { await doAndProve(`${read}/scope`, { method: 'PUT', body: { scope } }, read, b => b.job.scope === scope, 'Scope saved'); did.push('scope saved'); }
       if (q('#tkCheck').checked) { await doAndProve(`${read}/check`, { method: 'PUT', body: { which: 'scope', value: true } }, read, b => b.job.scope_ok === true, 'Scope checked'); did.push('scope checked'); }
-      if (q('#tkDone') && q('#tkDone').checked) { await doAndProve(`${read}/done`, { method: 'POST', body: {} }, read, b => !!b.job.done_at, 'Complete'); did.push('work done'); }
+      if (q('#tkDone') && q('#tkDone').checked) { if (await completeTicket(jobId)) did.push('work done'); }   // built once — Talk now shows the same HEADS UP
       toast(`Done — ${did.join(' · ')} (each read back from the server)`);
       stopMic(); box.remove();
       location.hash = `#/job/${jobId}`;

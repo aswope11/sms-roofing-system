@@ -1,7 +1,7 @@
 // THE SCHEDULE GRID — men down the left, days across the top. Do not redesign it.
 // Three things copied off the old board (app-src-schedule-board): the + boxes in the cells and the card look,
 // the hover that pops up what THIS man did HERE on THIS day, and the pills under the grid that move a ticket around.
-import { esc, $app, call, doAndProve, crumbs, setTab, fail, toast, askDelete } from './ui.js';
+import { esc, $app, call, doAndProve, crumbs, setTab, fail, toast, askDelete, setGreen, completeTicket } from './ui.js';
 import { subPayLedger } from './payledger.js';
 import { groupCrew, addDays, stopShares, daysFor, manDayPay, payFor, crewColor, ticketName, whyCantSplit, rebalancePcts } from './money.js';
 
@@ -223,14 +223,7 @@ export async function schedulePage(start) {
   $app().querySelectorAll('button[data-act]').forEach(b => b.onclick = ev => { ev.stopPropagation(); { const d = b.dataset.act, cur = activeDay || [w.today]; activeDay = cur.includes(d) ? cur.filter(x => x !== d) : [...cur, d]; } schedulePage(w.start); });
   $app().querySelectorAll('th[data-green]').forEach(th => th.onclick = () => {
     const d = th.dataset.green, green = !isGreen(d);
-    run(async () => {
-      const { result } = await doAndProve('/w/green', { method: 'PUT', body: { work_date: d, green } }, weekUrl,
-        back => back.green.some(g => g.work_date === d && g.green) === green,
-        green ? `${dayHead(d)} is green — good to bill (read back and it matches)` : `${dayHead(d)} taken back — not accounted for (read back and it matches)`);
-      const done = result.qb_done || [], errs = result.qb_errors || [];
-      if (errs.length) toast(`QuickBooks: ${[...done, ...errs.map(e => 'NOT DONE — ' + e)].join(' · ')}`, false);
-      else if (done.length) toast(`${green ? 'Placeholders in QuickBooks' : 'Placeholders deleted from QuickBooks'}: ${done.join(' · ')}`);
-    });
+    run(() => setGreen(d, green, weekUrl, dayHead(d)));
   });
 
   // (1) the + box: pick the job for this man on this day
@@ -486,11 +479,7 @@ export async function schedulePage(start) {
   // COMPLETE PILL (10/10/26): same as the ticket's Complete button — asks first, then moves it to Invoicing and writes the invoice.
   $app().querySelectorAll('.stchip[data-complete]').forEach(b => b.onclick = e => {
     e.stopPropagation();
-    const j = jobsById[b.dataset.complete];
-    const notGreen = [...new Set(w.stops.filter(s => s.job_id === j.id).map(s => s.work_date))].filter(d => !isGreen(d));
-    if (!confirm(`Are you sure you're done with ${j.tag} - ${j.address}${j.tenant ? ' - ' + j.tenant : ''}?\n\nIt moves to Invoicing and the invoice gets written now.${notGreen.length ? `\n\nHEADS UP: ${notGreen.join(', ')} ${notGreen.length === 1 ? 'is' : 'are'} logged but not green yet. Anything worked after this goes on a SECOND invoice. Cancel, green the day first, then press Complete.` : ''}`)) return;
-    run(() => doAndProve(`/w/job/${j.id}/done`, { method: 'POST', body: {} }, jobUrl(j.id), back => !!back.job.done_at,
-      `${j.tag} - ${j.address} → Complete`));
+    run(() => completeTicket(Number(b.dataset.complete)));   // built once (ui.js): same HEADS UP + proof as the ticket's button
   });
   // DRAG A TICKET PILL (10/1/26): grab a pill under the grid and drop it on another pill in the same list — it lands in that spot.
   // Replaces the ▲▼ arrows. Priority tickets still sit on top (10/5/26).

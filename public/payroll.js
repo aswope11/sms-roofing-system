@@ -1,4 +1,4 @@
-import { esc, call, doAndProve, fail, delX } from './ui.js';
+import { esc, call, doAndProve, fail, delX, setGreen } from './ui.js';
 import { stopShares, daysFor, manDayPay, payFor, zelleLines, zelleText, money, shortDate, addDays, round2, crewColor } from './money.js';
 
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -83,9 +83,7 @@ export async function payrollSection(mount, start) {
   $app().querySelectorAll('button.green').forEach(b => b.onclick = async () => {
     const green = b.dataset.green !== '1'; b.disabled = true;
     try {
-      await doAndProve('/w/green', { method: 'PUT', body: { work_date: b.dataset.date, green } }, weekUrl,
-        back => back.green.some(g => g.work_date === b.dataset.date && g.green === green) || (!green && !back.green.some(g => g.work_date === b.dataset.date && g.green)),
-        green ? 'Day is green — read back and it matches' : 'Day is back to red — read back and it matches');
+      await setGreen(b.dataset.date, green, weekUrl, dayHead(b.dataset.date));   // same as Schedule — QuickBooks problems show here too
       payrollSection(mount, w.start);
     } catch (e) { fail(e); b.disabled = false; }
   });

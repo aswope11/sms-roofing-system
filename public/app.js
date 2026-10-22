@@ -1,5 +1,5 @@
-import { TAGS, DRAWERS, CHUNK_BYTES } from './rules.js';
-import { setTab, delBtn, delX } from './ui.js';
+import { TAGS, DRAWERS } from './rules.js';
+import { setTab, delBtn, delX, uploadFile } from './ui.js';
 import { schedulePage } from './schedule.js';
 import { invoicingPage } from './invoicing.js';
 import { renderBid } from './bid.js';
@@ -162,13 +162,7 @@ async function customer(id) {
   const pinUp = async files => {
     try {
       for (const file of files) {
-        const meta = await api('files', { method: 'POST', body: JSON.stringify({ customer_id: Number(id), name: file.name, content_type: file.type || 'application/octet-stream', size_bytes: file.size }) });
-        for (let n = 0; n < meta.chunks; n++) {
-          pinProg.textContent = `${file.name}: piece ${n + 1} of ${meta.chunks}`;
-          const r = await fetch(`/api/files/${meta.id}/chunk/${n}`, { method: 'PUT', headers: { 'content-type': 'application/octet-stream' }, body: file.slice(n * CHUNK_BYTES, (n + 1) * CHUNK_BYTES) });
-          if (!r.ok) throw new Error(`Piece ${n + 1} failed`);
-        }
-        await api(`files/${meta.id}/finish`, { method: 'POST' });
+        const meta = await uploadFile(file, { customer_id: Number(id) }, pinProg);
         const back = await api(`customers/${id}`);
         if (!(back.files || []).some(x => x.id === meta.id)) throw new Error(`${file.name} did not stick`);
       }
@@ -391,14 +385,7 @@ async function job(id) {
 async function uploadAll(jobId, drawer, files, prog) {
   try {
     for (const file of files) {
-      const meta = await api('files', { method: 'POST', body: JSON.stringify({ job_id: Number(jobId), drawer, name: file.name, content_type: file.type || 'application/octet-stream', size_bytes: file.size }) });
-      for (let n = 0; n < meta.chunks; n++) {
-        prog.textContent = `${file.name}: piece ${n + 1} of ${meta.chunks}`;
-        const piece = file.slice(n * CHUNK_BYTES, (n + 1) * CHUNK_BYTES);
-        const r = await fetch(`/api/files/${meta.id}/chunk/${n}`, { method: 'PUT', headers: { 'content-type': 'application/octet-stream' }, body: piece });
-        if (!r.ok) throw new Error((await r.json()).error || `Piece ${n + 1} failed`);
-      }
-      await api(`files/${meta.id}/finish`, { method: 'POST' });
+      const meta = await uploadFile(file, { job_id: Number(jobId), drawer }, prog);
       // Proof: read the job file back and make sure the file is listed at the right size.
       const back = await api(`jobs/${jobId}`);
       const found = back.files.find(f => f.id === meta.id && Number(f.size_bytes) === file.size);
