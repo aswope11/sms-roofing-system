@@ -107,7 +107,6 @@ async function customer(id) {
     </div>
     <div class="card">
       <h2>New property</h2>
-      <p class="help">The roof's street address. The app checks every address already on file first, so the same building never gets two records.</p>
       <form id="f">
         <label>Address<input name="address" placeholder="fill it in when you know it"></label>
         <label>City<input name="city"></label>
@@ -192,7 +191,6 @@ async function property(id) {
     </div>
     <div class="card">
       <h2>Contract on this property</h2>
-      <p class="help">The contract lives on the property. Left on the contract = the contract minus every invoice written against it on any ticket here. Change orders don't count against it. Billing only — it never shows on the schedule.</p>
       <form id="fc"><label>Contract amount<input name="amount" type="number" step="0.01" value="${p.contract_amount ?? ''}"></label>
         <div class="actions"><button class="ghost">Save contract</button></div></form>
     </div>
@@ -203,7 +201,6 @@ async function property(id) {
     </div>
     <div class="card">
       <h2>New job file</h2>
-      <p class="help">One job file per roof scope. A bid that's lost keeps its file forever.</p>
       <form id="f">
         <label>Tag<select name="tag"><option value="">— not decided yet —</option>${TAGS.map(t => `<option value="${t}">${t} — ${TAG_NAMES[t]}</option>`).join('')}</select></label>
         <label>Job name<input name="title" placeholder="e.g. Main roof TPO re-roof"></label>
@@ -348,7 +345,6 @@ async function job(id) {
     <div id="ticketMount"></div>
     <div class="card">
       <h2>File cabinet</h2>
-      <p class="help">Drop a file on a drawer or click it. Big files are cut into 4 MB pieces, every piece is checked, and the file only shows once all of it is saved.</p>
       <div class="grid2">
         ${DRAWERS.map(d => {
           const fs = j.files.filter(f => f.drawer === d);

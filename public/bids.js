@@ -69,7 +69,6 @@ export async function bidsPage() {
     <label class="full">Tenant
       <input id="bsTen" list="bsTenList" placeholder="Cafe Gecko — the one building or space this bid is for"><datalist id="bsTenList">${[...new Set(props.map(p => p.tenant).filter(Boolean))].map(x => `<option value="${esc(x)}">`).join('')}</datalist></label>
     <div class="btnrow"><label>Due date <input id="bsDue" type="date"></label><button id="bsGo">Save and pick the system ›</button></div>
-    <p class="help">A new customer or address typed here is created and shows up under Customers. Nothing goes to QuickBooks or the schedule — only Awarded does that.</p>
   </div>`;
 
   $app().innerHTML = `<div class="oldgrid oldinv"><h1>Bids <span class="lanen big">${chase.length}</span></h1>${box}${cal}${owedList || ''}</div>`;

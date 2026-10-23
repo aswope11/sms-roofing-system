@@ -60,10 +60,9 @@ export async function renderBid(jobId, mount) {
 
   mount.innerHTML = `<div class="card">
     <h2>Bid</h2>
-    <p class="help">A bid is not a ticket. Nothing goes on the schedule, in a ledger or into QuickBooks until you press Awarded${j.awarded_at ? ` — awarded ${shortDateYY(j.awarded_at)}` : ''}.</p>
+    ${j.awarded_at ? `<p class="help">Awarded ${shortDateYY(j.awarded_at)}</p>` : ''}
     ${j.awarded_at ? `<div class="btnrow"><a class="jcpill" href="#/job/${j.awarded_job_id}">The ticket it made ›</a></div>` : `
     <h3>What it is</h3>
-    <p class="help">Pick the system first. Only that system's pills show under it.</p>
     <div class="btnrow tplrow">${SYSTEMS.map(s => `<button class="lb tpl ${picked(s.cat) ? 'on' : ''}" data-cat="${s.cat}">${picked(s.cat) ? '' : '+ '}${esc(s.label)}</button>`).join('')}</div>
     ${layers}
     <h3 style="margin-top:16px">Money and the date</h3>
@@ -77,7 +76,6 @@ export async function renderBid(jobId, mount) {
       ${j.bid_sent_at ? `<span class="help">Complete — sent ${shortDateYY(j.bid_sent_at)}</span>` : '<button class="small ghost" id="bSent">Bid complete</button>'}
       ${priced ? '<button id="bAward">Awarded — make the ticket</button>' : ''}
     </div>
-    <p class="help">Bid complete finds your sent email for this address and puts the email, the proposal and the price in this job file. No sent email found = it tells you and nothing is marked.</p>
     ${j.bid_said ? `<p class="help">From the email: "${esc(j.bid_said)}"</p>` : ''}
     `}</div>`;
 

@@ -19,8 +19,7 @@ export async function renderTicket(jobId, mount) {
       <label class="full" style="margin-top:12px">
         <textarea id="scope" style="min-height:110px" placeholder="Scope of work">${esc(j.scope)}</textarea></label>
       <p class="help" id="scopeSaved"></p>
-      <p class="help">Saving words here never ticks the box below. Only you tick it.</p>
-      ${/standridge|four\s*corners/i.test(j.customer_name || '') ? '<p class="help">Scope goes in the QuickBooks Note to customer (bottom left) with the date — Standridge / Four Corners rule.</p>'
+      ${/standridge|four\s*corners/i.test(j.customer_name || '') ? ''
         : `<label class="checkline"><input type="checkbox" id="scopeNote" ${j.scope_note ? 'checked' : ''}> Put the scope in the QuickBooks Note to customer (bottom left), not line 1</label>`}
       <div class="btnrow">
         <label class="checkline"><input type="checkbox" id="scopeOk" ${j.scope_ok ? 'checked' : ''}> Scope of work checked${j.scope_ok_at ? ` <span class="mute">${new Date(j.scope_ok_at).toLocaleString()}</span>` : ''}</label>

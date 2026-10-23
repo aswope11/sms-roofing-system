@@ -53,11 +53,9 @@ export async function payrollSection(mount, start) {
           || `<tr><td colspan="${dates.length + 2}" class="empty">Nobody worked this week.</td></tr>`}
         <tr><th colspan="${dates.length + 1}" class="num">Everybody, this week</th><td class="num big">${money(grand)}</td></tr>
       </table>
-      <p class="help">A man's pay is his days × his day rate — unless you type that day's actual pay in the $ box (a quote came in); his day rate stays the same, and clearing the box puts it back. Under each day is what each ticket is charged: his day ÷ the jobs he touched that day. Green means the day is finished and correct — red means it hasn't gone anywhere yet. Change the days box when a man worked a half day.</p>
     </div>
     <div class="card">
       <h2>Zelle list — one per job per day, to the pay-to name</h2>
-      <p class="help">Each line is the whole crew's share on that job that day. Match these against Chase. The sum of these for the year is the 1099 total.</p>
       ${[...new Set(zelle.map(z => z.pay_to))].map(p => `<h3>${esc(p)}</h3><pre class="zelle">${zelle.filter(z => z.pay_to === p).map(zelleText).join('\n')}\nTotal ${money(zelle.filter(z => z.pay_to === p).reduce((a, z) => a + z.amount, 0))}</pre>`).join('') || '<div class="empty">Nothing to pay this week.</div>'}
     </div>`;
 

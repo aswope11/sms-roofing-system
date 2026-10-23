@@ -25,7 +25,6 @@ export async function shopPage() {
     <h1>Shop</h1>
     <div class="card">
       <h2>Labor journal <span class="mute">${money(total)} total</span></h2>
-      <p class="help">Everyone put on Shop on the Schedule. Paid, never billed. Type why they were at the shop and press Save.</p>
       ${list.length ? list.map((l, i) => `<div class="row">
         <span><b>${esc(shortDateYY(l.work_date))}</b> · ${esc(l.shows_as)} · ${money(l.cost)}</span>
         <span class="btnrow"><input class="shopwhy" data-i="${i}" placeholder="Why" value="${esc(whyOf(l.work_date, l.shows_as))}" style="min-width:260px">

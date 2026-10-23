@@ -143,7 +143,7 @@ export async function schedulePage(start) {
         <colgroup><col class="mancol">${dates.map(() => '<col>').join('')}</colgroup>
         <tr><th></th>${dates.map(d => { const st = dayState(d); return `<th class="hcell ${st}${d === w.today ? ' today' : ''}" data-green="${d}"${isAct(d) ? ' style="box-shadow: inset 0 0 0 3px #ff7a3d"' : ''} title="Tap when the day is right — every man and every job accounted for, good to bill">
           <div class="d">${dayName(d)}</div><div class="dt">${dayShort(d)}</div>
-          <button type="button" data-act="${d}" style="margin:4px 0 2px;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;cursor:pointer;border:1px solid #ff7a3d;${isAct(d) ? 'background:#ff7a3d;color:#111' : 'background:transparent;color:#ff7a3d'}">${isAct(d) ? 'ACTIVE' : 'Active'}</button>
+          <button type="button" data-act="${d}" style="margin:4px 0 2px;padding:2px 8px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;border:1px solid #ff7a3d;${isAct(d) ? 'background:#ff7a3d;color:#111' : 'background:transparent;color:#ff7a3d'}">${isAct(d) ? 'ACTIVE' : 'Active'}</button>
           <div class="dchk">${st === 'acct' ? '✓ good to bill' : st === 'late' ? 'not accounted' : 'tap when right'}</div></th>`; }).join('')}</tr>
         <tr><th>Nobody on it yet</th>${dates.map(d => `<td class="cell" data-dropdate="${d}" data-dropcrew="">${nobody(d).map(j => jobCardHTML(j, '', d)).join('')}
           <div class="plus ${nobody(d).length ? 'has' : ''}" data-nobody="1" data-date="${d}">+</div></td>`).join('')}</tr>
@@ -153,7 +153,6 @@ export async function schedulePage(start) {
             <div class="plus ${mine.length ? 'has' : ''}" data-crew="${c.id}" data-date="${d}">+</div></td>`;
         }).join('')}</tr>`).join('') || `<tr><td colspan="${dates.length + 1}" class="empty">No crew yet — add men on the <a href="#/crew">Crew</a> tab.</td></tr>`}
       </table>
-      <p class="help">Putting a man on a day is a plan. Tap the day at the top when every man and every job that day is right — it turns green: good to bill, and it pays. Tap again to take it back. Same switch as the Crew tab.</p>
     </div>
     <div id="schedSections">${sections}</div>
     <div class="peek" id="peek"></div>

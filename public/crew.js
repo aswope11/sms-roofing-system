@@ -9,7 +9,6 @@ export async function crewPage() {
   const bossOpts = sel => `<option value="">— nobody, he's his own —</option>` + crew.filter(c => !c.boss_id && c.kind === 'sub').map(c => `<option value="${c.id}" ${Number(sel) === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
   $app().innerHTML = `
     <h1>Crew</h1>
-    <p class="sub">A man is paid his days × his day rate, flat. A ticket is charged his day ÷ the jobs he touched that day. There is no multiplier anywhere.</p>
     <details class="card scroll crewfold">
       <summary><b>The crew</b> <span class="mute">${crew.length} men — ${crew.filter(c => c.kind === 'employee').length} SMS, ${crew.filter(c => c.kind === 'sub').length} subs · click to open</span></summary>
       <table class="grid crewtbl">
@@ -27,9 +26,6 @@ export async function crewPage() {
           <td><button class="small ghost save">Save</button> ${delX('crew', c.id)}</td>
         </tr>`).join('') || '<tr><td colspan="8" class="empty">No crew yet.</td></tr>'}
       </table>
-      <p class="help">SMS employees are one color. Each sub's crew is its own color, and a man under a sub shows his boss's color. Grab ⠿ and drag a man up or down inside his group — drag a sub and his men come with him. The Schedule shows men in this order.</p>
-      <p class="help">"Works under" is for a man paid through a sub (like a man under Puma). He shows by his own name on Payroll only; everywhere else he rolls into his boss's line, and his pay goes to the boss's pay-to name.</p>
-      <p class="help">A new man is added at the top of the Schedule tab — that is where you are standing when you hire one.</p>
     </details>
     <div id="payMount"></div>`;
   payrollSection(document.getElementById('payMount')).catch(e => fail(e));

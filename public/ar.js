@@ -46,19 +46,19 @@ export async function arPage() {
     }).join('');
     return `<style>
       .qbrep{background:var(--card);color:var(--ink);max-width:1120px;margin-top:12px;padding:26px 24px 32px;border:1px solid var(--line);border-radius:12px;font-size:14px}
-      .qbhead{text-align:center;margin-bottom:22px}.qbco{font-size:22px;font-weight:800}.qbsub,.qbasof{font-size:13px;color:var(--mute);margin-top:4px}
+      .qbhead{text-align:center;margin-bottom:22px}.qbco{font-size:22px;font-weight:800}.qbsub,.qbasof{font-size:15px;color:var(--mute);margin-top:4px}
       .qbtab{width:100%;border-collapse:collapse;table-layout:fixed}
-      .qbtab th{font-weight:700;text-align:right;padding:9px 8px;color:var(--mute);font-size:12px;text-transform:uppercase;letter-spacing:.04em;border-bottom:2px solid var(--line);width:10%}
+      .qbtab th{font-weight:700;text-align:right;padding:9px 8px;color:var(--mute);font-size:14px;text-transform:uppercase;letter-spacing:.04em;border-bottom:2px solid var(--line);width:10%}
       .qbtab th:first-child{width:22%}
       .qbtab th:last-child{width:18%}
       .qbtab th{white-space:nowrap}
       .qbpay{text-align:right;padding:4px 0 4px 8px!important;white-space:normal}
       .qbpay .qbpdf{margin:2px 0 2px 4px}
-      .qbpay .lb{padding:3px 10px;font-size:12px}
+      .qbpay .lb{padding:3px 10px;font-size:14px}
       .qbtab td{padding:7px 8px;line-height:1.3}
       .qbn{text-align:right;white-space:nowrap}
       .qbname{padding-left:30px!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      .qbparent td{cursor:pointer;color:var(--mute);font-weight:800;font-size:12px;text-transform:uppercase;letter-spacing:.05em;padding-top:16px}
+      .qbparent td{cursor:pointer;color:var(--mute);font-weight:800;font-size:14px;text-transform:uppercase;letter-spacing:.05em;padding-top:16px}
       .qbcar{display:inline-block;width:16px;color:var(--mute);transition:transform .15s}
       .qbgrp.closed .qbcar{transform:rotate(-90deg)}
       .qbgrp.closed .qbrow{display:none}

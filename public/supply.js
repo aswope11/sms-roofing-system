@@ -227,7 +227,6 @@ ${st.k === 'hold' ? `<span class="paypill pay-hold">${esc(st.l)}</span>` : ''}
       <div class="jpcard" style="margin-top:20px">
         <h4>Drop ${esc(name)} invoices here</h4>
         <div class="drop" id="paperdrop">+ Drop the invoice PDFs here — or click to pick<input type="file" hidden multiple accept="application/pdf"></div>
-        <p class="help">PDF, CSV, a photo of the ticket. Each one files itself on the invoice whose number is in its name — ${esc(name)} INV52971.pdf lands on INV52971. Anything it cannot match by number is listed, never guessed onto something.</p>
         <div class="mute" id="paperprog"></div>
         <div class="btnrow"><a class="jcpill" href="#/supply/new?house=${encodeURIComponent(name)}">＋ Add an invoice by hand</a>
           <button class="small ghost" id="logpay">+ Log a payment to ${esc(name)}</button>
@@ -552,8 +551,6 @@ export async function supplyInvoicePage(idRaw) {
 
   $app().innerHTML = `<h1>${isNew ? 'New supply invoice' : esc(inv.house + ' ' + inv.number) + ' ' + delBtn('supply', inv.id)}</h1>
     <div class="card"><h2>The details</h2>
-      <p class="help">Change anything that came off the paper wrong. Whatever was read off the PDF is a starting point, not the truth.
-        Nothing here has to be filled in to save — what is still missing is listed at the bottom.</p>
       <form id="head" class="grid2">
         <label>Supply house<input name="house" value="${esc(inv.house)}"></label>
         <label>Invoice #<input name="number" value="${esc(inv.number)}" placeholder="fill it in when you know it"></label>
@@ -567,7 +564,6 @@ export async function supplyInvoicePage(idRaw) {
       </form>
     </div>
     ${isNew ? '' : `<div class="card"><h2>The three checks</h2>
-      <p class="help">Nothing gets paid until all three are on it. Type your initials.</p>
       <div class="grid2">
         <label>Quantity<input id="qty_ok" value="${esc(inv.qty_ok || '')}" placeholder="initials"></label>
         <label>Product<input id="prod_ok" value="${esc(inv.prod_ok || '')}" placeholder="initials"></label>
@@ -580,7 +576,6 @@ export async function supplyInvoicePage(idRaw) {
     <div class="card"><h2>Where each product goes</h2>
       <label class="checkline"><input type="checkbox" id="wholeInv"> The whole invoice goes to the same place.</label>
       <div id="wholeWrap" style="display:none"><select id="wholeJob" class="small">${jobOpts('')}</select></div>
-      <p class="help">Each product goes where its own box says. Tax and freight ride along with it — a line with no product on it is spread across the products by what they cost.</p>
       <table class="tks"><thead><tr><th>Item</th><th>Qty</th><th>Unit</th><th>Price</th><th>Total</th><th>Goes to</th><th></th></tr></thead>
         <tbody id="lines">${(inv.lines || []).map(lineRow).join('') || lineRow()}</tbody></table>
       <div class="btnrow"><button class="small ghost" id="addline" type="button">+ Add a line</button></div>

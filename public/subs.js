@@ -74,7 +74,6 @@ async function subPage(id) {
     ? `${profile}<div id="ledgerMount"></div>`
     : `${profile}
       <div class="card" style="margin-top:14px"><h4 style="margin:0 0 8px">Their invoices</h4>
-        <p class="help">Their invoices are entered on the Supply Houses tab under the name "${esc(s.name)}" — every line on a job, the paper on it. They show here.</p>
         <div class="btnrow"><a href="#/supply/new"><button class="ghost small">＋ Add an invoice</button></a></div></div>
       <div class="apmohead" style="margin-top:18px;display:flex"><b>NOT PAID</b><span style="flex:1"></span><b>${money(owed)}</b></div>
       ${open.length ? open.map(i => invRow(i, false)).join('') : `<div class="mute" style="padding:8px 0">Nothing open — they're square.</div>`}

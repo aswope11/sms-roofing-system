@@ -30,9 +30,7 @@ export async function whosWhoPage() {
     ${co ? companyCard(co, cos.find(c => c.id === pick), meta) : '<div class="card empty">Nothing outstanding — nothing to map.</div>'}
     <div class="card">
       <h2>Check it against QuickBooks</h2>
-      <p class="help">Read-only. For each company: one open ticket is run through the map (where it would land), and every open invoice is read back from QuickBooks and compared to its row. Nothing is written.</p>
       <div class="actions" style="display:flex;gap:8px;flex-wrap:wrap"><button class="ghost" id="ww-test">Check QuickBooks</button><button class="ghost" id="ww-re">Re-check from the app</button><button id="ww-fix">Fix the 8 loose tenants in QuickBooks</button><button id="ww-pay">Re-apply Burrito Bar $3,000 payment to #4363</button></div>
-      <p class="help">Fix button: Burrito Bar, Reformed Pilates, 4Korners, Elegant Dentistry (→ Four Corners), Bellezza, Scrambler, Lake Highlands Cafe, MKOA go under their building. Old tenant moves under the building if QuickBooks allows; if not, a tenant under the building gets only the open invoices. Nothing is deleted.</p>
       <div id="ww-out"></div>
     </div>`;
   document.querySelectorAll('[data-co]').forEach(b => b.onclick = () => { pick = Number(b.dataset.co); whosWhoPage(); });
