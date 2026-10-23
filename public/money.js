@@ -236,8 +236,10 @@ export const zelleText = z => `${shortDate(z.work_date)} - ${z.memo} - ${money(z
 // SMS employees: $50 a man-hour. 1 stop = 8 hrs, 2 = 4 each, 3 = 9-hr day ÷ 3, 4 = 9 ÷ 4. 5 or more = 9 ÷ stops (10/4/26).
 export const EMPLOYEE_RATE = 50;
 // RULE 5 (his words, 10/21/26): Placeholder = 2 weeks out. Real invoice = 2 days out.
+// CONTRACT INVOICE (10/23/26): a JC's contract total goes into QuickBooks the moment it is entered, dated 1 week out.
 export const PLACEHOLDER_DAYS_OUT = 14;
 export const REAL_INVOICE_DAYS_OUT = 2;
+export const CONTRACT_INVOICE_DAYS_OUT = 7;
 export function billHoursPerStop(stops) {
   if (stops === 1) return 8;
   if (stops === 2) return 4;
@@ -305,7 +307,7 @@ export const canPlaceholder = tag => QB_TAGS.includes(tag);
 // ---------- WHERE A TICKET LIVES ----------
 export function inInvoicing(job, invs) {
   if (!job.done_at || job.tabled_at || job.no_charge) return false;
-  if (job.tag === 'JC') return false;   // a JC bills by draws. A UC marked done walks the same steps as any ticket (his rule 9/17: done never skips to AR)
+  if (job.tag === 'JC') return false;   // a JC is billed by its contract invoice. A UC marked done walks the same steps as any ticket (his rule 9/17: done never skips to AR)
   const bills = invs.filter(isBill);
   return bills.length === 0 || bills.some(b => !b.sent_at);
 }
@@ -322,17 +324,19 @@ export function whereIs(job, invs) {
   if (job.done_at && !places.length) places.push('Invoicing');   // backstop: never nowhere
   return places;
 }
-// A UC is a mini job cost (behaves like a JC): its own contract, every trip bills off it.
-export const isContractJob = tag => tag === 'JC' || tag === 'UC';
-export function leftOnJobContract(contract, jobId, invoices) {
-  const billed = round2(invoices.filter(i => i.job_id === jobId).reduce((s, i) => s + invoicedAmount(i), 0));
-  return { contract: round2(contract), billed, left: round2((Number(contract) || 0) - billed) };
-}
-// Which contract a ticket bills off: UC = its own; JC = the property's; anything else = none.
+// ===== THE CONTRACT RULE — the only place it is written (his words, 10/23/26) =====
+// JC = any job with a total contract price. The contract lives ON THE JC TICKET (job_contract). Entering it writes the
+//      QuickBooks contract invoice (scope + total, 1 week out). JC labor and material stay in the app — never QuickBooks,
+//      never a placeholder.
+// UC = no contract price (unit cost or a small job). Labor and material go on its placeholder, same as a repair.
+// CO = its own ticket, always money. A change order never bills against the JC's contract.
+// A JC or a UC can bill while the work is still going (draws on a JC, trips on a UC); every other ticket bills when done.
+export const billsWhileOpen = tag => tag === 'JC' || tag === 'UC';
+// Left on the contract = the JC's contract − every bill written on that JC ticket.
 export function contractFor(job, propJobs, propInvoices) {
-  if (job.tag === 'UC') return job.job_contract != null ? leftOnJobContract(job.job_contract, job.id, propInvoices) : null;
-  if (job.tag === 'JC') return job.contract_amount != null ? leftOnContract(job.contract_amount, propJobs, propInvoices) : null;
-  return null;
+  if (job.tag !== 'JC' || job.job_contract == null) return null;
+  const billed = round2(propInvoices.filter(i => i.job_id === job.id).reduce((s, i) => s + invoicedAmount(i), 0));
+  return { contract: round2(job.job_contract), billed, left: round2((Number(job.job_contract) || 0) - billed) };
 }
 // Invoicing lane for a done ticket. Checks are HIS ticks; the app never ticks them.
 export function invoicingLane(job, invs) {
@@ -346,15 +350,6 @@ export const LANES = {
   write: 'Checked — real invoice owed',
   send: 'Written — mark it sent after you email it',
 };
-
-// ---------- CONTRACT ----------
-// Left on the contract = contract − everything invoiced against it. Lives on the property. Change orders don't count.
-export function leftOnContract(contract, jobs, invoices) {
-  // a CO is extra, and a UC carries its own contract: neither bills against the property's contract
-  const coJobs = new Set(jobs.filter(j => j.tag === 'CO' || j.tag === 'UC').map(j => j.id));
-  const billed = round2(invoices.filter(i => !coJobs.has(i.job_id)).reduce((s, i) => s + invoicedAmount(i), 0));
-  return { contract: round2(contract), billed, left: round2((Number(contract) || 0) - billed) };
-}
 
 // ---------- COST ----------
 export const costSoFar = (labor, material) => round2(labor + material);
@@ -475,7 +470,7 @@ export function pricedBack(material, sms, subs) {
 // Nothing is billed until he presses the button. A real invoice covers days up to its covers_through (or its invoice date).
 export function readyToBill(job, greenShares, materialLines, invoices) {
   if (!canPlaceholder(job.tag) || job.no_charge || job.tabled_at) return null;
-  if (!job.done_at && !isContractJob(job.tag)) return null;   // reopened = back on the schedule, not ready to bill (a UC bills a trip at a time)
+  if (!job.done_at && !billsWhileOpen(job.tag)) return null;   // reopened = back on the schedule, not ready to bill (a UC bills a trip at a time)
   const covered = invoices.filter(i => i.kind === 'real' || i.kind === 'draw').map(i => i.covers_through || i.inv_date).filter(Boolean).sort();
   const prev = covered.length ? covered[covered.length - 1] : null;
   // A day sitting on a ZEROED placeholder is already billed — a placeholder only goes to $0 once its money is on a real
@@ -531,7 +526,7 @@ export const DRAW_STALE_DAYS = 21;
 const dayDiff = (from, to) => Math.max(0, Math.round((new Date(String(to).slice(0, 10) + 'T12:00:00') - new Date(String(from).slice(0, 10) + 'T12:00:00')) / 86400000));
 const tripDate = i => (i.sent_at || String(i.created_at || i.inv_date || '')).slice(0, 10);
 export function drawAging(job, invoices, today) {
-  if (job.done_at && !isContractJob(job.tag)) return null;
+  if (job.done_at && !billsWhileOpen(job.tag)) return null;
   const unpaid = invoices.filter(i => i.job_id === job.id && isBill(i) && !i.paid_at);
   if (!unpaid.length) return null;
   const oldest = unpaid.map(tripDate).filter(Boolean).sort()[0];

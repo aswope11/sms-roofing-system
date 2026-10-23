@@ -69,7 +69,7 @@ export async function jobCostPage(jobId, sub) {
   if (!sub) {
     // ---------- SUMMARY ----------
     const tiles = [
-      j.tag === 'UC' ? ['Contract', `<input class="jc-contract" type="number" step="0.01" min="0" value="${D.contract ? D.contract.contract : ''}" placeholder="—">`] : D.contract ? ['Contract', money(D.contract.contract)] : null,
+      j.tag === 'JC' ? ['Contract', `<input class="jc-contract" type="number" step="0.01" min="0" value="${D.contract ? D.contract.contract : ''}" placeholder="—">`] : D.contract ? ['Contract', money(D.contract.contract)] : null,
       D.cos.length ? ['Change orders', money(coSold)] : null,
       D.contract ? ['Revised contract', money(round2(D.contract.contract + coSold))] : null,
       ['Billed', money(billed)],
@@ -83,7 +83,7 @@ export async function jobCostPage(jobId, sub) {
     <div class="jc-pills noprint">
       ${pill('labor', 'Labor', money(laborTotal))}
       ${pill('materials', 'Materials', money(matTotal))}
-      ${D.cos.length || j.tag === 'JC' || j.tag === 'UC' ? pill('cos', 'Change orders', money(coSold)) : ''}
+      ${D.cos.length || j.tag === 'JC' ? pill('cos', 'Change orders', money(coSold)) : ''}
       ${pill('invoices', 'Invoices & draws', money(billed))}
       ${pill('ledger', 'General ledger', '')}
     </div>
@@ -302,9 +302,12 @@ export async function jobCostPage(jobId, sub) {
     const ct = mount.querySelector('.jc-contract');
     if (ct) ct.onchange = () => {
       const amount = ct.value === '' ? null : Number(ct.value);
-      run(() => doAndProve(`${readUrl}/contract`, { method: 'PUT', body: { amount } }, readUrl,
-        back => amount == null ? back.contract == null : back.contract && Number(back.contract.contract) === amount,
-        `Contract ${amount == null ? 'cleared' : money(amount)} — read back and it matches`));
+      run(async () => {
+        const { result } = await doAndProve(`${readUrl}/contract`, { method: 'PUT', body: { amount } }, readUrl,
+          back => amount == null ? back.contract == null : back.contract && Number(back.contract.contract) === amount,
+          `Contract ${amount == null ? 'cleared' : money(amount)} — read back and it matches`);
+        if (result && result.invoice && result.invoice.note) toast(result.invoice.note);
+      });
     };
     mount.querySelectorAll('.jc-coamt').forEach(inp => inp.onchange = () => {
       const co_id = Number(inp.dataset.co), amount = inp.value === '' ? null : Number(inp.value);

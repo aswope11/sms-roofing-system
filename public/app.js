@@ -20,7 +20,7 @@ import { whosWhoPage, whosWhoPopup, whosWhoLine } from './whoswho.js';
 const $app = document.getElementById('app');
 const $crumbs = document.getElementById('crumbs');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const TAG_NAMES = { BID: 'Bid', R: 'Repair', CO: 'Change order', UC: 'Unit cost', JC: 'Job contract', W: 'Warranty' };
+const TAG_NAMES = { BID: 'Bid', R: 'Repair', CO: 'Change order', UC: 'Unit cost (no contract price)', JC: 'Job contract (has a contract price)', W: 'Warranty' };
 
 function toast(msg, ok = true) {
   const t = document.getElementById('toast');
@@ -190,11 +190,6 @@ async function property(id) {
       <div>Notes</div><div>${esc(p.notes) || '—'}</div>
     </div>
     <div class="card">
-      <h2>Contract on this property</h2>
-      <form id="fc"><label>Contract amount<input name="amount" type="number" step="0.01" value="${p.contract_amount ?? ''}"></label>
-        <div class="actions"><button class="ghost">Save contract</button></div></form>
-    </div>
-    <div class="card">
       <h2>Job files</h2>
       ${p.jobs.length ? jobFilesByTenant(p)
         : '<div class="empty">No job files yet.</div>'}
@@ -232,16 +227,6 @@ async function property(id) {
       const j = await saveAndProve('jobs', 'POST', b, s => `jobs/${s.id}`, ['tag', 'title', 'notes', 'parent_job_id']);
       location.hash = `#/job/${j.id}`;
     } catch (e) { fail(e, document.getElementById('e')); btn.disabled = false; }
-  };
-  document.getElementById('fc').onsubmit = async ev => {
-    ev.preventDefault(); const btn = ev.submitter; btn.disabled = true;
-    const amount = new FormData(ev.target).get('amount');
-    try {
-      await fetch(`/w/contract/${id}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ amount }) }).then(async r => { if (!r.ok) throw new Error((await r.json()).error); });
-      const back = await api(`properties/${id}`);
-      if ((back.contract_amount == null ? '' : Number(back.contract_amount)) !== (amount === '' ? '' : Number(amount))) throw new Error('Contract did not stick on read-back');
-      toast('Contract saved — read back and it matches'); route();
-    } catch (e) { fail(e); btn.disabled = false; }
   };
   document.getElementById('ep').onsubmit = async ev => {
     ev.preventDefault(); const btn = ev.submitter; btn.disabled = true;

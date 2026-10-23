@@ -119,14 +119,15 @@ export async function renderBid(jobId, mount) {
       bk => (bk.bidOptions || []).some(o => o.cat === cat && o.grp === grp && o.name === name) === !on, on ? `${name} off` : `${name} on`));
   });
   if (q('#bAward')) q('#bAward').onclick = () => {
-    const tag = (ask(`Awarded: ${j.address} — ${j.title}\n\nWhat is the ticket?\nJC = job cost (draws)\nUC = mini job cost\nR = repair\n\nType JC, UC or R:`, 'JC') || '').trim().toUpperCase();
+    const tag = (ask(`Awarded: ${j.address} — ${j.title}\n\nWhat is the ticket?\nJC = has a contract price\nUC = no contract price (unit cost or small job)\nR = repair\n\nType JC, UC or R:`, 'JC') || '').trim().toUpperCase();
     if (!tag) return;
-    const contract = ask('Contract amount — what the draws bill off', j.bid_amount != null ? String(j.bid_amount) : ''); if (contract === null) return;
+    let contract = '';
+    if (tag === 'JC') { contract = ask('Contract price — the QuickBooks contract invoice is written for this, 1 week out', j.bid_amount != null ? String(j.bid_amount) : ''); if (contract === null) return; }
     run(async () => {
       const out = await call(`/w/bids/${jobId}/awarded`, { method: 'POST', body: { tag, contract } });
       const made = await call(`/w/job/${out.job_id}`);
       if (made.job.tag !== tag) throw new Error('That did not stick — the read-back does not show the ticket. Nothing was assumed.');
-      toast(`Ticket made: ${tag} — ${j.title}${contract ? ' · contract ' + money(Number(contract)) : ''}. Its ledger is open.`);
+      toast(`Ticket made: ${tag} — ${j.title}${contract ? ' · contract ' + money(Number(contract)) : ''}.${out.invoice && out.invoice.note ? ' ' + out.invoice.note : ''}`);
       location.hash = `#/job/${out.job_id}`;
     });
   };

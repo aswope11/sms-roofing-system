@@ -1,6 +1,6 @@
 // Plain rules shared by the API and the tests. Every rule here has a test.
 
-// Job tags he uses. BID = a bid. R = repair. CO = change order. UC = unit cost. JC = job contract. W = warranty.
+// Job tags he uses. BID = a bid. R = repair. CO = change order. JC = has a contract price. UC = no contract price (unit cost or small job). W = warranty.
 export const TAGS = ['BID', 'R', 'CO', 'UC', 'JC', 'W'];
 
 // File cabinet drawers inside one job file.

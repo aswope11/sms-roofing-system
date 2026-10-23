@@ -37,7 +37,7 @@ function norm(v: any): any {
 const today = () => new Date(Date.now() - 5 * 3600 * 1000).toISOString().slice(0, 10); // Central time
 
 const JOB_COLS = (sql: any) => sql`
-  SELECT j.*, p.address, p.city, COALESCE(NULLIF(j.tenant_name, ''), p.tenant) AS tenant, p.gc, p.customer_id, p.contract_amount, p.bill_name, p.bill_addr, p.ship_addr, c.name AS customer_name, c.bill_name AS c_bill_name, c.bill_addr AS c_bill_addr, c.no_pay AS c_no_pay, c.qb_parent AS c_qb_parent, pj.title AS parent_title, pj.tag AS parent_tag
+  SELECT j.*, p.address, p.city, COALESCE(NULLIF(j.tenant_name, ''), p.tenant) AS tenant, p.gc, p.customer_id, p.bill_name, p.bill_addr, p.ship_addr, c.name AS customer_name, c.bill_name AS c_bill_name, c.bill_addr AS c_bill_addr, c.no_pay AS c_no_pay, c.qb_parent AS c_qb_parent, pj.title AS parent_title, pj.tag AS parent_tag
   FROM jobs j JOIN properties p ON p.id = j.property_id JOIN customers c ON c.id = p.customer_id LEFT JOIN jobs pj ON pj.id = j.parent_job_id`;
 
 // ================= QUICKBOOKS =================
@@ -599,11 +599,37 @@ async function pushInvoiceToQB(sql: any, invoiceId: number, job: any) {
     throw e;
   }
 }
+// THE CONTRACT INVOICE — the contract rule lives in lib/money.js (10/23/26). Entering a JC's contract writes ONE QuickBooks
+// invoice for it: name "Contract", the ticket's scope, the contract total, dated 1 week out. Changing the contract later
+// updates that invoice while it is unsent; once it is sent it is never changed — the app says so instead.
+async function writeContractInvoice(sql: any, job: any) {
+  const amt = M.round2(Number(job.job_contract));
+  if (job.tag !== "JC" || !(amt > 0)) return null;
+  const [cur] = norm(await sql`SELECT * FROM invoices WHERE job_id = ${job.id} AND kind = 'real' AND name = 'Contract' ORDER BY id LIMIT 1`);
+  if (cur) {
+    if (Number(cur.amount) === amt) return { number: cur.number, note: "" };
+    if (cur.sent_at || cur.paid_at) return { number: cur.number, note: `Contract invoice #${cur.number} was already sent at ${M.money(Number(cur.amount))}, so it was not changed.` };
+    if (cur.qb_id) {
+      const q = (await qb("GET", `invoice/${cur.qb_id}`)).Invoice;
+      const ls = qbSalesLines(q);
+      if (ls.length !== 1) return { number: cur.number, note: `Contract invoice #${cur.number} has ${ls.length} lines in QuickBooks, so its amount was not changed — fix it there.` };
+      ls[0] = { ...ls[0], Amount: amt, SalesItemLineDetail: { ...ls[0].SalesItemLineDetail, Qty: 1, UnitPrice: amt } };
+      await qbPutLines(cur.qb_id, q, ls, amt, tixLabel(job), cur.number);
+    }
+    await sql`UPDATE invoices SET amount = ${amt} WHERE id = ${cur.id}`;
+    return { number: cur.number, note: `Contract invoice #${cur.number} changed to ${M.money(amt)}.` };
+  }
+  const [row] = norm(await sql`INSERT INTO invoices (job_id, kind, name, amount, inv_date, scope, memo)
+    VALUES (${job.id}, 'real', 'Contract', ${amt}, ${M.addDays(today(), M.CONTRACT_INVOICE_DAYS_OUT)}, ${String(job.scope || "")}, ${"JC-Contract"}) RETURNING *`);
+  const r = await pushInvoiceToQB(sql, row.id, job);
+  return { number: r.number, note: `Contract invoice #${r.number} written in QuickBooks for ${M.money(amt)}.` };
+}
 // HIS LAW (9/28/26): "the invoice CANNOT be zeroed out before the other invoice is created. 2 tickets is fine. zero tickets i go out of business."
 // So a placeholder is zeroed ONLY here — after the real invoice is in QuickBooks and read back. If QuickBooks refuses the
 // real invoice, nothing is zeroed: two tickets for a while, never none. The placeholders it replaces = this ticket's
 // placeholders still carrying money, for days up to what the real invoice covers.
 async function zeroReplacedPlaceholders(sql: any, inv: any, job: any) {
+  if (job.tag === "JC") return [];   // a JC never has a placeholder — its contract invoice replaces nothing
   const all = norm(await sql`SELECT * FROM invoices WHERE job_id = ${inv.job_id}`);
   const through = String(inv.covers_through || "").slice(0, 10);
   const covered = all.filter((p: any) => p.kind === "placeholder" && Number(p.amount) > 0 && !p.zeroed_by && p.work_date && (!through || String(p.work_date).slice(0, 10) <= through))
@@ -749,7 +775,7 @@ async function dropGonePlaceholders(sql: any, jobId: number) {
 async function pushPlaceholderToQB(sql: any, o: any, amount: number) {
   const label = tixLabel(o.job);
   if (!(amount > 0)) throw new Error(`${label}: can't do that yet — missing: a price — a $0 placeholder puts nothing in AR`);
-  if (!M.canPlaceholder(o.job.tag)) throw new Error(`${label}: a JC never gets a placeholder — its draw schedule bills it.`);
+  if (!M.canPlaceholder(o.job.tag)) throw new Error(`${label}: a JC never gets a placeholder — its labor and material stay in the app (the contract rule, lib/money.js).`);
   const day = String(o.work_date).slice(0, 10);
   const lines = placeholderDayLines(o, amount);
   await dropGonePlaceholders(sql, o.job.id);
@@ -2006,11 +2032,14 @@ export default async function handler(req: Request) {
         return json(norm(row));
       }
       if (m === "PUT" && action === "contract") {
-        if (job.tag !== "UC") return refuse("Only a UC carries its own contract — a JC's contract lives on the property.");
+        if (job.tag !== "JC") return refuse("Only a JC has a contract price. A job with a contract price is a JC — change the tag first.");
         const amt = money(b.amount);
         if (amt != null && !(amt >= 0)) return refuse("The contract has to be a dollar amount.");
         const [row] = await sql`UPDATE jobs SET job_contract = ${amt} WHERE id = ${id} RETURNING id, job_contract`;
-        return json(norm(row));
+        let invoice: any = null;
+        try { invoice = await writeContractInvoice(sql, { ...job, job_contract: amt }); }
+        catch (e: any) { invoice = { note: `Contract saved, but the QuickBooks contract invoice was not written: ${String(e?.message || e)}` }; }
+        return json({ ...norm(row), invoice });
       }
       if (m === "PUT" && action === "co-amount") {
         const amt = money(b.amount);
@@ -2158,7 +2187,7 @@ export default async function handler(req: Request) {
         if (!M.isWork(job.tag)) return refuse("A bid is not work — it can't be done.");
         const [r] = await sql`UPDATE jobs SET done_at = ${today()} WHERE id = ${id} RETURNING *`;
         // WORK COMPLETE (10/4/26, his order): copy the placeholder into a real QuickBooks invoice at the SAME price, save it, THEN zero the placeholder.
-        // Same path as the bill button (write it, QuickBooks, then zero the placeholder only after it lands). Contract jobs (UC/JC) bill by draws, so they are skipped.
+        // Same path as the bill button (write it, QuickBooks, then zero the placeholder only after it lands). A JC is billed by its contract invoice, so it is skipped.
         let billed: any = null;
         if (!['JC'].includes(job.tag)) {
           try {
@@ -2267,7 +2296,7 @@ export default async function handler(req: Request) {
         if (!job) return refuse("That ticket doesn't exist.", 404);
         if (!M.isWork(job.tag)) return refuse("An estimate is not work — no invoice goes on a bid.");
         if (!["placeholder", "real", "draw"].includes(b.kind)) return refuse("Unknown invoice kind.");
-        if (b.kind === "placeholder" && !M.canPlaceholder(job.tag)) return refuse("A JC never goes to QuickBooks — its draw schedule bills it. No placeholder on a JC.");
+        if (b.kind === "placeholder" && !M.canPlaceholder(job.tag)) return refuse("A JC never gets a placeholder — its labor and material stay in the app. Its QuickBooks bill is the contract invoice.");
         // NO DOLLAR AMOUNT IS NOT A REASON TO REFUSE. It saves at $0 and says the price is missing.
         const miss = b.kind === "placeholder" ? M.missingOnPlaceholder(b) : (Number(b.amount) > 0 ? [] : ["the dollar amount"]);
         const [r] = await sql`INSERT INTO invoices (job_id, kind, name, number, amount, inv_date, work_date)
@@ -2348,15 +2377,6 @@ export default async function handler(req: Request) {
         const [r] = await sql`UPDATE invoices SET paid_at = ${b.value ? today() : null} WHERE id = ${id} RETURNING *`;
         return json({ ...norm(r), missing: miss });
       }
-    }
-
-    // ================= PROPERTY CONTRACT =================
-    if (kind === "contract" && id && m === "PUT") {
-      const b = await body();
-      const amt = b.amount === "" || b.amount == null ? null : Number(b.amount);
-      if (amt != null && !(amt >= 0)) return refuse("Contract amount has to be a number.");
-      const [r] = await sql`UPDATE properties SET contract_amount = ${amt} WHERE id = ${id} RETURNING *`;
-      return json(norm(r));
     }
 
     // PUT A QUICKBOOKS CUSTOMER UNDER ITS COMPANY (10/8/26): POST /w/qb-customer-parent {qb_customer_id, parent_name}
@@ -3470,22 +3490,28 @@ export default async function handler(req: Request) {
         return json({ found: true, subject: msg.subj, sent: sentDay, files: atts.length + 1, price_filled: price, amounts, job: norm(r) });
       }
       if (m === "POST" && action === "awarded") {
-        // Awarded makes the real ticket, opens its ledger, and sets the contract the draws bill off.
+        // Awarded makes the real ticket and opens its ledger. A JC gets its contract on the ticket and its QuickBooks
+        // contract invoice (the contract rule, lib/money.js). A UC or R has no contract price.
         const b = await body();
         const tag = String(b.tag || "JC").toUpperCase();
         if (!M.isWork(tag)) return refuse("Pick what the ticket is: JC, UC, R or CO.");
+        if (tag === "UC" && b.contract != null && b.contract !== "") return refuse("A job with a contract price is a JC, not a UC.");
         if (bid.awarded_at) return refuse("That bid is already awarded.");
         const contract = b.contract === "" || b.contract == null ? (bid.bid_amount == null ? null : Number(bid.bid_amount)) : Number(b.contract);
         const client = await db.pool.connect();
         try {
           await client.query("BEGIN");
           const ins = await client.query(`INSERT INTO jobs (property_id, tag, title, notes, stage, job_contract) VALUES ($1, $2, $3, $4, 'ready', $5) RETURNING id`,
-            [bid.property_id, tag, bid.title, `Awarded from the bid ${M.money(contract || 0)} on ${today()}`, tag === "UC" ? contract : null]);
+            [bid.property_id, tag, bid.title, `Awarded from the bid ${M.money(contract || 0)} on ${today()}`, tag === "JC" ? contract : null]);
           const jobId = ins.rows[0].id;
-          if (tag === "JC" && contract != null) await client.query(`UPDATE properties SET contract_amount = $1 WHERE id = $2`, [contract, bid.property_id]);
           await client.query(`UPDATE jobs SET awarded_at = $1, awarded_job_id = $2, bid_amount = COALESCE(bid_amount, $3) WHERE id = $4`, [today(), jobId, contract, id]);
           await client.query("COMMIT");
-          return json({ job_id: jobId, tag, contract }, 201);
+          let invoice: any = null;
+          if (tag === "JC") {
+            try { invoice = await writeContractInvoice(sql, norm(await loadJob(jobId))); }
+            catch (e: any) { invoice = { note: `Ticket made, but the QuickBooks contract invoice was not written: ${String(e?.message || e)}` }; }
+          }
+          return json({ job_id: jobId, tag, contract, invoice }, 201);
         } catch (e) { await client.query("ROLLBACK"); throw e; } finally { client.release(); }
       }
       return refuse("Unknown bid request.", 404);

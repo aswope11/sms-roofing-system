@@ -72,7 +72,7 @@ test('LAW: W is warranty work — same name as other tags, never QuickBooks or a
   assert.deepEqual(M.QB_TAGS, ['R', 'CO', 'UC']);
   assert.equal(M.isWork('W'), true);
   assert.equal(M.canPlaceholder('W'), false);
-  assert.equal(M.isContractJob('W'), false);
+  assert.equal(M.billsWhileOpen('W'), false);
   assert.equal(M.contractFor({ id: 1, tag: 'W', contract_amount: 1000, job_contract: 1000 }, [], []), null);
   assert.equal(M.readyToBill({ id: 1, tag: 'W' }, [{ job_id: 1, work_date: '2026-10-01' }], [], []), null);
   assert.equal(M.ticketName({ tag: 'W', address: '100 Main St', city: 'Dallas', title: 'Leak' }), 'Leak - 100 Main St');
@@ -147,18 +147,18 @@ test('LAW: a ticket can never vanish — every combination lands on at least one
   assert.equal(checked, 240);
 });
 
-test('LAW: a UC is a mini job cost — its own contract, every trip bills off it (2155 Marsh = $2,000); a JC contract excludes COs and UCs', () => {
+test('LAW (10/23/26): only a JC has a contract — it lives on the JC ticket; a UC, CO or R never bills against it', () => {
   const invs = [
     { job_id: 1, kind: 'draw', amount: 1200 }, { job_id: 1, kind: 'draw', amount: 2750 },
-    { job_id: 2, kind: 'real', amount: 1800 }, { job_id: 1, kind: 'placeholder', amount: 900 },
-    { job_id: 3, kind: 'draw', amount: 10000 },
+    { job_id: 2, kind: 'real', amount: 1800 }, { job_id: 3, kind: 'placeholder', amount: 900 },
+    { job_id: 3, kind: 'real', amount: 6780 }, { job_id: 4, kind: 'real', amount: 450 },
   ];
-  assert.deepEqual(M.contractFor({ id: 1, tag: 'UC', job_contract: 5950 }, [], invs), { contract: 5950, billed: 3950, left: 2000 });
-  const js = [{ id: 1, tag: 'UC' }, { id: 2, tag: 'CO' }, { id: 3, tag: 'JC' }];
-  assert.deepEqual(M.contractFor({ id: 3, tag: 'JC', contract_amount: 50000 }, js, invs), { contract: 50000, billed: 10000, left: 40000 });
-  assert.equal(M.contractFor({ id: 9, tag: 'R', contract_amount: 50000 }, js, invs), null);
+  assert.equal(M.contractFor({ id: 1, tag: 'UC', job_contract: 5950 }, [], invs), null);              // a UC has no contract
+  assert.deepEqual(M.contractFor({ id: 3, tag: 'JC', job_contract: 6780 }, [], invs), { contract: 6780, billed: 6780, left: 0 });   // the CO (2) and repair (4) on the same property don't count
+  assert.equal(M.contractFor({ id: 9, tag: 'R', job_contract: 50000 }, [], invs), null);
+  assert.equal(M.CONTRACT_INVOICE_DAYS_OUT, 7);
   assert.equal(M.inInvoicing({ tag: 'UC', done_at: '2026-09-10' }, []), true);    // done UC walks the Invoicing steps, never straight to AR
-  assert.equal(M.inInvoicing({ tag: 'JC', done_at: '2026-09-10' }, []), false);   // JC bills by draws
+  assert.equal(M.inInvoicing({ tag: 'JC', done_at: '2026-09-10' }, []), false);   // a JC is billed by its contract invoice
   assert.equal(M.inInvoicing({ tag: 'R', done_at: '2026-09-10' }, []), true);
 });
 
@@ -408,7 +408,7 @@ test('LAW: ready to bill fills itself — green day + scope written + checked; d
   assert.notEqual(M.readyToBill({ ...job, scope_ok: false }, shares, mats, []), null);          // not checked — still ready (scope never holds it, 10/2/26)
   assert.equal(M.readyToBill({ ...job, done_at: null }, shares, mats, []), null);            // reopened — back on the schedule, not ready
   assert.notEqual(M.readyToBill({ ...job, scope: '  ' }, shares, mats, []), null);             // not written — still ready (scope never holds it, 10/2/26)
-  assert.equal(M.readyToBill({ ...job, tag: 'JC' }, shares, mats, []), null);               // JC bills by draws
+  assert.equal(M.readyToBill({ ...job, tag: 'JC' }, shares, mats, []), null);               // a JC is billed by its contract invoice
   assert.equal(M.readyToBill(job, shares, mats, [{ kind: 'real', covers_through: '2026-09-15' }]), null);   // billed — gone
   const later = M.readyToBill(job, [...shares, { job_id: 7, work_date: '2026-09-18', kind: 'employee', man: 'Tony', shows_as: 'Tony', stops: 1, days: 0.5, cost: 115 }], mats, [{ kind: 'real', covers_through: '2026-09-15' }]);
   assert.deepEqual([later.days.length, later.total], [1, 200]);   // only the new green day: 8 hrs × 0.5 × $50
@@ -552,7 +552,7 @@ test('LAW bids (half 1): only what he owes is chased — 3 days then 1 day then 
 
 test('bids server + page: list, add, due/price, sent, awarded makes the ticket and sets the contract the draws bill off', () => {
   const w = readFileSync('netlify/functions/work.mts', 'utf8');
-  for (const s of ['kind === "bids"', 'action === "sent"', 'action === "awarded"', "UPDATE properties SET contract_amount", 'awarded_job_id']) assert.ok(w.includes(s), s);
+  for (const s of ['kind === "bids"', 'action === "sent"', 'action === "awarded"', "writeContractInvoice", 'awarded_job_id']) assert.ok(w.includes(s), s);
   const sql = readdirSync('netlify/database/migrations').map(d => readFileSync(`netlify/database/migrations/${d}/migration.sql`, 'utf8')).join('\n');
   for (const c of ['bid_due', 'bid_sent_at', 'bid_amount', 'awarded_at', 'awarded_job_id']) assert.ok(sql.includes(c), c);
   // ONE APP: a bid starts at the customer and lives in its job file. No Bids tab, no second job-file system.

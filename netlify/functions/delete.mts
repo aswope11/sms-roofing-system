@@ -82,7 +82,7 @@ export default async (req: Request) => {
       const jobIds = (await q(`SELECT id FROM jobs WHERE property_id = $1`, [p.id])).map((r: any) => r.id);
       const part = await jobsPart(jobIds);
       return { what: "property", label: [p.address, p.city].filter(Boolean).join(", "), back: `#/customer/${p.customer_id}`,
-        attached: [...(jobIds.length ? [countOf(jobIds.length, "job file")] : []), ...(p.contract_amount != null ? [`a contract of ${M.money(p.contract_amount)}`] : []), ...part.attached],
+        attached: [...(jobIds.length ? [countOf(jobIds.length, "job file")] : []), ...part.attached],
         blocked: part.blocked,
         run: async () => { const keys = await part.run(); await q(`DELETE FROM properties WHERE id = $1`, [p.id]); return keys; } };
     }
