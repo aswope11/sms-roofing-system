@@ -621,3 +621,5 @@ details.newcust[open]>summary{margin-bottom:10px}
 .talkplan{display:flex;flex-direction:column;gap:10px;margin-top:10px}
 @media (max-width:600px){.oldgrid table.schedgrid{min-width:1000px}}
 .backbtn{flex:0 0 auto;width:44px;height:44px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--ink);font-size:30px;line-height:1;padding:0 0 4px;cursor:pointer}
+.oldgrid .fitgrid{overflow-x:auto}
+.oldgrid table.schedgrid{min-width:980px}
