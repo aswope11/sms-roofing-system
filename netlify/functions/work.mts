@@ -853,7 +853,7 @@ async function qbDeleteInvoice(qbId: string) {
 // "ABC Invoice #… (date)", each item, tax, total, × 1.2). Where: the open placeholder; none open but one zeroed → onto that one
 // as money, never zeroed out (his 10/16 answer); none at all → a new placeholder. JC never touches QuickBooks here.
 // Saving the bill again swaps that one line (matched word for word), so it is never on QuickBooks twice.
-const SUPPLY_QB_TAGS = ["R", "CO", "UC", "W"];
+const SUPPLY_QB_TAGS = ["R", "WT", "CO", "UC", "W"];
 async function supplyToQB(sql: any, invId: number, loadJob: (id: number) => Promise<any>) {
   const done: string[] = [], errors: string[] = [];
   const [inv] = norm(await sql`SELECT * FROM supply_invoices WHERE id = ${invId}`);
@@ -1486,7 +1486,7 @@ export default async function handler(req: Request) {
     const b = await body();
     const said = String(b.text || "").trim();
     if (!said) return refuse("Say something first.");
-    const tickets = norm(await sql`${JOB_COLS(sql)} WHERE j.tag = ANY(${["R", "CO", "UC", "JC"]}::text[]) AND j.tabled_at IS NULL
+    const tickets = norm(await sql`${JOB_COLS(sql)} WHERE j.tag = ANY(${["R", "WT", "CO", "UC", "JC"]}::text[]) AND j.tabled_at IS NULL
       AND (j.done_at IS NULL OR j.done_at >= ${M.addDays(today(), -14)}) ORDER BY j.id DESC`);
     try {
       const r = await claudeTalk(said, String(b.draft || ""), tickets, b.job_id ? Number(b.job_id) : null);

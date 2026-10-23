@@ -7,8 +7,8 @@ test('same address written two ways = same property', () => {
   assert.equal(R.addressKey('2409 Eastlake Hill Dr.'), R.addressKey('2409 eastlake  hill DRIVE'));
   assert.notEqual(R.addressKey('2409 Eastlake Hill Dr'), R.addressKey('2411 Eastlake Hill Dr'));
 });
-test('tags are exactly BID R CO UC JC W', () => {
-  assert.deepEqual(R.TAGS, ['BID', 'R', 'CO', 'UC', 'JC', 'W']);
+test('tags are exactly BID R WT CO UC JC W', () => {
+  assert.deepEqual(R.TAGS, ['BID', 'R', 'WT', 'CO', 'UC', 'JC', 'W']);
 });
 test('files over 4 MB are cut into pieces', () => {
   assert.equal(R.chunkCount(0), 1);
@@ -19,7 +19,7 @@ test('files over 4 MB are cut into pieces', () => {
 test('nothing saves with a missing required field', () => {
   assert.deepEqual(R.missingOnCustomer({ name: ' ' }), ['Customer name']);
   assert.deepEqual(R.missingOnProperty({ customer_id: 1, address: '' }), ['Address']);
-  assert.deepEqual(R.missingOnJob({ property_id: 1, tag: 'X', title: 'a' }), ['Tag (BID, R, CO, UC, JC or W)']);
+  assert.deepEqual(R.missingOnJob({ property_id: 1, tag: 'X', title: 'a' }), ['Tag (BID, R, WT, CO, UC, JC or W)']);
   assert.deepEqual(R.missingOnJob({ property_id: 1, tag: 'JC', title: 'Roof' }), []);
 });
 test('browser copy of the rules matches the server copy', () => {

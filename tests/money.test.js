@@ -69,7 +69,7 @@ test('LAW: JC never goes to QuickBooks — no placeholder on a JC', () => {
 
 test('LAW: W is warranty work — same name as other tags, never QuickBooks or a contract', () => {
   assert.ok(M.WORK_TAGS.includes('W'));
-  assert.deepEqual(M.QB_TAGS, ['R', 'CO', 'UC']);
+  assert.deepEqual(M.QB_TAGS, ['R', 'WT', 'CO', 'UC']);
   assert.equal(M.isWork('W'), true);
   assert.equal(M.canPlaceholder('W'), false);
   assert.equal(M.billsWhileOpen('W'), false);
@@ -144,7 +144,7 @@ test('LAW: a ticket can never vanish — every combination lands on at least one
       assert.ok(places.length > 0, JSON.stringify({ tag, done_at, tabled_at, no_charge, invSet }));
       checked++;
     }
-  assert.equal(checked, 240);
+  assert.equal(checked, 288);
 });
 
 test('LAW (10/23/26): only a JC has a contract — it lives on the JC ticket; a UC, CO or R never bills against it', () => {
@@ -760,7 +760,7 @@ test('laborWhy: plain reasons for an owed day, each with what the app needs', ()
 // 10/16/26 his words: "on uc-r-w etc, the invoice needs to go straight into qb. jcs continue to go directly into the job cost sheet on the app only"
 test('supply bill on R / CO / UC / W goes onto the QuickBooks placeholder; JC never; never counted twice', () => {
   const api = readFileSync('netlify/functions/work.mts', 'utf8');
-  assert.ok(api.includes('const SUPPLY_QB_TAGS = ["R", "CO", "UC", "W"];'));
+  assert.ok(api.includes('const SUPPLY_QB_TAGS = ["R", "WT", "CO", "UC", "W"];'));
   assert.ok(api.includes('qbOut = await supplyToQB(sql, Number(invId), loadJob)'));
   assert.equal((api.match(/AND NOT EXISTS \(SELECT 1 FROM supply_qb q WHERE q\.invoice_id = l\.invoice_id AND q\.job_id = l\.job_id AND q\.amount > 0\)/g) || []).length, 3);
 });

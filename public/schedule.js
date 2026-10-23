@@ -230,7 +230,7 @@ export async function schedulePage(start) {
   let logFor = null;
   const renderHits = () => {
     const q = document.getElementById('lSearch').value.toLowerCase().trim();
-    const order = { R: 0, UC: 1, CO: 2, JC: 3 };
+    const order = { R: 0, WT: 0, UC: 1, CO: 2, JC: 3 };
     // no search: only what's ready to work. Typing finds anything open, ready or not.
     // his rule 9/30: a ticket marked done is off the Schedule picker — it lives on Invoicing now
     const pool = open;

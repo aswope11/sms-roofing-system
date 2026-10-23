@@ -352,7 +352,7 @@ ${st.k === 'hold' ? `<span class="paypill pay-hold">${esc(st.l)}</span>` : ''}
       form.onclick = e => e.stopPropagation();
       form.innerHTML = '<input class="jn-addr" placeholder="Address" style="min-width:200px"><input class="jn-city" placeholder="City" style="width:110px">'
         + '<input class="jn-cust" list="jobTypeCust" placeholder="Customer (only for a new address)" style="min-width:220px">'
-        + '<select class="jn-tag"><option value="">Tag — not decided</option>' + ['BID', 'R', 'CO', 'UC', 'JC', 'W'].map(t => '<option>' + t + '</option>').join('') + '</select>'
+        + '<select class="jn-tag"><option value="">Tag — not decided</option>' + ['BID', 'R', 'WT', 'CO', 'UC', 'JC', 'W'].map(t => '<option>' + t + '</option>').join('') + '</select>'
         + '<input class="jn-title" placeholder="Job name (short)" style="min-width:160px">'
         + '<button type="button" class="jn-go">Create job + put invoice on it</button><button type="button" class="jn-x">Cancel</button>'
         + '<div class="jn-msg help" style="flex-basis:100%"></div>';

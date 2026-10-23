@@ -3,8 +3,8 @@
 
 export const round2 = n => Math.round((Number(n) || 0) * 100) / 100;
 export const money = n => (round2(n) < 0 ? '-$' : '$') + Math.abs(round2(n)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-export const WORK_TAGS = ['R', 'CO', 'UC', 'JC', 'W'];     // BID is never work. W is warranty work.
-export const QB_TAGS = ['R', 'CO', 'UC'];                  // JC and W never go to QuickBooks
+export const WORK_TAGS = ['R', 'WT', 'CO', 'UC', 'JC', 'W'];     // BID is never work. W is warranty work. WT is a water test.
+export const QB_TAGS = ['R', 'WT', 'CO', 'UC'];            // JC and W never go to QuickBooks. WT bills like a repair.
 export const isWork = tag => WORK_TAGS.includes(tag);
 
 // ---------- DATES ----------
