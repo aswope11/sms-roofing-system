@@ -1269,24 +1269,50 @@ function pdfText(buf: Buffer) {
     try { chunk = zlib.inflateSync(Buffer.from(chunk, "latin1")).toString("latin1"); } catch { /* not compressed, or not ours to read */ }
     for (const t of chunk.matchAll(/\((?:\\.|[^()\\])*\)/g)) out.push(t[0].slice(1, -1).replace(/\\([()\\])/g, "$1"));
   }
-  return out.join(" ").replace(/\s+/g, " ");
+  const text = out.join(" ").replace(/\s+/g, " ");
+  // ONE LETTER AT A TIME (10/26/26, TX First Rentals / Billtrust): some bills print every letter as its own piece, so
+  // the words came out "I n v o i c e" and nothing on the bill could be read — the file name became the invoice #.
+  // When most pieces are single letters, put the letters back together: a sideways move stays in the word, a new line breaks it.
+  const pieces = out.filter((t) => t.trim());
+  if (pieces.length < 40 || pieces.filter((t) => t.length === 1).length / pieces.length < 0.6) return text;
+  let joined = "";
+  for (const m of raw.matchAll(/stream\r?\n([\s\S]*?)endstream/g)) {
+    let chunk = m[1];
+    try { chunk = zlib.inflateSync(Buffer.from(chunk, "latin1")).toString("latin1"); } catch { /* not compressed */ }
+    for (const bt of chunk.matchAll(/\bBT\b([\s\S]*?)\bET\b/g)) {
+      for (const op of bt[1].matchAll(/\((?:\\.|[^()\\])*\)\s*Tj|\[(?:[^\]\\]|\\.)*\]\s*TJ|(-?[\d.]+)\s+(-?[\d.]+)\s+T[dD]|T\*|[\d.\s-]+Tm/g)) {
+        const x = op[0];
+        if (/Tj$/.test(x)) joined += x.slice(1, x.lastIndexOf(")")).replace(/\\([()\\])/g, "$1");
+        else if (/TJ$/.test(x)) { for (const p of x.matchAll(/\((?:\\.|[^()\\])*\)|-?[\d.]+/g)) joined += p[0][0] === "(" ? p[0].slice(1, -1).replace(/\\([()\\])/g, "$1") : (Number(p[0]) < -200 ? " " : ""); }
+        else if (/T[dD]$/.test(x)) { if (Math.abs(Number(op[2])) > 0.5) joined += " | "; }
+        else joined += " | ";
+      }
+      joined += " | ";
+    }
+  }
+  return joined.replace(/\s+/g, " ");
 }
 const num = (s: string) => Number(String(s).replace(/[$,]/g, ""));
 function readInvoiceText(text: string) {
-  const number = (text.match(/invoice\s*(?:no\.?|number|#)\s*:?\s*([A-Z0-9][A-Z0-9\-\/]{3,})/i) || [])[1] || "";
-  const dm = text.match(/invoice\s*date\s*:?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i) || text.match(/(\d{1,2}\/\d{1,2}\/\d{2,4})/);
+  // rental bills (TX First Rentals) carry no invoice # — the contract # with its billing number is the invoice # ("1693615-0002")
+  const number = (text.match(/invoice\s*(?:no\.?|number|#)\s*:?\s*([A-Z0-9][A-Z0-9\-\/]{3,})/i) || [])[1]
+    || (text.match(/contract\s*#\s*:?\s*(\d{4,}-\d{1,6})/i) || [])[1] || "";
+  const dm = text.match(/inv(?:oice|\.)?\s*date\s*:?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i) || text.match(/(\d{1,2}\/\d{1,2}\/\d{2,4})/);
   let inv_date = "";
   if (dm) {
     const [mo, d, y] = dm[1].split(/[\/\-]/).map(Number);
     const yy = y < 100 ? 2000 + y : y;
     inv_date = `${yy}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
   }
-  const totals = [...text.matchAll(/(?:invoice\s+total|total\s+due|amount\s+due|balance\s+due|total)\s*:?\s*\$?\s*([\d,]+\.\d{2})/gi)].map(x => num(x[1]));
+  const totals = [...text.matchAll(/(?:invoice\s+total|total\s+due|total\s+amt|amount\s+due|balance\s+due|total)\s*:?\s*\$?\s*([\d,]+\.\d{2})/gi)].map(x => num(x[1]));
   const amount = totals.length ? totals[totals.length - 1] : 0;
   const due = text.match(/due\s*date\s*:?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i);
   let due_date: string | null = null;
   if (due) { const [mo, d, y] = due[1].split(/[\/\-]/).map(Number); const yy = y < 100 ? 2000 + y : y; due_date = `${yy}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`; }
-  const po = (text.match(/\b(?:p\.?o\.?|purchase order|job)\s*(?:no\.?|number|#)?\s*:?\s*([A-Z0-9][A-Z0-9\- ]{2,20})/i) || [])[1] || "";
+  // a "P.O. BOX" mailing address is never a PO (10/26/26: TX First Rentals' PO came out "BOX 207916 SAN ANTONI");
+  // a rental bill's job is its "Job Location" — the address he types to put it on the job
+  const po = ((text.match(/job\s*location\s*:?\s*\|?\s*([^|]{4,40}?)\s*\|/i) || [])[1]
+    || (text.match(/\b(?:p\.?o\.?|purchase order|job)\s*(?:no\.?|number|#)?\s*:?\s*(?!box\b)([A-Z0-9][A-Z0-9\- ]{2,20})/i) || [])[1] || "").trim();
   // lines: qty · unit · what it is · price · total, in the order supply houses print them
   const lines: any[] = [];
   const LINE = /(\d+(?:\.\d+)?)\s+(EA|EACH|BD|BDL|BX|CS|GA|LF|PC|PCS|RL|SQ|SH|TU|BAG|BKT|PL)\s+([A-Za-z0-9][^$]{4,60}?)\s+\$?([\d,]+\.\d{2})\s+\$?([\d,]+\.\d{2})/gi;
