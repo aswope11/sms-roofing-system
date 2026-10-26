@@ -41,12 +41,11 @@ export async function supplyPage() {
   const owed = h => round2(openInvs.filter(i => i.house === h).reduce((a, i) => a + balance(i), 0));
   const grand = round2(openInvs.reduce((a, i) => a + balance(i), 0));
 
-  // the three piles that must never grow: money not on a job, bills not cleared to pay, paper nobody has read
+  // the two piles that must never grow: money not on a job, bills not cleared to pay
   // PAID MEANS DONE. A paid invoice never shows here — he is not opening a job file to bury a closed bill.
   // Only invoices he still owes can land on this list, because those are the ones that still need a home.
   const notOnJob = openInvs.filter(i => !isCredit(i) && Number(i.unplaced) > 0.004);
   const notCleared = openInvs.filter(i => !isCredit(i) && !(i.qty_ok && i.prod_ok && i.price_ok));
-  const needReading = invs.filter(i => i.needs_reading || (!i.line_count && !isCredit(i)));
 
   const pile = (title, list, why, colour) => list.length ? `<details class="card bidstrip"><summary><b>${title}</b> <span class="lanen" style="background:${colour}">${list.length}</span></summary>
     <div class="row"><span class="mute">${esc(why)}</span></div>
@@ -63,7 +62,6 @@ export async function supplyPage() {
     </div>
     ${pile('Not on a job yet', notOnJob, 'Every one of these is real money that is not in any job cost.', 'var(--bad)')}
     ${pile('Not cleared to pay', notCleared, 'Nothing gets paid until quantity, product and pricing are all checked.', '#ffd24d')}
-    ${pile('Need reading', needReading, 'These landed as paper. Nothing was guessed.', 'var(--mute)')}
     <div class="ledwrap"><div class="smsscroll"><table class="suptbl">
       <thead><tr><th class="sh">Supply house</th><th class="sc">Owed</th>
         ${days.map(day => `<th class="sc smsday${pastDue(day) ? ' past' : ''}">${dayLabel(day)}</th>`).join('')}</tr></thead>

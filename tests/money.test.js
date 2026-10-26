@@ -591,10 +591,11 @@ test('LAW: the app reads the mail and files it — it never sends. It may take a
 
 test('Supply Houses, the old board way: owed by due date, credits under the bill they come off, one payment over many bills, nothing unapplied, one-click paid', () => {
   const page = readFileSync('public/supply.js', 'utf8');
-  for (const s of ['Everything I owe', 'Not on a job yet', 'Not cleared to pay', 'Need reading', 'The whole invoice goes to the same place',
+  for (const s of ['Everything I owe', 'Not on a job yet', 'Not cleared to pay', 'The whole invoice goes to the same place',
     'The three checks', 'credit off', 'Take this payment back', 'paidtog',
     'Break it into what actually moved', 'INVENTORY IS WRONG ON THIS LINE', 'agrees to the penny', 'draggable="true"']) assert.ok(page.includes(s), s);
   assert.ok(page.includes('A credit counts on the due date of the bill it comes off'), 'credit day rule');
+  assert.ok(!page.includes('Need reading'), 'the Need reading pile is gone (10/26/26)');
   // 9/20/26: he switches the terms himself, on the bill. They are still never STORED —
   // the terms are the gap between the invoice date and the due date, read back off the two.
   assert.ok(page.includes('trmsel') && page.includes('/terms`'), 'a terms switch on every bill');
