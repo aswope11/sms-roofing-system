@@ -2522,10 +2522,20 @@ export default async function handler(req: Request) {
           const bk = W.canonicalBuilding(j.address, j.city);
           const same = rows.filter((r: any) => W.canonicalBuilding(r.building, r.city) === bk && W.sameCity(r.city, j.city));
           const bld = same.find((r: any) => r.building_qb_id) || null;
+          // 10/27/26: "it was right but it never gave me a chance to say yes" — when the map has no row yet, offer the QuickBooks
+          // customer(s) at this same building as one-tap answers, the tenant's own spot first.
+          const tree0 = companies[j.customer_id]?.tree || [];
+          const tk = W.tenantKey(j.tenant);
+          const atBuilding = tree0.filter((c: any) => { const leaf = String(c.path).split(" › ").pop() || ""; const lk = W.canonicalBuilding(leaf, j.city); return lk === bk || lk.startsWith(bk + " "); })
+            .map((c: any) => ({ qb_customer_id: c.id, label: c.path, tenant: j.tenant, hit: tk && W.tenantKey(c.path).includes(tk) ? 1 : 0 }))
+            .sort((x: any, y: any) => y.hit - x.hit);
+          const choices = same.filter((r: any) => r.qb_customer_id).map((r: any) => ({ qb_customer_id: r.qb_customer_id, label: r.qb_path, tenant: r.tenant }));
+          for (const c of atBuilding) if (!choices.some((x: any) => String(x.qb_customer_id) === String(c.qb_customer_id))) choices.push({ qb_customer_id: c.qb_customer_id, label: c.label, tenant: c.tenant });
+          if (atBuilding[0]?.hit) { const i = choices.findIndex((x: any) => String(x.qb_customer_id) === String(atBuilding[0].qb_customer_id)); if (i > 0) choices.unshift(...choices.splice(i, 1)); }
           asks.push({ job_id: j.id, ticket: M.ticketName(j), customer: j.customer_name, address: j.address, city: j.city, tenant: j.tenant,
             why: asked.find((a: any) => Number(a.job_id) === Number(j.id))?.why || d.why,
             row_id: d.row?.id || null,
-            choices: same.filter((r: any) => r.qb_customer_id).map((r: any) => ({ qb_customer_id: r.qb_customer_id, label: r.qb_path, tenant: r.tenant })),
+            choices,
             new_under: bld && String(j.tenant || "").trim() ? { id: bld.building_qb_id, label: bld.building_qb_path } : null,
             tree: (companies[j.customer_id]?.tree || []) });
         }

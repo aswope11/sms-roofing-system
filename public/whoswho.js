@@ -156,7 +156,7 @@ export async function whosWhoPopup() {
     <p><b>${esc(a.ticket)}</b><br>${esc(a.address)}${a.city ? ', ' + esc(a.city) : ''}${a.tenant ? ' — ' + esc(a.tenant) : ''}<br><span class="mute">${esc(a.customer || '')} · ${esc(a.why)}</span></p>
     <p class="help">Nothing goes to QuickBooks for this ticket until you answer.${asks.length > 1 ? ` (${asks.length - 1} more after this)` : ''}</p>
     <div style="display:flex;flex-direction:column;gap:8px">
-      ${a.choices.map(c => `<button class="ghost" data-qb="${esc(c.qb_customer_id)}" style="text-align:left">${esc(c.label)}</button>`).join('')}
+      ${a.choices.map((c, i) => `<button class="${i ? 'ghost' : ''}" data-qb="${esc(c.qb_customer_id)}" style="text-align:left">${i ? '' : 'Yes — '}${esc(c.label)}</button>`).join('')}
       ${a.new_under ? `<button class="ghost" data-new="${esc(a.new_under.id)}" style="text-align:left">New tenant "${esc(a.tenant)}" under ${esc(a.new_under.label)}</button>` : ''}
       ${a.tree.length ? `<select id="ww-pick"><option value="">Another customer in QuickBooks…</option>${a.tree.map(c => `<option value="${esc(c.id)}">${esc(c.path)}</option>`).join('')}</select>` : ''}
       <button class="ghost" id="ww-later" style="align-self:flex-end">Later</button>
