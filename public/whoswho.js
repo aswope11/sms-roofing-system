@@ -7,6 +7,15 @@ import { esc, call, toast, crumbs, $app } from './ui.js';
 const blank = '<span style="color:var(--bad);font-weight:700">blank</span>';
 const lines = s => esc(s || '').replace(/\n/g, '<br>');
 const where = r => `${esc(r.building)}${r.city ? ', ' + esc(r.city) : ''}${r.tenant ? ' — <b>' + esc(r.tenant) + '</b>' : ' — whole building'}`;
+// Show the existing QuickBooks path as stacked lines inside one choice.
+function customerChoiceLines(label) {
+  const path = String(label || '').split(' › ').map(s => s.trim()).filter(Boolean);
+  const leaf = path.pop() || '';
+  const parts = leaf.split(/\s+-\s+/);
+  const lines = [...path, ...parts].filter(Boolean);
+  return lines.map(line => `<span style="display:block">${esc(line)}</span>`).join('');
+}
+
 let pick = null;   // company shown
 
 export async function whosWhoPage() {
@@ -166,13 +175,10 @@ export async function whosWhoPopup({ force = false, jobId = null } = {}) {
   const box = document.createElement('div');
   box.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:50;display:flex;align-items:center;justify-content:center;padding:16px';
   box.innerHTML = `<div class="card" style="max-width:560px;width:100%;max-height:85vh;overflow:auto">
-    <h2 style="margin-top:0">Where does this job belong in QuickBooks?</h2>
-    <p><b>${esc(a.ticket)}</b><br>${esc(a.address)}${a.city ? ', ' + esc(a.city) : ''}${a.tenant ? ' — ' + esc(a.tenant) : ''}${a.customer ? '<br><span class="mute">Customer: ' + esc(a.customer) + '</span>' : ''}</p>
-    <p class="help">Choose the customer and property for this job. Confirming also retries its waiting QuickBooks entries.${asks.length > 1 ? ` (${asks.length - 1} more after this)` : ''}</p>
     <div style="display:flex;flex-direction:column;gap:8px">
-      ${a.choices.map((c, i) => `<button class="${i ? 'ghost' : ''}" data-qb="${esc(c.qb_customer_id)}" style="text-align:left">${i ? 'Use: ' : 'Yes, use: '}${esc(c.label)}</button>`).join('')}
+      ${a.choices.map((c, i) => `<button class="${i ? 'ghost' : ''}" data-qb="${esc(c.qb_customer_id)}" style="text-align:left">${customerChoiceLines(c.label)}</button>`).join('')}
       ${a.new_under ? `<button class="ghost" data-new="${esc(a.new_under.id)}" style="text-align:left">New tenant "${esc(a.tenant)}" under ${esc(a.new_under.label)}</button>` : ''}
-      ${a.tree.length ? `<label>Or choose another QuickBooks customer<select id="ww-pick"><option value="">Choose a customer…</option>${a.tree.map(c => `<option value="${esc(c.id)}">${esc(c.path)}</option>`).join('')}</select></label><button id="ww-save" disabled>Confirm selection</button>` : '<p class="help">No other customers loaded. Your job will stay in Customer setup until it is matched.</p>'}
+      ${a.tree.length ? `<label>Choose another<select id="ww-pick"><option value="">Choose a customer…</option>${a.tree.map(c => `<option value="${esc(c.id)}">${esc(c.path)}</option>`).join('')}</select></label><button id="ww-save" disabled>Confirm selection</button>` : '<p class="help">No other customers loaded. Your job will stay in Customer setup until it is matched.</p>'}
       <button class="ghost" id="ww-later" style="align-self:flex-end">Decide later</button>
       <p class="help">Decide later keeps this job in Customers → Customer setup. It does not move the job or create a customer.</p>
     </div><div class="err" id="ww-err"></div></div>`;
