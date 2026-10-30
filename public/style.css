@@ -623,3 +623,7 @@ details.newcust[open]>summary{margin-bottom:10px}
 .backbtn{flex:0 0 auto;width:44px;height:44px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--ink);font-size:30px;line-height:1;padding:0 0 4px;cursor:pointer}
 .oldgrid .fitgrid{overflow-x:auto}
 .oldgrid table.schedgrid{min-width:980px}
+
+/* PAYROLL: day header row stays put while scrolling down (10/30) */
+.payscroll{max-height:calc(100vh - 150px);overflow:auto}
+table.pay tr:first-child>th{position:sticky;top:0;z-index:2;background:var(--panel2);box-shadow:0 1px 0 var(--line)}

@@ -44,7 +44,7 @@ export async function payrollSection(mount, start) {
       <button class="ghost small" id="next">Week after ›</button>
       <span class="mute" style="align-self:center">Pay week ${dayHead(w.dates[0])} – ${dayHead(w.dates[6])}</span>
     </div>
-    <div class="card scroll">
+    <div class="card scroll payscroll">
       <table class="grid pay">
         <tr><th></th>${dates.map(d => `<th class="${isGreen(d) ? 'day-green' : ''}">${dayHead(d)}<br>
           <button class="small ${isGreen(d) ? '' : 'ghost'} green" data-date="${d}" data-green="${isGreen(d) ? 1 : 0}">${isGreen(d) ? '● Green — day is final' : '○ Red — not final'}</button></th>`).join('')}<th class="num">Week pay</th></tr>
