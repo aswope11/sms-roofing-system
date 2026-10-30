@@ -107,20 +107,21 @@ export async function schedulePage(start) {
       <div class="plist"><div class="psec">${rows.sort(jobCmp).map(rowHTML).join('')}</div></div></div>`;
   });
 
-  // ADD A MAN, WHERE HE IS STANDING WHEN HE HIRES ONE (off the Crew page, 9/18).
-  const bossOpts = `<option value="">— nobody, he's his own —</option>` +
-    allCrew.filter(c => !c.boss_id && c.kind === 'sub').map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  // ADD A MAN / FIX A MAN (10/30/26): one add box (the one with crew leader / works under), and a ✎ on
+  // every man on the board to change his name, type, who he works under, rate and pay-to after he's added.
+  const leaders = allCrew.filter(c => !c.boss_id && c.kind === 'sub');
   $app().innerHTML = `<div class="oldgrid">
     <h1>Schedule</h1>
     <div style="margin-bottom:12px"><button type="button" id="addManBtn">Add a man</button></div>
-      <form id="addMan" class="card" style="display:none">
-        <label>Name<input name="name" placeholder="fill it in when you know it"></label>
-        <label>Type<select name="kind"><option value="employee">SMS employee — billed $50 a man-hour</option><option value="sub">Sub — billed at his cost × 1.5</option></select></label>
-        <label>Day rate<input name="day_rate" type="number" step="0.01" placeholder="leave it blank until it is settled"></label>
-        <label>Pay to (Zelle / 1099 name)<input name="pay_to"></label>
-        <label>Works under<select name="boss_id">${bossOpts}</select></label>
-        <div class="actions"><button>Add to crew</button></div>
-      </form>
+    <div class="btnrow" id="editMan" style="display:none;margin-bottom:10px">
+      <b id="emWho"></b>
+      <input id="emName" placeholder="Name" autocomplete="off">
+      <select id="emType"><option value="employee">SMS — one of mine</option><option value="sub">Sub — crew leader</option><option value="under">Sub — works under somebody</option></select>
+      <select id="emLead" style="display:none"></select>
+      <input id="emPayTo" placeholder="Pay to — company name">
+      <input id="emRate" type="number" min="0" step="0.01" placeholder="Day rate">
+      <button type="button" class="small" id="emSave">Save</button>
+      <button type="button" class="small" id="emCancel">Cancel</button></div>
     <div class="weeknav">
       <button id="prev">‹ Prev</button>
       <span class="range">Week of ${dayHead(w.dates[0])} – ${dayHead(w.dates[6])}</span>
@@ -147,7 +148,7 @@ export async function schedulePage(start) {
           <div class="dchk">${st === 'acct' ? '✓ good to bill' : st === 'late' ? 'not accounted' : 'tap when right'}</div></th>`; }).join('')}</tr>
         <tr><th>Nobody on it yet</th>${dates.map(d => `<td class="cell" data-dropdate="${d}" data-dropcrew="">${nobody(d).map(j => jobCardHTML(j, '', d)).join('')}
           <div class="plus ${nobody(d).length ? 'has' : ''}" data-nobody="1" data-date="${d}">+</div></td>`).join('')}</tr>
-        ${crew.map((c, i) => `${i === 0 || (crew[i - 1].group === 'employee') !== (c.group === 'employee') ? `<tr class="grouphead"><th colspan="${dates.length + 1}">${c.group === 'employee' ? 'SMS employees' : 'Subs'}</th></tr>` : ''}<tr><th style="border-left:4px solid ${crewColor(c, w.crew)}">${c.group.startsWith('under-') ? '<span class="mute">↳ </span>' : ''}<span class="manledger" data-ledger="${c.boss_id || c.id}" data-lname="${c.boss_id ? '' : esc(c.name)}" title="Open his pay ledger" style="cursor:pointer;text-decoration:underline dotted">${esc(c.name)}</span>${c.group !== 'employee' && !workedMen.has(c.id) ? ` <span class="delx" data-drop="${c.id}" title="Take him off this week" style="cursor:pointer">✕</span>` : ''}</th>${dates.map(d => {
+        ${crew.map((c, i) => `${i === 0 || (crew[i - 1].group === 'employee') !== (c.group === 'employee') ? `<tr class="grouphead"><th colspan="${dates.length + 1}">${c.group === 'employee' ? 'SMS employees' : 'Subs'}</th></tr>` : ''}<tr><th style="border-left:4px solid ${crewColor(c, w.crew)}">${c.group.startsWith('under-') ? '<span class="mute">↳ </span>' : ''}<span class="manledger" data-ledger="${c.boss_id || c.id}" data-lname="${c.boss_id ? '' : esc(c.name)}" title="Open his pay ledger" style="cursor:pointer;text-decoration:underline dotted">${esc(c.name)}</span> <span data-editman="${c.id}" title="Fix him — name, type, who he works under, rate" style="cursor:pointer">✎</span>${c.group !== 'employee' && !workedMen.has(c.id) ? ` <span class="delx" data-drop="${c.id}" title="Take him off this week" style="cursor:pointer">✕</span>` : ''}</th>${dates.map(d => {
           const mine = w.stops.filter(s => s.crew_id === c.id && s.work_date === d);
           return `<td class="cell" data-dropcrew="${c.id}" data-dropdate="${d}">${mine.map(s => jobsById[s.job_id] ? jobCardHTML(jobsById[s.job_id], c.id, d, s.id) : '').join('')}
             <div class="plus ${mine.length ? 'has' : ''}" data-crew="${c.id}" data-date="${d}">+</div></td>`;
@@ -169,17 +170,6 @@ export async function schedulePage(start) {
   </div>`;
 
   const reload = () => schedulePage(w.start);
-  // the orange button opens the form; press it again to put the form away
-  document.getElementById('addManBtn').onclick = () => { const f = document.getElementById('addMan'); f.style.display = f.style.display === 'none' ? '' : 'none'; };
-  document.getElementById('addMan').onsubmit = async ev => {
-    ev.preventDefault(); const b = Object.fromEntries(new FormData(ev.target)); ev.submitter.disabled = true;
-    try {
-      await doAndProve('/w/crew', { method: 'POST', body: b }, '/w/crew',
-        (list, r) => list.some(c => c.id === r.id && c.name === b.name.trim() && Number(c.day_rate) === Number(b.day_rate)),
-        `${b.name.trim()} is on the crew — read back and he is there`);
-      reload();
-    } catch (e) { fail(e); ev.submitter.disabled = false; }
-  };
   const weekUrl = `/w/week?start=${w.start}`;
   document.getElementById('prev').onclick = () => schedulePage(addDays(w.start, -7));
   document.getElementById('next').onclick = () => schedulePage(addDays(w.start, 7));
@@ -201,6 +191,40 @@ export async function schedulePage(start) {
   acAdd.onclick = () => { const v = acPick.value; if (v === '__new') return showNew(true); if (Number(v)) board(Number(v), true); };
   nm('nmType').onchange = () => { const t = nm('nmType').value; nm('nmLead').style.display = t === 'under' ? '' : 'none'; nm('nmPayTo').style.display = t === 'sub' ? '' : 'none'; };
   nm('nmCancel').onclick = () => showNew(false);
+  document.getElementById('addManBtn').onclick = () => showNew(newMan.style.display === 'none');
+
+  // ✎ FIX A MAN: open his box, change anything, Save proves it by reading the crew back.
+  const editMan = document.getElementById('editMan');
+  let editId = null;
+  const emShow = () => { const t = nm('emType').value; nm('emLead').style.display = t === 'under' ? '' : 'none'; nm('emPayTo').style.display = t === 'sub' ? '' : 'none'; };
+  nm('emType').onchange = emShow;
+  nm('emCancel').onclick = () => { editMan.style.display = 'none'; editId = null; };
+  $app().querySelectorAll('[data-editman]').forEach(x => x.onclick = ev => {
+    ev.stopPropagation();
+    const c = allCrew.find(m => m.id === Number(x.dataset.editman)); if (!c) return;
+    editId = c.id;
+    nm('emWho').textContent = 'Fix ' + c.name + ':';
+    nm('emName').value = c.name; nm('emRate').value = Number(c.day_rate) || ''; nm('emPayTo').value = c.pay_to || '';
+    nm('emType').value = c.boss_id ? 'under' : (c.kind === 'sub' ? 'sub' : 'employee');
+    nm('emLead').innerHTML = leaders.filter(l => l.id !== c.id).map(l => `<option value="${l.id}" ${l.id === c.boss_id ? 'selected' : ''}>under ${esc(l.name)}</option>`).join('') || '<option value="">— no crew leaders yet —</option>';
+    emShow(); editMan.style.display = 'flex'; editMan.scrollIntoView({ block: 'center' }); nm('emName').focus();
+  });
+  nm('emSave').onclick = async () => {
+    const c = allCrew.find(m => m.id === editId); if (!c) return;
+    const name = nm('emName').value.trim(); if (!name) { toast("What's his name?", false); return nm('emName').focus(); }
+    const t = nm('emType').value, lead = t === 'under' ? Number(nm('emLead').value) : null;
+    if (t === 'under' && !lead) { toast('Pick who he works under.', false); return; }
+    const hisMen = allCrew.filter(m => m.boss_id === c.id);
+    if (t !== 'sub' && hisMen.length) { toast(`${c.name} has men under him (${hisMen.map(m => m.name).join(', ')}) — move them first.`, false); return; }
+    const body = { name, kind: t === 'employee' ? 'employee' : 'sub', day_rate: nm('emRate').value, pay_to: t === 'under' ? (c.pay_to || '') : nm('emPayTo').value, boss_id: lead, active: c.active !== false };
+    nm('emSave').disabled = true;
+    try {
+      await doAndProve(`/w/crew/${c.id}`, { method: 'PUT', body }, '/w/crew',
+        list => { const r = list.find(m => m.id === c.id); return r && r.name === name && (r.boss_id || null) === lead && r.kind === body.kind; },
+        `${name} saved — read back and it took`);
+      reload();
+    } catch (e) { fail(e); nm('emSave').disabled = false; }
+  };
   const addManHere = async () => {
     const name = nm('nmName').value.trim(); if (!name) { toast("What's his name?", false); return nm('nmName').focus(); }
     if (w.crew.some(c => c.name.trim().toLowerCase() === name.toLowerCase())) { toast(`${name} is already on the crew — pick him from the list`, false); return; }
