@@ -627,3 +627,9 @@ details.newcust[open]>summary{margin-bottom:10px}
 /* PAYROLL: day header row stays put while scrolling down (10/30) */
 .payscroll{max-height:calc(100vh - 150px);overflow:auto;padding-top:0}
 table.pay tr:first-child>th{position:sticky;top:0;z-index:2;background:var(--panel2);box-shadow:0 1px 0 var(--line)}
+/* SCHEDULE: day header row stays put while scrolling down (10/30) */
+.oldgrid .fitgrid{max-height:calc(100vh - 130px);overflow:auto;padding-top:0}
+.oldgrid table.schedgrid tr:first-child>th{position:sticky;top:0;z-index:4;box-shadow:0 1px 0 var(--line)}
+.oldgrid table.schedgrid tr:first-child>th:first-child{left:0;z-index:5;background:var(--panel)}
+.oldgrid th.hcell.acct{background:linear-gradient(rgba(61,255,143,.22),rgba(61,255,143,.22)) var(--panel)}
+.oldgrid th.hcell.late{background:linear-gradient(rgba(255,77,141,.16),rgba(255,77,141,.16)) var(--panel)}
