@@ -1,0 +1,664 @@
+{
+  "sourceCommit": "bd94363534388be2774b37a98c734c2a72948832",
+  "codeFiles": 102,
+  "format": "Source is stored as JSON-escaped strings in text files to prevent HTML extraction removing templates. Decode JSON content strings. Multi-part file segments concatenate in part order.",
+  "packs": [
+    {
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/monday-migration-source-20261101/monday-import/source-01.txt",
+      "files": [
+        {
+          "path": ".gitignore",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "bidgen/__init__.py",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "bidgen/assemble.py",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "bidgen/build_templates.py",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "bidgen/engine.py",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "bidgen/prices.json",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "bidgen/scopes.py",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "lib/bidtalk.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "lib/mail-label.js",
+          "part": 1,
+          "parts": 1
+        }
+      ]
+    },
+    {
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/monday-migration-source-20261101/monday-import/source-02.txt",
+      "files": [
+        {
+          "path": "lib/money.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "lib/qb-ar.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "lib/qb-pdf.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "lib/rules.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "lib/whoswho.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify.toml",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/001_job-file/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/002_schedule-payroll-money/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/003_crew-order/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/004_crew-color/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/005_sub-pay-ledger/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/006_subs/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/007_schedule-stages/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/008_stop-split-scope/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/009_job-scopes/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/010_job-cost-budgets/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/011_invoice-covers-through/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/012_invoice-memo-scope/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/013_uc-contract/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/014_invoice-quickbooks/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/015_job-bill-price/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/016_co-parent-job/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/017_placeholder-undo/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/018_bids/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/019_bid-template/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/020_bid-systems/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/021_mail/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/022_bid-step-one/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/023_supply-rebuild/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/024_supply-paid/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/025_supply-order/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/026_supply-houses/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/027_supply-settled/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/028_invoice-bill-to/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/029_day-pay/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/030_sub-actual-paid/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/031_shop-why/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/032_customer-pinned/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/033_board-add/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/034_stop-order/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/035_scope-note/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/036_invoice-archive/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/037_mail-import-log/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/038_placeholder-days/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/039_billing-card/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/040_qb-parent/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/041_whoswho/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/042_warranty-tag/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/043_supply-qb/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/044_contract-on-jc/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/database/migrations/045_water-test-tag/migration.sql",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/functions/api.mts",
+          "part": 1,
+          "parts": 1
+        }
+      ]
+    },
+    {
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/monday-migration-source-20261101/monday-import/source-03.txt",
+      "files": [
+        {
+          "path": "netlify/functions/delete.mts",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/functions/labels.mts",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "netlify/functions/work.mts",
+          "part": 1,
+          "parts": 4
+        }
+      ]
+    },
+    {
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/monday-migration-source-20261101/monday-import/source-04.txt",
+      "files": [
+        {
+          "path": "netlify/functions/work.mts",
+          "part": 2,
+          "parts": 4
+        }
+      ]
+    },
+    {
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/monday-migration-source-20261101/monday-import/source-05.txt",
+      "files": [
+        {
+          "path": "netlify/functions/work.mts",
+          "part": 3,
+          "parts": 4
+        },
+        {
+          "path": "netlify/functions/work.mts",
+          "part": 4,
+          "parts": 4
+        }
+      ]
+    },
+    {
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/monday-migration-source-20261101/monday-import/source-06.txt",
+      "files": [
+        {
+          "path": "package-lock.json",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "package.json",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "public/app.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "public/ar.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "public/bid.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "public/bids.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "public/crew.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "public/eula.html",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "public/index.html",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "public/invoicing.js",
+          "part": 1,
+          "parts": 1
+        }
+      ]
+    },
+    {
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/monday-migration-source-20261101/monday-import/source-07.txt",
+      "files": [
+        {
+          "path": "public/jobcost.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "public/laborwhy.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "public/ledger.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "public/mail.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "public/money.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "public/payledger.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "public/payroll.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "public/privacy.html",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "public/qbar.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "public/qbpdf.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "public/rules.js",
+          "part": 1,
+          "parts": 1
+        }
+      ]
+    },
+    {
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/monday-migration-source-20261101/monday-import/source-08.txt",
+      "files": [
+        {
+          "path": "public/schedule.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "public/shop.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "public/style.css",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "public/subs.js",
+          "part": 1,
+          "parts": 1
+        }
+      ]
+    },
+    {
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/monday-migration-source-20261101/monday-import/source-09.txt",
+      "files": [
+        {
+          "path": "public/supply.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "public/talk.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "public/templates.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "public/todo.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "public/ui.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "public/whoswho.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "tests/bidtalk.test.js",
+          "part": 1,
+          "parts": 1
+        }
+      ]
+    },
+    {
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/monday-migration-source-20261101/monday-import/source-10.txt",
+      "files": [
+        {
+          "path": "tests/money.test.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "tests/qb-ar.test.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "tests/qb-pdf.test.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "tests/rules.test.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "tests/whoswho-ui.test.js",
+          "part": 1,
+          "parts": 1
+        },
+        {
+          "path": "tests/whoswho.test.js",
+          "part": 1,
+          "parts": 1
+        }
+      ]
+    }
+  ],
+  "binaryFiles": [
+    {
+      "path": "public/sheets/Template_CeeLok.xlsx",
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/bd94363534388be2774b37a98c734c2a72948832/public/sheets/Template_CeeLok.xlsx"
+    },
+    {
+      "path": "public/sheets/Template_Coping_Cleat_IW.xlsx",
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/bd94363534388be2774b37a98c734c2a72948832/public/sheets/Template_Coping_Cleat_IW.xlsx"
+    },
+    {
+      "path": "public/sheets/Template_Fascia.xlsx",
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/bd94363534388be2774b37a98c734c2a72948832/public/sheets/Template_Fascia.xlsx"
+    },
+    {
+      "path": "public/sheets/Template_Gutters.xlsx",
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/bd94363534388be2774b37a98c734c2a72948832/public/sheets/Template_Gutters.xlsx"
+    },
+    {
+      "path": "public/sheets/Template_NailBase.xlsx",
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/bd94363534388be2774b37a98c734c2a72948832/public/sheets/Template_NailBase.xlsx"
+    },
+    {
+      "path": "public/sheets/Template_TPO_CounterFlashing_AddOn.xlsx",
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/bd94363534388be2774b37a98c734c2a72948832/public/sheets/Template_TPO_CounterFlashing_AddOn.xlsx"
+    },
+    {
+      "path": "public/sheets/Template_TPO_DensDeck_VE.xlsx",
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/bd94363534388be2774b37a98c734c2a72948832/public/sheets/Template_TPO_DensDeck_VE.xlsx"
+    },
+    {
+      "path": "public/sheets/Template_TPO_Kickers.xlsx",
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/bd94363534388be2774b37a98c734c2a72948832/public/sheets/Template_TPO_Kickers.xlsx"
+    },
+    {
+      "path": "public/sheets/Template_TPO_MechAttached.xlsx",
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/bd94363534388be2774b37a98c734c2a72948832/public/sheets/Template_TPO_MechAttached.xlsx"
+    },
+    {
+      "path": "public/sheets/Template_TPO_Rhinobond.xlsx",
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/bd94363534388be2774b37a98c734c2a72948832/public/sheets/Template_TPO_Rhinobond.xlsx"
+    },
+    {
+      "path": "public/sheets/Template_ZeeLock.xlsx",
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/bd94363534388be2774b37a98c734c2a72948832/public/sheets/Template_ZeeLock.xlsx"
+    },
+    {
+      "path": "public/sheets/scopes/SCOPE 16 - Counter flashing.xlsx",
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/bd94363534388be2774b37a98c734c2a72948832/public/sheets/scopes/SCOPE%2016%20-%20Counter%20flashing.xlsx"
+    },
+    {
+      "path": "public/sheets/scopes/SCOPE 17 - Gutters.xlsx",
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/bd94363534388be2774b37a98c734c2a72948832/public/sheets/scopes/SCOPE%2017%20-%20Gutters.xlsx"
+    },
+    {
+      "path": "public/sheets/scopes/SCOPE 18 - Downspouts.xlsx",
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/bd94363534388be2774b37a98c734c2a72948832/public/sheets/scopes/SCOPE%2018%20-%20Downspouts.xlsx"
+    },
+    {
+      "path": "public/sheets/scopes/SCOPE 19 - Scuppers.xlsx",
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/bd94363534388be2774b37a98c734c2a72948832/public/sheets/scopes/SCOPE%2019%20-%20Scuppers.xlsx"
+    },
+    {
+      "path": "public/sheets/scopes/SCOPE 20 - Curbs.xlsx",
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/bd94363534388be2774b37a98c734c2a72948832/public/sheets/scopes/SCOPE%2020%20-%20Curbs.xlsx"
+    },
+    {
+      "path": "public/sheets/scopes/SCOPE 21 - Pitch pans.xlsx",
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/bd94363534388be2774b37a98c734c2a72948832/public/sheets/scopes/SCOPE%2021%20-%20Pitch%20pans.xlsx"
+    },
+    {
+      "path": "public/sheets/scopes/SCOPE 22 - Pipe boots.xlsx",
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/bd94363534388be2774b37a98c734c2a72948832/public/sheets/scopes/SCOPE%2022%20-%20Pipe%20boots.xlsx"
+    },
+    {
+      "path": "public/sheets/scopes/SCOPE 23 - Roof hatch.xlsx",
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/bd94363534388be2774b37a98c734c2a72948832/public/sheets/scopes/SCOPE%2023%20-%20Roof%20hatch.xlsx"
+    },
+    {
+      "path": "public/sheets/scopes/SCOPE 24 - Walkpads.xlsx",
+      "url": "https://raw.githubusercontent.com/aswope11/sms-roofing-system/bd94363534388be2774b37a98c734c2a72948832/public/sheets/scopes/SCOPE%2024%20-%20Walkpads.xlsx"
+    }
+  ]
+}
