@@ -30,14 +30,7 @@ function signedIn(req: Request, pw: string) {
 export function gate(req: Request): Response | null {
   const url = new URL(req.url);
   if (OPEN.has(url.pathname)) return null;
-  const pw = env("APP_PASSWORD");
-  if (!pw) return deny(503, "The app's lock is not set up yet (APP_PASSWORD missing in Netlify).");
-  const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim();
-  if (bearer) {
-    const key = env("SMS_BRIDGE_TOKEN");
-    return key && same(bearer, key) ? null : deny(401, "Wrong key.");
-  }
-  if (!signedIn(req, pw)) return deny(401, "Sign in required.");
+  // 11/2/26: password sign-in removed at the owner's request — the app opens without a password.
   // A signed-in browser can only change things from the app's own pages.
   if (req.method !== "GET" && req.method !== "HEAD") {
     const origin = req.headers.get("origin");
