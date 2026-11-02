@@ -180,7 +180,7 @@ test('LAW: nothing in this app ever refuses to save because something else is no
   assert.ok(!/\bbad\(/.test(api), 'api.mts refuses a save over missing fields');
   assert.ok(!/if \(miss\.length\) return/.test(work + api), 'a missing list is still being used as a wall');
   // and no screen holds the Save button hostage
-  for (const f of ['app.js', 'supply.js', 'schedule.js', 'subs.js', 'bids.js', 'ar.js']) {
+  for (const f of ['app.js', 'supply.js', 'schedule.js', 'subs.js', 'bids.js']) {
     const page = readFileSync(`public/${f}`, 'utf8');
     assert.ok(!/ required[>\s]/.test(page), `${f} still has a required field`);
   }
@@ -414,12 +414,11 @@ test('LAW: ready to bill fills itself — green day + scope written + checked; d
   assert.deepEqual([later.days.length, later.total], [1, 200]);   // only the new green day: 8 hrs × 0.5 × $50
 });
 
-test('Invoicing has Ready to bill with one button; AR is one pile per customer with Mark it paid on the row', () => {
+test('Invoicing has Ready to bill with one button; the AR tab is gone', () => {
   const inv = readFileSync('public/invoicing.js', 'utf8');
   for (const t of ["'Ready to bill'", "'Placeholders owed in QuickBooks'", "'Needs both'", "'Needs the scope'", "'Needs pictures'", "'Tabled — not billing yet'"]) assert.ok(inv.includes(t), t);
   assert.ok(!inv.includes("'Send it'") && inv.indexOf("'Placeholders owed in QuickBooks'") < inv.indexOf("'Ready to bill'"));   // 10/4/26: Send it IS Ready to bill; the old section is gone
-  const ar = readFileSync('public/ar.js', 'utf8');
-  assert.ok(ar.includes('Mark it paid') && ar.includes('PAST 30 DAYS — call them') && ar.includes('localeCompare(b)'));
+  assert.ok(!existsSync('public/ar.js'), 'the AR tab is deleted (11/2/26)');
   const w = readFileSync('netlify/functions/work.mts', 'utf8');
   assert.ok(w.includes('kind === "bill" && id && m === "POST"') && w.includes('M.readyToBill(job, shares, mat, invs)'));
 });
@@ -479,15 +478,13 @@ test('LAW step 6: DONE MEANS MONEY — done + unpaid + (no amount | no real numb
   assert.equal(M.doneNotPaid({ ...job, tabled_at: '2026-09-11' }, []).length, 3);                                           // tabling does not hide it
 });
 
-test('step 6 pages: trips at the top of Invoicing, Tabled — not billing yet, AR has DONE — NOT GETTING PAID YET with Fix it / No charge, hover job file, red card at 21 days', () => {
+test('step 6 pages: trips at the top of Invoicing, Tabled — not billing yet, red card at 21 days', () => {
   const inv = readFileSync('public/invoicing.js', 'utf8');
   assert.ok(!inv.includes("'Billed a trip at a time — still working'") && inv.includes("'Tabled — not billing yet'"));   // 10/4/26: no trip-at-a-time section, a sent invoice lives on AR
-  const ar = readFileSync('public/ar.js', 'utf8');
-  for (const t of ['DONE — NOT GETTING PAID YET', 'Fix it', 'No charge', 'data-hover', 'Mark it paid']) assert.ok(ar.includes(t), t);
   const sch = readFileSync('public/schedule.js', 'utf8');
   assert.ok(sch.includes('unpaid $${Math.round(j.aging.owed).toLocaleString()} · ${j.aging.days} days'));
   const w = readFileSync('netlify/functions/work.mts', 'utf8');
-  assert.ok(w.includes('M.doneNotPaid(j, dInvs)') && w.includes('aging: M.drawAging(j, oInvs, today())'));
+  assert.ok(w.includes('aging: M.drawAging(j, oInvs, today())'));
 });
 
 test('DELETE: an invoice with a number, sent or paid is in QuickBooks; a bare seat is not', () => {

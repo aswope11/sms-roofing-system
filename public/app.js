@@ -4,7 +4,6 @@ import { schedulePage } from './schedule.js';
 import { invoicingPage } from './invoicing.js';
 import { renderBid } from './bid.js';
 import { bidsPage, templatesPage } from './bids.js';
-import { arPage } from './ar.js';
 import { supplyPage, supplyInvoicePage, supplyHousePage } from './supply.js';
 import { crewPage } from './crew.js';
 import { subsPage } from './subs.js';
@@ -391,7 +390,7 @@ async function search(q) {
 async function route() {
   const [, page, id, sub] = location.hash.split('/');
   try {
-    setTab(page === 'payroll' ? 'crew' : ['schedule', 'bids', 'invoicing', 'ar', 'supply', 'subs', 'crew', 'shop'].includes(page) ? page : 'customers');
+    setTab(page === 'payroll' ? 'crew' : ['schedule', 'bids', 'invoicing', 'supply', 'subs', 'crew', 'shop'].includes(page) ? page : 'customers');
     if (page === 'whoswho') await whosWhoPage();
     else if (page === 'customer') await customer(id);
     else if (page === 'property') await property(id);
@@ -402,7 +401,6 @@ async function route() {
     else if (page === 'bids' && id === 'templates') await templatesPage();
     else if (page === 'bids') await bidsPage();
     else if (page === 'invoicing') await invoicingPage();
-    else if (page === 'ar') await arPage();
     else if (page === 'supply' && id === 'house') await supplyHousePage(decodeURIComponent((sub || '').split('?')[0]));
     else if (page === 'supply' && id) await supplyInvoicePage(id.split('?')[0]);
     else if (page === 'supply') await supplyPage();

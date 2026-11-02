@@ -144,7 +144,7 @@ test('QuickBooks PDF links are plain GETs on real invoices that have a qb_id', (
   const nasty = qbPdfLink({ id: 42, kind: 'real', qb_id: '1', number: '"><img' });
   assert.equal(nasty.includes('<img'), false);
   assert.match(nasty, /href="\/w\/invoices\/42\/qb-pdf"/);
-  for (const f of ['public/invoicing.js', 'public/ar.js', 'public/jobcost.js', 'public/ledger.js']) {
+  for (const f of ['public/invoicing.js', 'public/jobcost.js', 'public/ledger.js']) {
     const src = readFileSync(f, 'utf8');
     assert.ok(src.includes('qbPdfLink'), f + ' shows the QuickBooks PDF link');
   }

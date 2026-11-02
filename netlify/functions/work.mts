@@ -12,7 +12,6 @@ import { gate } from "../../lib/gate.mts";
 import type { Config } from "@netlify/functions";
 import * as M from "../../lib/money.js";
 import * as Q from "../../lib/qb-pdf.js";
-import * as AR from "../../lib/qb-ar.js";
 import * as W from "../../lib/whoswho.js";
 import { repushReason } from "../../lib/mail-label.js";
 import * as TALK from "../../lib/bidtalk.js";
@@ -71,14 +70,6 @@ async function invoiceQbPdf(sql: any, invoiceId: number) {
   try { t = await qbToken(); }
   catch (e: any) { return json({ error: String(e?.message || e) }, 401); }
   return Q.serveQbInvoicePdf({ invoice: inv, token: t, fetchImpl: fetch });
-}
-// QUICKBOOKS A/R AGING (read only). The access key is the one already saved for the company.
-// This does not write an invoice, a customer, or anything else — token refresh is the existing blob update.
-async function qbArAging(reqUrl: string, format: "pdf" | "csv") {
-  let t: any;
-  try { t = await qbToken(); }
-  catch (e: any) { return new Response(JSON.stringify({ error: String(e?.message || e) }), { status: 401, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "private, no-store" } }); }
-  return AR.serveArAging({ token: t, url: reqUrl, format, fetchImpl: fetch });
 }
 async function qb(method: string, path: string, payload?: any) {
   const t = await qbToken();
@@ -1487,14 +1478,6 @@ export default async function handler(req: Request) {
 }
 
 export async function workInner(req: Request) {
-  // A/R aging is a pair of QuickBooks report GETs. It never opens the CRM database.
-  // Same Netlify cookie as every other /w route. A plain GET, so curl -b <that cookie> gets the file too.
-  const early = new URL(req.url);
-  const [earlyKind, earlyId] = early.pathname.replace(/^\/w\/?/, "").split("/").filter(Boolean);
-  if (earlyKind === "qb" && (earlyId === "ar-aging.pdf" || earlyId === "ar-aging.csv")) {
-    if (req.method !== "GET") return new Response(JSON.stringify({ error: "That report is read-only." }), { status: 405, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "private, no-store" } });
-    return qbArAging(req.url, earlyId.endsWith(".csv") ? "csv" : "pdf");
-  }
   const db = getDatabase();
   const sql = db.sql;
   const url = new URL(req.url);
@@ -1512,7 +1495,7 @@ export async function workInner(req: Request) {
       return json({ trace: tr, job: jb, key: addrKeyOf(jb), found: f ? { number: f.number, qb_id: f.qb_id, amount: f.amount, day: f.day, subject: headerOf(f.msg, "Subject") } : null });
     } catch (e: any) { return json({ error: String(e?.stack || e) }); }
   }
-  if (m === "GET" && (kind === "ar" || kind === "invoicing" || (kind === "job" && id))) { await linkUnsentByAddress(sql, kind === "job" ? id : null); await syncQbTotals(sql, kind === "job" ? id : null); }
+  if (m === "GET" && (kind === "invoicing" || (kind === "job" && id))) { await linkUnsentByAddress(sql, kind === "job" ? id : null); await syncQbTotals(sql, kind === "job" ? id : null); }
 
   // TALK (10/4/26): reads what he said, returns what it WOULD do. Writes nothing.
   if (kind === "talk" && m === "POST") {
@@ -3558,38 +3541,6 @@ export async function workInner(req: Request) {
         } catch (e) { await client.query("ROLLBACK"); throw e; } finally { client.release(); }
       }
       return refuse("Unknown bid request.", 404);
-    }
-
-    // ================= AR =================
-    if (kind === "ar" && m === "GET") {
-      const rows = norm(await sql`SELECT i.*, j.tag, j.title, j.id AS job_id, p.address, p.city, p.tenant, c.name AS customer_name, c.id AS customer_id, (SELECT pj.title FROM jobs pj WHERE pj.id = j.parent_job_id) AS parent_title
-        FROM invoices i JOIN jobs j ON j.id = i.job_id JOIN properties p ON p.id = j.property_id JOIN customers c ON c.id = p.customer_id
-        WHERE i.kind IN ('real','draw') AND i.sent_at IS NOT NULL AND i.paid_at IS NULL ORDER BY i.sent_at`);
-      const open = rows.filter((r: any) => M.inAR(r));
-      const cost = await costFor([...new Set(open.map((r: any) => r.job_id))] as number[]);
-      // DONE MEANS MONEY: every done, unpaid ticket that can't be in AR yet (no amount / no real number / never sent)
-      const doneJobs = norm(await sql`${JOB_COLS(sql)} WHERE j.tag <> 'BID' AND j.done_at IS NOT NULL AND NOT j.no_charge ORDER BY j.done_at`);
-      const dIds = doneJobs.map((j: any) => j.id);
-      const dInvs = dIds.length ? norm(await sql`SELECT * FROM invoices WHERE job_id = ANY(${dIds}::int[])`) : [];
-      const stuck = doneJobs.map((j: any) => { const mineInvs = dInvs.filter((i: any) => i.job_id === j.id);
-        // AR is sent invoices only (his rule 9/17). A done ticket still on Invoicing or Tabled is NOT shown here — only one that is on no other screen.
-        if (M.inInvoicing(j, mineInvs) || j.tabled_at) return null;
-        const why = M.doneNotPaid(j, dInvs); return why ? { ...j, why, invoices: dInvs.filter((i: any) => i.job_id === j.id) } : null; }).filter(Boolean);
-      // AR MATCHES QUICKBOOKS (10/5): every invoice's total and balance come straight from QuickBooks — what the customer was sent. Paid in QB = off AR.
-      const qbInv: Record<string, any> = {};
-      try {
-        const ids = [...new Set(open.map((r: any) => r.qb_id).filter(Boolean))] as string[];
-        for (let k = 0; k < ids.length; k += 100) {
-          const got: any = await qbQuery(`SELECT * FROM Invoice WHERE Id IN (${ids.slice(k, k + 100).map((x) => "'" + x + "'").join(",")}) MAXRESULTS 1000`);
-          for (const q of (got.Invoice || [])) qbInv[String(q.Id)] = q;
-        }
-      } catch (e) { /* QuickBooks down — show what the app has */ }
-      // STAYS ON AR UNTIL HE RECONCILES (10/22/26, his order): paid in QuickBooks does NOT take it off AR. It stays, marked
-      // "paid in QuickBooks — reconcile, then Mark it paid", until he hits Mark it paid. Nothing disappears on its own.
-      const shown = open.map((r: any) => { const q = qbInv[String(r.qb_id)]; if (!q) return { ...r, balance: M.round2(Number(r.amount)) };
-        const balance = M.round2(Number(q.Balance));
-        return { ...r, amount: M.round2(Number(q.TotalAmt)), balance, qb_checked: true, qb_paid: balance <= 0, fee_only_left: M.onlyCardFeeLeft(q.Line, balance) }; });
-      return json({ rows: shown.map((r: any) => ({ ...r, cost: cost[r.job_id] || 0 })), stuck, today: today() });
     }
 
     // ================= TICKET PICKER =================
