@@ -27,6 +27,12 @@
 <div id="crumbs"></div>
 <main id="app"></main>
 <div id="toast"></div>
+<script>
+// THE LOCK (11/2/26): if the backend says "sign in", go to the sign-in page and come back here after.
+(() => { const f = window.fetch; window.fetch = async (...a) => { const r = await f(...a);
+  if (r.status === 401) { try { const d = await r.clone().json(); if (d && d.signin) location.href = '/login.html?back=' + encodeURIComponent(location.pathname + location.search + location.hash); } catch {} }
+  return r; }; })();
+</script>
 <script>document.getElementById('backBtn').onclick = () => { if (history.length > 1) history.back(); else location.hash = '#/'; };</script>
 <script type="module" src="app.js"></script>
 </body>

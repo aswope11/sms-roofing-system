@@ -8,6 +8,7 @@
 // Every guard here comes from lib/money.js, the same rules the tests check.
 import { getDatabase } from "@netlify/database";
 import { getStore } from "@netlify/blobs";
+import { gate } from "../../lib/gate.mts";
 import type { Config } from "@netlify/functions";
 import * as M from "../../lib/money.js";
 import * as Q from "../../lib/qb-pdf.js";
@@ -1479,7 +1480,13 @@ async function unsentOutOfAR(sql: any, rows: any[], txn: Record<string, string>)
   }
 }
 
+// The Gmail timer (labels.mts) calls workInner directly, so it never needs the lock.
 export default async function handler(req: Request) {
+  const locked = gate(req); if (locked) return locked;
+  return workInner(req);
+}
+
+export async function workInner(req: Request) {
   // A/R aging is a pair of QuickBooks report GETs. It never opens the CRM database.
   // Same Netlify cookie as every other /w route. A plain GET, so curl -b <that cookie> gets the file too.
   const early = new URL(req.url);
@@ -2187,7 +2194,7 @@ export default async function handler(req: Request) {
         const afterCheck = async (row: any) => {
           if (row && row.done_at && !['JC'].includes(row.tag)) {
             const has = norm(await sql`SELECT id FROM invoices WHERE job_id = ${id} AND kind = 'real'`);
-            if (!has.length) { try { await handler(new Request(new URL('/w/bill/' + id, url), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })); } catch (e: any) { /* stays visible on Invoicing */ } }
+            if (!has.length) { try { await workInner(new Request(new URL('/w/bill/' + id, url), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })); } catch (e: any) { /* stays visible on Invoicing */ } }
           }
           if (row && b.which === 'scope' && row.scope_ok && String(row.scope || '').trim()) {
             const open = norm(await sql`SELECT * FROM invoices WHERE job_id = ${id} AND kind = 'real' AND sent_at IS NULL`);
@@ -2217,7 +2224,7 @@ export default async function handler(req: Request) {
         let billed: any = null;
         if (!['JC'].includes(job.tag)) {
           try {
-            const res = await handler(new Request(new URL('/w/bill/' + id, url), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }));
+            const res = await workInner(new Request(new URL('/w/bill/' + id, url), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }));
             billed = await res.json();
           } catch (e: any) { billed = { error: String(e?.message || e) }; }
         }

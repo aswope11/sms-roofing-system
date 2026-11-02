@@ -6,6 +6,7 @@
 import { getDatabase } from "@netlify/database";
 import { getStore } from "@netlify/blobs";
 import type { Config } from "@netlify/functions";
+import { gate } from "../../lib/gate.mts";
 import * as M from "../../lib/money.js";
 
 const json = (data: unknown, status = 200) =>
@@ -15,6 +16,7 @@ const { countOf } = M;
 type Plan = { what: string; label: string; back: string; attached: string[]; blocked: string[]; table_job?: number; run: () => Promise<string[]> };
 
 export default async (req: Request) => {
+  const locked = gate(req); if (locked) return locked;
   const db = getDatabase();
   const url = new URL(req.url);
   const [type, idRaw] = url.pathname.replace(/^\/d\/?/, "").split("/").filter(Boolean);

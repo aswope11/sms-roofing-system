@@ -4,7 +4,7 @@
 // is actually sitting in one. Each email is filed one at a time (so nothing times out), up to eight a
 // run; anything past that is picked up 15 minutes later.
 import type { Config } from "@netlify/functions";
-import work from "./work.mts";
+import { workInner as work } from "./work.mts";
 
 export default async () => {
   const base = Netlify.env.get("URL") || "https://sms-roofing-system.netlify.app";

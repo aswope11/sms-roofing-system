@@ -2,6 +2,7 @@ import { getDatabase } from "@netlify/database";
 import { getStore } from "@netlify/blobs";
 import { randomUUID } from "node:crypto";
 import type { Config, Context } from "@netlify/functions";
+import { gate, loginRoutes } from "../../lib/gate.mts";
 import { addressKey, chunkCount, missingOnCustomer, missingOnProperty, missingOnJob, missingOnFile, TAGS, CHUNK_BYTES } from "../../lib/rules.js";
 
 const json = (data: unknown, status = 200) =>
@@ -11,6 +12,8 @@ const json = (data: unknown, status = 200) =>
 const note = (row: any, missing: string[]) => json(missing.length ? { ...row, missing } : row);
 
 export default async (req: Request, context: Context) => {
+  const signin = await loginRoutes(req); if (signin) return signin;
+  const locked = gate(req); if (locked) return locked;
   const db = getDatabase();
   const sql = db.sql;
   const url = new URL(req.url);
