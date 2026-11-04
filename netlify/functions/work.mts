@@ -34,6 +34,8 @@ function norm(v: any): any {
   if (v && typeof v === "object") { const o: any = {}; for (const k in v) o[k] = norm(v[k]); return o; }
   return v;
 }
+// 11/4/26: QuickBooks placeholders come from Daily Payroll now, not from greening a day in the app.
+const APP_GREEN_SENDS_QB = false;
 const today = () => new Date(Date.now() - 5 * 3600 * 1000).toISOString().slice(0, 10); // Central time
 
 const JOB_COLS = (sql: any) => sql`
@@ -1959,6 +1961,9 @@ export async function workInner(req: Request) {
         ON CONFLICT (work_date) DO UPDATE SET green = EXCLUDED.green, changed_at = NOW() RETURNING *`;
       // Step 2: day goes green → a priced placeholder in QuickBooks for every R / CO / UC ticket that day. Taken back → those placeholders are deleted.
       const qbDone: string[] = [], qbErrors: string[] = [];
+      // 11/4/26 (his order): greening a day in the app NO LONGER touches QuickBooks. The crew day goes to Daily Payroll;
+      // QuickBooks happens from there, once the day is greened in the sheet. Doing it here too would log it twice.
+      if (!APP_GREEN_SENDS_QB) return json({ ...norm(row), qb_done: qbDone, qb_errors: qbErrors });
       if (b.green) {
         // a placeholder he deleted in QuickBooks by hand is gone — clear the app's copy so the day can go in again
         for (const p of norm(await sql`SELECT * FROM invoices WHERE kind = 'placeholder' AND work_date = ${b.work_date} AND amount > 0 AND qb_id <> ''`)) {
@@ -2559,7 +2564,7 @@ export async function workInner(req: Request) {
         const back = W.mapDecision(norm(await sql`SELECT * FROM whoswho`), mapTicket(job));   // read back: the ticket now matches his row
         // 10/14/26: once he answers, any green day this ticket was stopped on goes to QuickBooks now — not left sitting as owed.
         const sent: string[] = [], notSent: string[] = [];
-        if (back.ok && back.row.id === row.id) {
+        if (APP_GREEN_SENDS_QB && back.ok && back.row.id === row.id) {   // 11/4/26: off — QuickBooks goes from Daily Payroll
           const { owed } = await owedList();
           for (const o of owed.filter((x: any) => Number(x.job.id) === Number(job.id))) {
             if (o.suggested == null) { notSent.push(`${mdyy(o.work_date)}: not priced — open the ticket's red pill`); continue; }
