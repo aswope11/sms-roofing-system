@@ -638,34 +638,45 @@ export const payrollJobLabel = j => {
   return `${tag}${tag && addr ? '-' : ''}${addr}${ten ? ' - ' + ten : ''}`;
 };
 export function payrollFeed({ dates, shares, crew, jobsById, greenDays = [] }) {
+  // What he did there: the scope pills on the stop ("Coping Cap") → "JC-4860 E. I - 30 - Coping Cap", one line per scope.
+  const linesFor = s => {
+    const label = payrollJobLabel(jobsById[s.job_id]);
+    const scopes = String(s.day_scope || '').split(' · ').map(x => x.trim()).filter(Boolean);
+    return scopes.length ? scopes.map(x => `${label} - ${x}`) : [label];
+  };
   const out = [];
   for (const date of dates) {
     const day = shares.filter(s => s.work_date === date);
     const empMen = {};
     for (const s of day.filter(s => s.kind !== 'sub')) {
-      const e = (empMen[s.crew_id] ||= { man: s.man, jobs: [], pay: 0 });
-      const label = payrollJobLabel(jobsById[s.job_id]);
-      if (!e.jobs.includes(label)) e.jobs.push(label);
+      const e = (empMen[s.crew_id] ||= { man: s.man, lines: [], pay: 0 });
+      for (const l of linesFor(s)) if (!e.lines.includes(l)) e.lines.push(l);
       e.pay = round2(e.pay + s.cost);
     }
-    const employees = Object.values(empMen).map(e => ({ man: e.man, job: e.jobs.join(' / '), pay: e.pay }));
+    const employees = Object.values(empMen).map(e => ({ man: e.man, job: e.lines.join(' / '), lines: e.lines, pay: e.pay }));
+    // CREW MARKING (his rule 11/2/26): men who did the exact same things all day are one group (one color);
+    // anyone whose day differed at all is his own group. Biggest group first.
+    const gm = {};
+    for (const e of employees) { const k = [...e.lines].sort().join('|'); (gm[k] ||= { lines: e.lines, men: [] }).men.push(e.man); }
+    const groups = Object.values(gm).sort((a, b) => b.men.length - a.men.length);
     const blocks = {};
     for (const s of day.filter(s => s.kind === 'sub')) {
       const man = crew[s.crew_id] || {};
       const leaderId = man.boss_id || man.id;
       const leader = (crew[leaderId] || {}).name || s.shows_as;
       const k = `${leaderId}|${s.job_id}`;
-      const b = (blocks[k] ||= { leader, job: payrollJobLabel(jobsById[s.job_id]), total: 0, men: [], lead_first: leaderId });
+      const b = (blocks[k] ||= { leader, job: '', lines: [], total: 0, men: [] });
+      for (const l of linesFor(s)) if (!b.lines.includes(l)) b.lines.push(l);
       b.men.push({ name: s.man, amount: round2(s.cost), is_leader: s.crew_id === leaderId });
       b.total = round2(b.total + s.cost);
     }
-    const subs = Object.values(blocks).map(b => ({ leader: b.leader, job: b.job, total: b.total,
+    const subs = Object.values(blocks).map(b => ({ leader: b.leader, job: b.lines.join(' / '), lines: b.lines, total: b.total,
       men: b.men.sort((x, y) => (y.is_leader ? 1 : 0) - (x.is_leader ? 1 : 0)).map(({ name, amount }) => ({ name, amount })) }))
       .sort((a, b) => a.leader.localeCompare(b.leader) || a.job.localeCompare(b.job));
     const green = greenDays.includes(date);   // his OK in the app: the sheet greens the day and puts it on the Subs tab
-    const body = JSON.stringify({ employees, subs, green });
+    const body = JSON.stringify({ employees, groups, subs, green });
     let h = 0; for (let i = 0; i < body.length; i++) h = (h * 31 + body.charCodeAt(i)) | 0;
-    out.push({ date, green, employees, subs, stamp: (h >>> 0).toString(36) });
+    out.push({ date, green, employees, groups, subs, stamp: (h >>> 0).toString(36) });
   }
   return out;
 }

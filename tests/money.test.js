@@ -821,7 +821,7 @@ test('payroll feed: one line per man, sub blocks per leader per job, stamp moves
     { work_date: '2026-11-02', crew_id: 2, man: 'Puma', kind: 'sub', job_id: 10, cost: 400 },
   ];
   const [d] = M.payrollFeed({ dates: ['2026-11-02'], shares, crew, jobsById });
-  assert.deepEqual(d.employees, [{ man: 'Charlie', job: 'JC-4860 E. I - 30 / R-7610 Greenville Ave - Starbucks', pay: 250 }]);
+  assert.deepEqual(d.employees, [{ man: 'Charlie', job: 'JC-4860 E. I - 30 / R-7610 Greenville Ave - Starbucks', lines: ['JC-4860 E. I - 30', 'R-7610 Greenville Ave - Starbucks'], pay: 250 }]);
   assert.equal(d.subs.length, 1);
   assert.equal(d.subs[0].leader, 'Puma');
   assert.equal(d.subs[0].total, 700);
@@ -831,5 +831,12 @@ test('payroll feed: one line per man, sub blocks per leader per job, stamp moves
   assert.equal(d.green, false);
   const [d3] = M.payrollFeed({ dates: ['2026-11-02'], shares, crew, jobsById, greenDays: ['2026-11-02'] });
   assert.equal(d3.green, true);
+  const two = [
+    { work_date: '2026-11-04', crew_id: 1, man: 'Charlie', kind: 'employee', job_id: 10, cost: 250, day_scope: 'Coping Cap' },
+    { work_date: '2026-11-04', crew_id: 4, man: 'Tony', kind: 'employee', job_id: 10, cost: 230, day_scope: 'Coping Cap' },
+    { work_date: '2026-11-04', crew_id: 5, man: 'Hugo', kind: 'employee', job_id: 10, cost: 300, day_scope: 'Awnings' },
+  ];
+  const [g] = M.payrollFeed({ dates: ['2026-11-04'], shares: two, crew, jobsById });
+  assert.deepEqual(g.groups, [{ lines: ['JC-4860 E. I - 30 - Coping Cap'], men: ['Charlie', 'Tony'] }, { lines: ['JC-4860 E. I - 30 - Awnings'], men: ['Hugo'] }]);
   assert.notEqual(d.stamp, d3.stamp);
 });
