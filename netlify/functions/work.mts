@@ -1788,7 +1788,8 @@ export async function workInner(req: Request) {
       const jobsById: any = Object.fromEntries(jobs.map((j: any) => [j.id, j]));
       const shares = M.stopShares({ stops, crew, crewDays });
       const byId: any = Object.fromEntries(crew.map((c: any) => [c.id, c]));
-      const out = M.payrollFeed({ dates, shares, crew: byId, jobsById });
+      const greenDays = norm(await sql`SELECT work_date FROM green_days WHERE green AND work_date = ANY(${dates}::date[])`).map((g: any) => String(g.work_date).slice(0, 10));
+      const out = M.payrollFeed({ dates, shares, crew: byId, jobsById, greenDays });
       return new Response(JSON.stringify({ start, dates, days: out }), {
         headers: { "content-type": "application/json", "cache-control": "no-store" } });
     }

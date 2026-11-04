@@ -828,4 +828,8 @@ test('payroll feed: one line per man, sub blocks per leader per job, stamp moves
   assert.equal(d.subs[0].men[0].name, 'Puma');
   const [d2] = M.payrollFeed({ dates: ['2026-11-02'], shares: shares.slice(0, 3), crew, jobsById });
   assert.notEqual(d.stamp, d2.stamp);
+  assert.equal(d.green, false);
+  const [d3] = M.payrollFeed({ dates: ['2026-11-02'], shares, crew, jobsById, greenDays: ['2026-11-02'] });
+  assert.equal(d3.green, true);
+  assert.notEqual(d.stamp, d3.stamp);
 });
