@@ -624,3 +624,47 @@ export function onlyCardFeeLeft(lines, balance) {
   const f = (lines || []).find(isCardFeeLine);
   return !!f && Number(balance) > 0 && round2(Number(balance)) === round2(Number(f.Amount || 0));
 }
+
+// ---------- DAILY PAYROLL FEED (11/4/26) ----------
+// One pay week, shaped the way the Daily Payroll weekly tab reads it. The Payroll Robot writes it into the sheet.
+// Job label = tag-address (- tenant), the way the Subs tab already names jobs ("JC-4860 E. I - 30").
+// employees: one line per man per day — his jobs joined, his full day's pay.
+// subs: one block per sub leader per job — the job's share for each man under him, and the block total
+//       (a crew on 2 jobs that day = half each, the same even split the app already uses).
+// stamp: changes whenever anything in that day changes, so the robot only rewrites a day that changed.
+export const payrollJobLabel = j => {
+  if (!j) return '';
+  const tag = String(j.tag || '').trim(), addr = String(j.address || j.title || '').trim(), ten = String(j.tenant || '').trim();
+  return `${tag}${tag && addr ? '-' : ''}${addr}${ten ? ' - ' + ten : ''}`;
+};
+export function payrollFeed({ dates, shares, crew, jobsById }) {
+  const out = [];
+  for (const date of dates) {
+    const day = shares.filter(s => s.work_date === date);
+    const empMen = {};
+    for (const s of day.filter(s => s.kind !== 'sub')) {
+      const e = (empMen[s.crew_id] ||= { man: s.man, jobs: [], pay: 0 });
+      const label = payrollJobLabel(jobsById[s.job_id]);
+      if (!e.jobs.includes(label)) e.jobs.push(label);
+      e.pay = round2(e.pay + s.cost);
+    }
+    const employees = Object.values(empMen).map(e => ({ man: e.man, job: e.jobs.join(' / '), pay: e.pay }));
+    const blocks = {};
+    for (const s of day.filter(s => s.kind === 'sub')) {
+      const man = crew[s.crew_id] || {};
+      const leaderId = man.boss_id || man.id;
+      const leader = (crew[leaderId] || {}).name || s.shows_as;
+      const k = `${leaderId}|${s.job_id}`;
+      const b = (blocks[k] ||= { leader, job: payrollJobLabel(jobsById[s.job_id]), total: 0, men: [], lead_first: leaderId });
+      b.men.push({ name: s.man, amount: round2(s.cost), is_leader: s.crew_id === leaderId });
+      b.total = round2(b.total + s.cost);
+    }
+    const subs = Object.values(blocks).map(b => ({ leader: b.leader, job: b.job, total: b.total,
+      men: b.men.sort((x, y) => (y.is_leader ? 1 : 0) - (x.is_leader ? 1 : 0)).map(({ name, amount }) => ({ name, amount })) }))
+      .sort((a, b) => a.leader.localeCompare(b.leader) || a.job.localeCompare(b.job));
+    const body = JSON.stringify({ employees, subs });
+    let h = 0; for (let i = 0; i < body.length; i++) h = (h * 31 + body.charCodeAt(i)) | 0;
+    out.push({ date, employees, subs, stamp: (h >>> 0).toString(36) });
+  }
+  return out;
+}

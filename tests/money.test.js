@@ -809,3 +809,23 @@ test('RULE 12: card fee is 3% of the work, never of itself (Jen Hill #4914 $3,00
   assert.equal(M.onlyCardFeeLeft(withFee, 3090), false);
   assert.equal(M.onlyCardFeeLeft(work, 90), false);
 });
+
+test('payroll feed: one line per man, sub blocks per leader per job, stamp moves on change', async () => {
+  const M = await import('../lib/money.js');
+  const crew = { 1: { id: 1, name: 'Charlie', kind: 'employee' }, 2: { id: 2, name: 'Puma', kind: 'sub' }, 3: { id: 3, name: 'Moscar', kind: 'sub', boss_id: 2 } };
+  const jobsById = { 10: { tag: 'JC', address: '4860 E. I - 30' }, 11: { tag: 'R', address: '7610 Greenville Ave', tenant: 'Starbucks' } };
+  const shares = [
+    { work_date: '2026-11-02', crew_id: 1, man: 'Charlie', kind: 'employee', job_id: 10, cost: 125 },
+    { work_date: '2026-11-02', crew_id: 1, man: 'Charlie', kind: 'employee', job_id: 11, cost: 125 },
+    { work_date: '2026-11-02', crew_id: 3, man: 'Moscar', kind: 'sub', job_id: 10, cost: 300 },
+    { work_date: '2026-11-02', crew_id: 2, man: 'Puma', kind: 'sub', job_id: 10, cost: 400 },
+  ];
+  const [d] = M.payrollFeed({ dates: ['2026-11-02'], shares, crew, jobsById });
+  assert.deepEqual(d.employees, [{ man: 'Charlie', job: 'JC-4860 E. I - 30 / R-7610 Greenville Ave - Starbucks', pay: 250 }]);
+  assert.equal(d.subs.length, 1);
+  assert.equal(d.subs[0].leader, 'Puma');
+  assert.equal(d.subs[0].total, 700);
+  assert.equal(d.subs[0].men[0].name, 'Puma');
+  const [d2] = M.payrollFeed({ dates: ['2026-11-02'], shares: shares.slice(0, 3), crew, jobsById });
+  assert.notEqual(d.stamp, d2.stamp);
+});

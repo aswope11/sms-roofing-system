@@ -1770,6 +1770,25 @@ export async function workInner(req: Request) {
       return json({ start, dates, today: today(), crew, stops, crewDays, green, jobs: agedJobs, scopes, board_add: boardAdd, seated });
     }
 
+    // ================= DAILY PAYROLL FEED (11/4/26) =================
+    // GET /w/payroll-feed?start=YYYY-MM-DD → one pay week, read-only. The Payroll Robot (Apps Script in his Drive)
+    // pulls this and writes each day into the Daily Payroll sheet. The app is the ONE place crew days are typed;
+    // a fix here is re-sent and the sheet's day is replaced, never added to twice. `stamp` changes when a day changes.
+    if (kind === "payroll-feed" && m === "GET") {
+      const start = M.payWeekStart(url.searchParams.get("start") || today());
+      const dates = M.weekDates(start);
+      const crew = norm(await sql`SELECT * FROM crew`);
+      const { stops, crewDays } = await shareRowsFor(dates);
+      const jobIds = [...new Set(stops.map((s: any) => s.job_id))];
+      const jobs = jobIds.length ? norm(await sql`${JOB_COLS(sql)} WHERE j.id = ANY(${jobIds}::int[])`) : [];
+      const jobsById: any = Object.fromEntries(jobs.map((j: any) => [j.id, j]));
+      const shares = M.stopShares({ stops, crew, crewDays });
+      const byId: any = Object.fromEntries(crew.map((c: any) => [c.id, c]));
+      const out = M.payrollFeed({ dates, shares, crew: byId, jobsById });
+      return new Response(JSON.stringify({ start, dates, days: out }), {
+        headers: { "content-type": "application/json", "cache-control": "no-store" } });
+    }
+
     // ================= STOPS =================
     // ORDER INSIDE ONE DAY (10/1/26): he drags a card up or down in a man's day; the cell's stops come in top to bottom.
     if (kind === "stop-order" && m === "PUT") {

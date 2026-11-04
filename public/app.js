@@ -397,7 +397,7 @@ async function route() {
     else if (page === 'job') await job(id);
     else if (page === 'jobcost') await jobCostPage(id, sub);
     else if (page === 'search') await search(decodeURIComponent(id || ''));
-    else if (page === 'schedule') await schedulePage();
+    else if (page === 'schedule') await schedulePage(/^\d{4}-\d{2}-\d{2}$/.test(id || '') ? id : undefined);   // 11/4/26: Daily Payroll links #/schedule/YYYY-MM-DD to that day's week
     else if (page === 'bids' && id === 'templates') await templatesPage();
     else if (page === 'bids') await bidsPage();
     else if (page === 'invoicing') await invoicingPage();
