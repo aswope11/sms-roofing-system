@@ -1562,6 +1562,8 @@ export async function workInner(req: Request) {
 
   const owedList = async () => {
       const greens = norm(await sql`SELECT work_date FROM green_days WHERE green`).map((g: any) => g.work_date);
+      // 11/4/26: days greened after QuickBooks moved to Daily Payroll are never "owed" here — the sheet handles them.
+      if (!APP_GREEN_SENDS_QB) greens.splice(0, greens.length, ...greens.filter((d: string) => String(d).slice(0, 10) < "2026-11-04"));
       const { stops, crewDays } = await shareRowsFor(greens);
       const crew = norm(await sql`SELECT * FROM crew`);
       const shares = M.stopShares({ stops, crew, crewDays });
