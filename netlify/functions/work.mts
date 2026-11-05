@@ -74,7 +74,14 @@ async function invoiceQbPdf(sql: any, invoiceId: number) {
   catch (e: any) { return json({ error: String(e?.message || e) }, 401); }
   return Q.serveQbInvoicePdf({ invoice: inv, token: t, fetchImpl: fetch });
 }
-async function qb(method: string, path: string, payload?: any) {
+// QUICKBOOKS IS READ-ONLY FOR THIS APP (11/5/26, his law, "said it 57 times"): the ONLY thing the app may write to
+// QuickBooks is a scope of work onto an invoice (qbSetScope). Everything else reaches QuickBooks from the Daily Payroll
+// sheet, never from here. No dates, no placeholders, no invoices, no customers, no payments, no "checker" fixes.
+// Any other write is refused right here, at the one door every QuickBooks call goes through.
+async function qb(method: string, path: string, payload?: any, opts: { scope?: boolean } = {}) {
+  if (String(method).toUpperCase() !== "GET" && !opts.scope) {
+    throw new Error("Blocked: the app only writes scope of work to QuickBooks. Everything else goes through Daily Payroll.");
+  }
   const t = await qbToken();
   const sep = path.includes("?") ? "&" : "?";
   const res = await fetch(`${QB_API}/${t.realm_id}/${path}${sep}minorversion=75`, {
@@ -504,7 +511,8 @@ async function checkInvoiceQB(qbId: string, job: any, kind = "real", mapRow: any
     const custName = String(cur.CustomerRef?.name || "").toLowerCase().replace(/[,.#]/g, " ").replace(/\s+/g, " ");
     if (addrKey && !custName.includes(addrKey)) problems.push(`QuickBooks customer "${cur.CustomerRef?.name}" doesn't look like ${job.address}`);
   }
-  if (Object.keys(patch).length) await qb("POST", "invoice", { Id: cur.Id, SyncToken: cur.SyncToken, sparse: true, ...patch });
+  // 11/5/26: report only — the app never writes these fixes to QuickBooks.
+  if (Object.keys(patch).length) { problems.push(...fixed.map((f) => `needs fixing in QuickBooks: ${f}`)); fixed.length = 0; }
   return { fixed, problems, moved };
 }
 async function checkAndRecord(sql: any, inv: any, job: any) {
@@ -652,18 +660,16 @@ async function qbSetScope(qbId: string, scope: string, inNote = false, date?: st
     const kept = d0.split('\n').filter((s) => !scopeLines.has(s.replace(/^[\s•\-*]+/, '').trim().toLowerCase())).join('\n').replace(/\n{3,}/g, '\n\n').trim();
     const clear = ls.length && kept !== d0.trim();
     if (clear) ls[0] = { ...ls[0], Description: kept };
-    await qb('POST', 'invoice', { Id: qbId, SyncToken: cur.SyncToken, sparse: true, CustomerMemo: { value: scopeNote(scope, date) }, ...(clear ? { Line: ls } : {}) });
+    await qb('POST', 'invoice', { Id: qbId, SyncToken: cur.SyncToken, sparse: true, CustomerMemo: { value: scopeNote(scope, date) }, ...(clear ? { Line: ls } : {}) }, { scope: true });
     return;
   }
   const lines = (cur.Line || []).filter((l: any) => l.DetailType === 'SalesItemLineDetail');
   if (!lines.length) return;
   lines[0] = { ...lines[0], Description: scope };
-  await qb('POST', 'invoice', { Id: qbId, SyncToken: cur.SyncToken, sparse: true, Line: lines });
+  await qb('POST', 'invoice', { Id: qbId, SyncToken: cur.SyncToken, sparse: true, Line: lines }, { scope: true });
 }
-async function qbSetDate(qbId: string, date: string) {
-  const cur = (await qb("GET", `invoice/${qbId}`)).Invoice;
-  await qb("POST", "invoice", { Id: qbId, SyncToken: cur.SyncToken, sparse: true, TxnDate: date, DueDate: date });
-}
+// 11/5/26: the app NEVER changes a QuickBooks date (it kept re-dating sent invoices like #4910 and wrecking his AR). No-op.
+async function qbSetDate(_qbId: string, _date: string) { return; }
 
 // Step 2 placeholder into QuickBooks: dated 2 weeks after the day worked, due the same day, memo = type + day, one "Services Rendered - Roof" line.
 const mdyy = (iso: string) => { const [y, mo, d] = String(iso).slice(0, 10).split("-"); return `${Number(mo)}/${Number(d)}/${y.slice(2)}`; };
@@ -1459,10 +1465,8 @@ async function settleUnsent(sql: any, r: any) {
   let sentDay = "";
   try { const msg = await findSentByNumber(String(r.number || "").trim(), "minimal"); if (msg) sentDay = sentDayOf(msg); }
   catch { return; }   // can't see Gmail → change nothing
-  const day = sentDay || M.addDays(today(), M.REAL_INVOICE_DAYS_OUT);
-  if (sentDay) await sql`UPDATE invoices SET sent_at = ${day}, inv_date = ${day}::date WHERE id = ${r.id}`;
-  else await sql`UPDATE invoices SET inv_date = ${day}::date WHERE id = ${r.id}`;
-  if (r.qb_id) await qbSetDate(String(r.qb_id), day);
+  // 11/5/26: found sent → mark it sent. Not found → leave it alone. Never re-date anything (app or QuickBooks).
+  if (sentDay) await sql`UPDATE invoices SET sent_at = ${sentDay}, inv_date = ${sentDay}::date WHERE id = ${r.id}`;
 }
 async function unsentOutOfAR(sql: any, rows: any[], txn: Record<string, string>) {
   const tday = today();

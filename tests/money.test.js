@@ -779,7 +779,7 @@ test('RULE 5: placeholder = 2 weeks out, real invoice = 2 days out — one numbe
   const w = readFileSync('netlify/functions/work.mts', 'utf8');
   assert.ok(!/addDays\([^)]*,\s*1\)/.test(w), 'nothing in work.mts dates an invoice 1 day out');
   assert.ok(w.includes('M.addDays(o.work_date, M.PLACEHOLDER_DAYS_OUT)'));
-  assert.equal((w.match(/M\.REAL_INVOICE_DAYS_OUT/g) || []).length, 1);   // 10/22/26: built once — settleUnsent is the only place
+  assert.equal((w.match(/M\.REAL_INVOICE_DAYS_OUT/g) || []).length, 0);   // 11/5/26: the app never re-dates an unsent invoice any more
 });
 
 test('RULE 6: SMS employees = "X men @ Y hours", Qty = man-hours, Rate = $50, no names; subs not on it', () => {
@@ -839,4 +839,14 @@ test('payroll feed: one line per man, sub blocks per leader per job, stamp moves
   const [g] = M.payrollFeed({ dates: ['2026-11-04'], shares: two, crew, jobsById });
   assert.deepEqual(g.groups, [{ lines: ['JC-4860 E. I - 30 - Coping Cap'], men: ['Charlie', 'Tony'] }, { lines: ['JC-4860 E. I - 30 - Awnings'], men: ['Hugo'] }]);
   assert.notEqual(d.stamp, d3.stamp);
+});
+
+test('11/5/26 LAW: the app writes ONLY scope of work to QuickBooks — every other write is blocked at the door', () => {
+  const w = readFileSync('netlify/functions/work.mts', 'utf8');
+  assert.ok(/if \(String\(method\)\.toUpperCase\(\) !== "GET" && !opts\.scope\)/.test(w), 'qb() refuses non-GET without scope');
+  const allowed = w.match(/\{ scope: true \}/g) || [];
+  assert.equal(allowed.length, 2, 'only the two scope writes in qbSetScope are allowed');
+  const body = w.slice(w.indexOf('async function qbSetScope'), w.indexOf('async function qbSetDate'));
+  assert.equal((body.match(/\{ scope: true \}/g) || []).length, 2, 'both allowed writes live inside qbSetScope');
+  assert.ok(/async function qbSetDate\(_qbId: string, _date: string\) \{ return; \}/.test(w), 'the app never changes a QuickBooks date');
 });
