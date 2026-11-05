@@ -14,6 +14,7 @@ import * as M from "../../lib/money.js";
 import * as Q from "../../lib/qb-pdf.js";
 import * as W from "../../lib/whoswho.js";
 import { repushReason } from "../../lib/mail-label.js";
+import { jobSiteAddress } from "../../lib/mail-address.js";
 import * as TALK from "../../lib/bidtalk.js";
 import { addressKey, chunkCount, CHUNK_BYTES } from "../../lib/rules.js";
 import zlib from "node:zlib";
@@ -3103,6 +3104,7 @@ export async function workInner(req: Request) {
           return json({ counts, done: row, left: todo.length - 1, reader: "none" });
         }
         let job: any = heldJob || priorJob, what = "", reader = "none";
+        let addrFlag = "";
         let read: any = null;
         if (!job) {
           const props = norm(await sql`SELECT p.*, c.name AS customer_name FROM properties p LEFT JOIN customers c ON c.id = p.customer_id`);
@@ -3118,8 +3120,9 @@ export async function workInner(req: Request) {
           // A new bid is almost always a new address — that is not a reason to ask him anything.
           const cust = prop ? null : await customerFor(sql, from, read?.customer_id, String(read?.customer_in_email || ""));
           if (!prop && cust) {
-            const street = String(read?.address_in_email || "").trim(), jn = String(read?.job_name || "").trim();
-            const addr = street || jn || subject.replace(/^(re|fwd?|fw)\s*:\s*/gi, "").trim() || "From email";
+            const site = jobSiteAddress({ said: read?.address_in_email, subject, text, jobName: read?.job_name });
+            addrFlag = site.sure ? "" : `⚠ CHECK THE ADDRESS — not sure where this job is (${site.why}). Filed under "${site.address}".`;
+            const addr = site.address;
             const city = String(read?.city || "").trim();
             const same = props.find((p: any) => p.customer_id === cust.id && addressKey(p.address) === addressKey(addr) && String(p.city || "").toLowerCase() === city.toLowerCase());
             prop = same || norm(await sql`INSERT INTO properties (customer_id, address, address_key, city, tenant, gc, notes)
@@ -3129,7 +3132,7 @@ export async function workInner(req: Request) {
           // 10/4/26: the email's tenant goes on the TICKET, not the property — one property can hold several tenants (6101 Windhaven).
           if (prop) {
             const title = String(read?.title || subject || "From email").trim().slice(0, 80);
-            const notes = [`Came in on the ${x.name} label · ${from} · ${when.slice(0, 10)}`, `Subject: ${subject}`, read?.summary ? `\n${read.summary}` : ""].join("\n").trim();
+            const notes = [addrFlag, `Came in on the ${x.name} label · ${from} · ${when.slice(0, 10)}`, `Subject: ${subject}`, read?.summary ? `\n${read.summary}` : ""].join("\n").trim();
             const due = x.tag === "BID" && /^\d{4}-\d{2}-\d{2}$/.test(String(read?.bid_due || "")) ? read.bid_due : null;
             [job] = norm(await sql`INSERT INTO jobs (property_id, tag, title, notes, stage, bid_due, tenant_name)
               VALUES (${prop.id}, ${x.tag}, ${title}, ${notes}, 'ready', ${due}, ${String(read?.tenant || "").trim()}) RETURNING *`);
