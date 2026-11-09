@@ -121,6 +121,7 @@ export async function schedulePage(start) {
       <input id="emPayTo" placeholder="Pay to — company name">
       <input id="emRate" type="number" min="0" step="0.01" placeholder="Day rate">
       <button type="button" class="small" id="emSave">Save</button>
+      <button type="button" class="small" id="emRemove">Remove him</button>
       <button type="button" class="small" id="emCancel">Cancel</button></div>
     <div class="weeknav">
       <button id="prev">‹ Prev</button>
@@ -130,7 +131,8 @@ export async function schedulePage(start) {
     </div>
     <div class="btnrow" style="margin-bottom:10px"><span class="mute">Put somebody on the board</span>
       <select id="acPick"><option value="">— pick a sub —</option>${offBoard.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}<option value="__new">＋ Somebody new…</option></select>
-      <button type="button" class="small" id="acAdd">Add</button></div>
+      <button type="button" class="small" id="acAdd">Add</button>
+      <button type="button" class="small" id="acRemove">Remove</button></div>
     <div class="btnrow" id="newMan" style="display:none;margin-bottom:10px">
       <input id="nmName" placeholder="His name, then Enter" autocomplete="off">
       <select id="nmType"><option value="employee">SMS — one of mine</option><option value="sub">Sub — crew leader</option><option value="under">Sub — works under somebody</option></select>
@@ -225,6 +227,20 @@ export async function schedulePage(start) {
       reload();
     } catch (e) { fail(e); nm('emSave').disabled = false; }
   };
+  // REMOVE A MAN (11/9/26, his ask): takes him off the scheduling page for good. Nothing is deleted —
+  // his past days and pay stay. He comes back by checking Active on the Crew tab.
+  const removeMan = async c => {
+    if (!c) return;
+    if (!confirm(`Remove ${c.name} from the scheduling page?\n\nHis past days and pay stay. To bring him back, check Active on the Crew tab.`)) return;
+    const body = { name: c.name, kind: c.kind, day_rate: c.day_rate, pay_to: c.pay_to || '', boss_id: c.boss_id || null, active: false };
+    try {
+      await doAndProve(`/w/crew/${c.id}`, { method: 'PUT', body }, '/w/crew',
+        list => { const r = list.find(m => m.id === c.id); return r && r.active === false; }, `${c.name} removed`);
+      editMan.style.display = 'none'; editId = null; reload();
+    } catch (e) { fail(e); }
+  };
+  nm('emRemove').onclick = () => removeMan(allCrew.find(m => m.id === editId));
+  document.getElementById('acRemove').onclick = () => { const v = Number(acPick.value); if (!v) { toast('Pick who to remove.', false); return; } removeMan(allCrew.find(m => m.id === v)); };
   const addManHere = async () => {
     const name = nm('nmName').value.trim(); if (!name) { toast("What's his name?", false); return nm('nmName').focus(); }
     if (w.crew.some(c => c.name.trim().toLowerCase() === name.toLowerCase())) { toast(`${name} is already on the crew — pick him from the list`, false); return; }
