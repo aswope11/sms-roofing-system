@@ -39,6 +39,8 @@ export async function crewPage() {
     shown.forEach(id => { if (!ids.includes(id)) ids.push(id); });
     saveCrewOrder(ids).then(() => crewPage()).catch(e => { fail(e); crewPage(); });
   });
+  // 11/9/26: tapping Active saves on its own — no Save button needed to bring a man back or take him off.
+  $app().querySelectorAll('input[name=active]').forEach(cb => cb.onchange = () => cb.closest('tr').querySelector('button.save').click());
   $app().querySelectorAll('button.save').forEach(btn => btn.onclick = async () => {
     const tr = btn.closest('tr'); const id = Number(tr.dataset.id);
     const val = n => tr.querySelector(`[name=${n}]`);
