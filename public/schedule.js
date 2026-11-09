@@ -34,6 +34,7 @@ export async function schedulePage(start) {
   const onBoard = new Set([...workedMen, ...(w.board_add || [])]);
   const crew = groupCrew(w.crew).filter(c => allCrew.some(a => a.id === c.id) && (c.group === 'employee' || onBoard.has(c.id)));
   const offBoard = allCrew.filter(c => c.active && c.group !== 'employee' && !onBoard.has(c.id));
+  const removedMen = groupCrew(w.crew).filter(c => !c.active);   // 11/9/26: removed men live in the pick list so he brings them back right here
   const jobsById = Object.fromEntries(w.jobs.map(j => [j.id, j]));
   const open = w.jobs.filter(j => !j.done_at);
   // SHOP (9/28/26): Shop is only a pick when logging a man's day — never a row in the job lists below the grid.
@@ -130,7 +131,7 @@ export async function schedulePage(start) {
       <button id="thisw">Today</button>
     </div>
     <div class="btnrow" style="margin-bottom:10px"><span class="mute">Put somebody on the board</span>
-      <select id="acPick"><option value="">— pick a sub —</option>${offBoard.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}<option value="__new">＋ Somebody new…</option></select>
+      <select id="acPick"><option value="">— pick a sub —</option>${offBoard.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}<option value="__new">＋ Somebody new…</option>${removedMen.length ? `<optgroup label="Removed — pick, then Add to bring back">${removedMen.map(c => `<option value="back:${c.id}">${esc(c.name)}</option>`).join('')}</optgroup>` : ''}</select>
       <button type="button" class="small" id="acAdd">Add</button>
       <button type="button" class="small" id="acRemove">Remove</button></div>
     <div class="btnrow" id="newMan" style="display:none;margin-bottom:10px">
@@ -190,7 +191,18 @@ export async function schedulePage(start) {
   const nm = id => document.getElementById(id);
   const showNew = on => { newMan.style.display = on ? 'flex' : 'none'; if (on) nm('nmName').focus(); else acPick.value = ''; };
   acPick.onchange = () => { if (acPick.value === '__new') showNew(true); };
-  acAdd.onclick = () => { const v = acPick.value; if (v === '__new') return showNew(true); if (Number(v)) board(Number(v), true); };
+  acAdd.onclick = () => { const v = acPick.value; if (v === '__new') return showNew(true); if (v.startsWith('back:')) return bringBack(Number(v.slice(5))); if (Number(v)) board(Number(v), true); };
+  // BRING BACK (11/9/26): a removed man goes active again, right from the Schedule. A sub also goes on this week's board.
+  const bringBack = id => {
+    const c = w.crew.find(m => m.id === id); if (!c) return;
+    const body = { name: c.name, kind: c.kind, day_rate: c.day_rate, pay_to: c.pay_to || '', boss_id: c.boss_id || null, active: true };
+    run(async () => {
+      await doAndProve(`/w/crew/${c.id}`, { method: 'PUT', body }, '/w/crew',
+        list => { const r = list.find(m => m.id === c.id); return r && r.active === true; }, `${c.name} is back`);
+      if (c.kind === 'sub') await doAndProve('/w/board-add', { method: 'PUT', body: { week_start: w.start, crew_id: c.id, on: true } }, weekUrl,
+        back => (back.board_add || []).includes(c.id), `${c.name} is back on the board`);
+    });
+  };
   nm('nmType').onchange = () => { const t = nm('nmType').value; nm('nmLead').style.display = t === 'under' ? '' : 'none'; nm('nmPayTo').style.display = t === 'sub' ? '' : 'none'; };
   nm('nmCancel').onclick = () => showNew(false);
   document.getElementById('addManBtn').onclick = () => showNew(newMan.style.display === 'none');
@@ -240,7 +252,7 @@ export async function schedulePage(start) {
     } catch (e) { fail(e); }
   };
   nm('emRemove').onclick = () => removeMan(allCrew.find(m => m.id === editId));
-  document.getElementById('acRemove').onclick = () => { const v = Number(acPick.value); if (!v) { toast('Pick who to remove.', false); return; } removeMan(allCrew.find(m => m.id === v)); };
+  document.getElementById('acRemove').onclick = () => { if (acPick.value.startsWith('back:')) { toast('He is already removed.', false); return; } const v = Number(acPick.value); if (!v) { toast('Pick who to remove.', false); return; } removeMan(allCrew.find(m => m.id === v)); };
   const addManHere = async () => {
     const name = nm('nmName').value.trim(); if (!name) { toast("What's his name?", false); return nm('nmName').focus(); }
     if (w.crew.some(c => c.name.trim().toLowerCase() === name.toLowerCase())) { toast(`${name} is already on the crew — pick him from the list`, false); return; }
