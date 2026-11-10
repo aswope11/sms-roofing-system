@@ -32,3 +32,22 @@ test('changed posted source is blocked rather than adding a second ledger entry'
  assert.throws(()=>c.postApprovedPayrollDay({}, {getProperty:k=>state.get(k)}, {date:'2026-11-09',stamp:'x'}, logs));
  assert.equal(ledgerCalls,0);assert.match(logs[0],/reconciliation required/);
 });
+test('scope allocation cells sit beside the ledger and point to the block total',()=>{
+ const c=setup();
+ assert.deepEqual(JSON.parse(JSON.stringify(c.ledgerScopeRows(32,32,['CF','Drip Edge']))),[['CF','=C32/2'],['Drip Edge','=C32/2']]);
+ assert.deepEqual(JSON.parse(JSON.stringify(c.ledgerScopeRows(40,42,['Panels']))),[['Panels','=C42']]);
+ assert.equal(c.ledgerScopeRows(40,42,[]).length,0);
+});
+test('historical migration creates clickable scope amounts and redirects only their summary terms',()=>{
+ const grid=new Map();const key=(r,c)=>r+':'+c;
+ const set=(r,c,value)=>grid.set(key(r,c),value);
+ set(2,5,'CF');set(3,5,'Drip Edge');set(2,6,'=C32/2+C36/3');set(3,6,'=C32/2+C36/3');
+ set(32,1,new Date('2026-11-06T12:00:00Z'));set(32,2,'Puma');set(32,3,400);set(32,4,'CF · Drip Edge');
+ const range=(r,c,h=1,w=1)=>{const a={getValues:()=>Array.from({length:h},(_,i)=>Array.from({length:w},(_,j)=>grid.get(key(r+i,c+j))??'')),getValue:()=>grid.get(key(r,c))??'',getFormula:()=>String(grid.get(key(r,c))??'').startsWith('=')?grid.get(key(r,c)):'',setFormula:f=>set(r,c,f),setValues:rows=>rows.forEach((row,i)=>row.forEach((v,j)=>set(r+i,c+j,v)))};for(const m of ['setNumberFormat','setFontFamily','setFontSize','setBorder'])a[m]=()=>a;return a;};
+ const c=setup({Utilities:{formatDate:d=>d.toISOString().slice(0,10)},SpreadsheetApp:{flush(){}}});
+ c.migratePostedScopes({getLastRow:()=>38,getRange:range},{date:'2026-11-06'},{sms:[],subs:[{leader:'Puma',total:400,scopes:['CF','Drip Edge']}]},[]);
+ assert.equal(grid.get(key(32,5)),'=C32/2');assert.equal(grid.get(key(33,5)),'=C32/2');assert.equal(grid.get(key(32,4)),'CF');assert.equal(grid.get(key(33,4)),'Drip Edge');
+ assert.equal(grid.get(key(2,6)),'=E32+C36/3');assert.equal(grid.get(key(3,6)),'=E33+C36/3');assert.equal(grid.get(key(32,3)),400);
+ c.migratePostedScopes({getLastRow:()=>38,getRange:range},{date:'2026-11-06'},{sms:[],subs:[{leader:'Puma',total:400,scopes:['CF','Drip Edge']}]},[]);
+ assert.equal(grid.get(key(2,6)),'=E32+C36/3');
+});
