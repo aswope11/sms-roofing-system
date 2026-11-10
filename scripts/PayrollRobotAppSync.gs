@@ -798,6 +798,10 @@ function markSubsPosted(ss,blocks) {
 }
 
 function canonicalPostingSignature(raw) {
-  try {const job=JSON.parse(raw);job.subs=(job.subs||[]).map(({sig,ledgerRow,...block})=>block);return JSON.stringify(job);}
-  catch(e){return raw;}
+  try {
+    const job=JSON.parse(raw);
+    job.subs=(job.subs||[]).map(({sig,ledgerRow,...block})=>block);
+    const stable=value=>Array.isArray(value)?value.map(stable):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,stable(value[key])])):value;
+    return JSON.stringify(stable(job));
+  } catch(e){return raw;}
 }
