@@ -370,7 +370,8 @@ function jobKey(line) {
   const m = String(line || '').match(/^\s*([A-Za-z]+)\s*-\s*(\d+)/);
   return m ? m[1].toUpperCase() + '-' + m[2] : String(line || '').trim();
 }
-function jobTag(key) { return String(key).split('-')[0]; }
+function jobTag(key) { return String(key).split('-')[0].trim().toUpperCase(); }
+const QB_TAGS = ['R', 'WT', 'CO', 'UC'];   // same list as lib/money.js — these bill through a QuickBooks placeholder
 function scopeOf(line) {
   const j = JOB_SHEETS[jobKey(line)];
   if (!j || String(line).indexOf(j.label) !== 0) return '';
@@ -642,7 +643,18 @@ function postApprovedPayrollDay(ss, props, day, log) {
       log.push(day.date+': '+job.label+' changed after posting; reconciliation required. Not marked complete.'); return;
     }
     const route=POST_ROUTES[job.id];
-    if(!route) { log.push(day.date+': '+job.label+' has no verified posting route. Not marked complete; will retry.'); return; }
+    if(!route) {
+      // R / WT / CO / UC → QuickBooks placeholder (rule 4: only after the day is green and the labor is on the sheet).
+      // JC / W / Shop never go to QuickBooks; a JC without a job cost sheet route stays incomplete.
+      if(QB_TAGS.indexOf(jobTag(job.label))<0) { log.push(day.date+': '+job.label+' has no verified posting route. Not marked complete; will retry.'); return; }
+      if(prior && prior.verified && prior.qb) { markSubsPosted(ss,job.subs); completed[job.id]=true; return; }
+      try {
+        const receipt=postPayrollQuickBooks(ss,day,job,log,model);
+        props.setProperty(key,JSON.stringify({signature,verified:true,qb:receipt}));
+        markSubsPosted(ss,job.subs); completed[job.id]=true;
+      } catch(e) { log.push(day.date+': '+job.label+' QuickBooks NOT posted — '+e+'; will retry.'); }
+      return;
+    }
     // Check destination before changing any ledger. A bid Labor tab is not Actual Labor.
     const destination=SpreadsheetApp.openById(route.id).getSheetByName(route.tab);
     if(!destination) { log.push(day.date+': '+job.label+' needs an Actual Labor ledger; the existing bid Labor tab is not a posting destination.'); return; }
@@ -857,3 +869,52 @@ function reconcileLaborSummary(sh) {
   if(Number(sh.getRange(plan.unknown,6).getValue()) < -0.005)throw new Error('Scope allocations exceed actual labor; completion withheld');
   return plan;
 }
+
+// ===================== DAILY PAYROLL → QUICKBOOKS PLACEHOLDER (11/10/26) =====================
+// A green R / WT / CO / UC day, once its men are on the weekly tab and its sub lines are on the Subs tab, goes on that
+// ticket's ONE open QuickBooks placeholder (opened if there is none, dated 2 weeks after the day worked).
+// The app's /payroll-bridge/qbo does the QuickBooks part and only answers this script, signed in as the owner's
+// Google account (no password stored anywhere). It reads the invoice back before saying "verified".
+// Never sends an invoice, never records or makes a payment. Cost here = what the men are paid; the app prices the
+// customer charge (SMS men $50/hr, subs × 1.5), so the two numbers differ on purpose.
+function postPayrollQuickBooks(ss,day,job,log,model,dryRun) {
+  const sat=new Date(day.date+'T12:00:00Z');sat.setUTCDate(sat.getUTCDate()-((sat.getUTCDay()+1)%7));
+  const weekly=weekTab(ss,Utilities.formatDate(sat,'UTC','yyyy-MM-dd'),log);
+  if(!weekly)throw new Error('Weekly payroll tab missing');
+  const L=layout(weekly),col=DAY_COL[dow(day.date)];
+  const people=weekly.getRange(EMP_FIRST,col+1,L.boxLast-EMP_FIRST+1,2).getValues();
+  // The sheet must say what the app says before a dollar is billed.
+  model.sms.men.forEach(man=>{
+    const found=people.filter(row=>norm(row[0])===norm(man.name));
+    if(found.length!==1||Math.abs(Number(found[0][1])-man.total)>0.005)throw new Error('Employee payroll on the sheet differs for '+man.name+'; QuickBooks withheld');
+  });
+  const amount=r2(job.sms.reduce((n,g)=>n+g.men.reduce((s,m)=>s+m.amt,0),0)+job.subs.reduce((n,g)=>n+g.total,0));
+  const body={job_id:job.id,work_date:day.date,expected_cost:amount,source_spreadsheet:PAYROLL_ID};
+  if(dryRun)body.dry_run=true;
+  const response=UrlFetchApp.fetch(APP_URL+'/payroll-bridge/qbo',{method:'post',contentType:'application/json',payload:JSON.stringify(body),
+    headers:{authorization:'Bearer '+ScriptApp.getOAuthToken()},muteHttpExceptions:true});
+  let receipt={};try{receipt=JSON.parse(response.getContentText());}catch(e){}
+  if(dryRun)return receipt;
+  if(response.getResponseCode()!==200||!receipt.verified||!receipt.qbId||Math.abs(Number(receipt.cost)-amount)>0.005||Number(receipt.job_id)!==Number(job.id)||receipt.work_date!==day.date)
+    throw new Error('QuickBooks payroll verification failed: '+(receipt.error||('HTTP '+response.getResponseCode())));
+  const subs=ss.getSheetByName('Subs');
+  job.subs.forEach(b=>{ if(b.ledgerRow) subs.getRange(b.ledgerRow,4).setNote('QuickBooks placeholder #'+receipt.number+': labor cost $'+amount+' billed $'+receipt.charge+'. Not sent, not paid.'); });
+  log.push(day.date+': '+job.label+' on QuickBooks placeholder #'+receipt.number+' — cost $'+amount+', billed $'+receipt.charge+', placeholder total $'+receipt.total+(receipt.reused?' (already there, not added again).':'.'));
+  return {number:receipt.number,qbId:receipt.qbId,charge:receipt.charge,total:receipt.total};
+}
+// Read-only check: run from the editor to see exactly what a day/ticket WOULD do in QuickBooks. Writes nothing anywhere.
+function checkPayrollQuickBooks(ymd,jobId) {
+  ymd=ymd||'2026-11-09'; jobId=jobId||121;
+  const ss=SpreadsheetApp.openById(PAYROLL_ID),log=[];
+  const model=JSON.parse(UrlFetchApp.fetch(APP_URL+'/w/payroll-layout?date='+ymd).getContentText());
+  const job=postingPlan(model).find(j=>Number(j.id)===Number(jobId));
+  if(!job)return 'No saved work for ticket '+jobId+' on '+ymd;
+  const subs=ss.getSheetByName('Subs').getRange(1,1,ss.getSheetByName('Subs').getLastRow(),4).getValues();
+  job.subs=job.subs.map(b=>{
+    const i=subs.findIndex(r=>r[0] instanceof Date&&Utilities.formatDate(r[0],'America/Chicago','yyyy-MM-dd')===ymd&&norm(r[1])===norm(b.leader)&&norm(r[2])===norm(job.label));
+    return {...b,total:i>=0?Number(subs[i][3]):b.total,ledgerRow:i>=0?i+1:null};
+  });
+  const out=JSON.stringify(postPayrollQuickBooks(ss,{date:ymd},job,log,model,true));
+  Logger.log(out);return out;
+}
+

@@ -92,3 +92,34 @@ test('labor balance retains real scopes and exposes unidentified dollars separat
 test('labor reconciliation refuses to overwrite an occupied summary row',()=>{
  const c=setup();assert.throws(()=>c.laborBalancePlan([{row:2,label:'CF'},{row:3,label:'',actualFormula:'=SUM(F2:F2)'},{row:4,label:'',overheadFormula:'=LegacyBudget'}]),/No empty summary row/);
 });
+
+test('green R ticket goes to the QuickBooks bridge; JC without a route does not; failure leaves it white and retryable', () => {
+  const props = new Map(), logs = [], greens = [], posted = [];
+  const model = {sms: {rows: [], men: []}, subs: [], allocations: []};
+  const feed = {start: '2026-11-07', days: [{date: '2026-11-09', green: true, stamp: 's'}]};
+  const c = setup({
+    UrlFetchApp: {fetch: url => ({getResponseCode: () => 200, getContentText: () => JSON.stringify(/payroll-layout/.test(url) ? model : feed)})},
+    SpreadsheetApp: {flush() {}, openById() { return {getSheetByName: () => ({})}; }},
+  });
+  c.transferPayrollSubs = () => [{jobId: 121, leaderId: 2, leader: 'Puma', amount: 200, scopes: [], row: 9}, {jobId: 55, leaderId: 2, leader: 'Puma', amount: 100, scopes: [], row: 10}];
+  c.postingPlan = () => [{id: 121, label: 'R-2800 N Hampton Road', sms: [], subs: []}, {id: 55, label: 'JC-Somewhere', sms: [], subs: []}];
+  c.markSubsPosted = (_ss, blocks) => blocks.forEach(b => greens.push(b.ledgerRow));
+  c.weekTab = () => ({getRange: () => ({setBackground() {}})});
+  c.layout = () => ({});
+  c.postPayrollQuickBooks = (_ss, _day, job) => { posted.push(job.id); return {number: '4950', qbId: '1', charge: 300, total: 300}; };
+  const P = {getProperty: k => props.get(k), setProperty: (k, v) => props.set(k, v)};
+  c.postApprovedPayrollDay({}, P, feed.days[0], logs);
+  assert.deepEqual(posted, [121]);
+  assert.deepEqual(greens, [9]);
+  assert.equal(JSON.parse(props.get('posted:v1:2026-11-09:121')).qb.number, '4950');
+  assert.ok(logs.some(l => /JC-Somewhere has no verified posting route/.test(l)));
+  // second run: already posted → no second QuickBooks call
+  c.postApprovedPayrollDay({}, P, feed.days[0], logs);
+  assert.deepEqual(posted, [121]);
+  // a refusal stays incomplete
+  props.clear(); greens.length = 0;
+  c.postPayrollQuickBooks = () => { throw new Error('QuickBooks payroll verification failed: x'); };
+  c.postApprovedPayrollDay({}, P, feed.days[0], logs);
+  assert.deepEqual(greens, []); assert.equal(props.get('posted:v1:2026-11-09:121'), undefined);
+  assert.ok(logs.some(l => /QuickBooks NOT posted/.test(l)));
+});
