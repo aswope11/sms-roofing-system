@@ -434,8 +434,9 @@ function applyJob(day, job, log) {
   const sh = SpreadsheetApp.openById(J.id).getSheetByName(J.tab);
   if (!sh) throw 'no "' + J.tab + '" tab on the job cost sheet';
 
+  const logFirst=ledgerFirstRow(sh);
   // every scope needs its line in the summary (E2:E…)
-  const sumVals = sh.getRange(2, 5, LOG_FIRST - 4, 1).getValues();
+  const sumVals = sh.getRange(2, 5, logFirst - 4, 1).getValues();
   const scopeRow = s => { for (let i = 0; i < sumVals.length; i++) if (norm(sumVals[i][0]) === norm(s)) return i + 2; return 0; };
   // blocks to log
   const blocks = [];
@@ -443,11 +444,11 @@ function applyJob(day, job, log) {
   job.subs.forEach(s => blocks.push({ kind: 'sub', scopes: s.scopes, rows: [[s.leader, s.total]] }));
 
   // what's already on the log (his hand entries, or an earlier pass)
-  const last = Math.max(sh.getLastRow(), LOG_FIRST);
-  const logVals = sh.getRange(LOG_FIRST, 1, last - LOG_FIRST + 1, 4).getValues();
+  const last = Math.max(sh.getLastRow(), logFirst);
+  const logVals = sh.getRange(logFirst, 1, last - logFirst + 1, 5).getValues();
   const dayStr = new Date(day.date + 'T12:00:00').toDateString();
   const sameDay = v => { const d = v instanceof Date ? v : new Date(v); return !isNaN(d) && d.toDateString() === dayStr; };
-  const already = b => logVals.some((r,i) => sameDay(r[0]) && norm(r[3]) === norm(b.scopes.join(' · ')) &&
+  const already = b => logVals.some((r,i) => sameDay(r[0]) && (norm(r[3]) === norm(b.scopes.join(' · ')) || b.scopes.every((name,k)=>norm((logVals[i+k]||[])[3])===norm(name))) &&
     b.rows.every((m,k) => logVals[i+k] && norm(logVals[i+k][1])===norm(m[0]) && Math.abs(Number(logVals[i+k][2])-m[1])<0.005));
   for(const b of blocks) {
     if(already(b)) continue;
@@ -461,13 +462,13 @@ function applyJob(day, job, log) {
   if (missing.length) { log.push(when + ': ' + job.key + ' — scope "' + missing.join('", "') + '" has no line on the job cost sheet. Not applied, not green.'); return null; }
 
   // his layout: copy the formatting of his last entries of the same kind
-  const tpl = findTemplates(sh, logVals);
-  let r = lastFilled(logVals) + LOG_FIRST + 2;   // one blank row, then the block
+  const tpl = findTemplates(sh, logVals, logFirst);
+  let r = lastFilled(logVals) + logFirst + 2;   // one blank row, then the block
   const entry = { id: J.id, tab: J.tab, first: r, last: 0, refs: [] };
   const toks = [];   // {a1, tok}
   todo.forEach(b => {
     const top = r;
-    const vals = b.rows.map((m, i) => [i ? '' : new Date(day.date + 'T12:00:00'), m[0], m[1], i ? '' : b.scopes.join(' · ')]);
+    const vals = b.rows.map((m, i) => [i ? '' : new Date(day.date + 'T12:00:00'), m[0], m[1], '']);
     sh.getRange(top, 1, vals.length, 4).setValues(vals);
     let tot;
     if (b.kind === 'sms') {
@@ -484,14 +485,19 @@ function applyJob(day, job, log) {
       tot = top;
       toks.push({ a1: 'B3', tok: '+C' + tot });
     }
+    formatLedgerBlock(sh,top,b.rows.length,tot,b.kind);
     sh.getRange(top, 1).setNumberFormat('M/d/yyyy');
     sh.getRange(top, 3, tot - top + 1, 1).setNumberFormat('$#,##0.00');
     sh.getRange(tot, 3).setBackground(null);   // green comes last
-    const n = b.scopes.length;
-    b.scopes.forEach(s => toks.push({ a1: 'F' + scopeRow(s), tok: '+C' + tot + (n > 1 ? '/' + n : '') }));
-    b.tot = tot;
-    entry.last = tot;
-    r = tot + 2;
+    const scopeRows = ledgerScopeRows(top, tot, b.scopes);
+    if(scopeRows.length) sh.getRange(top,4,scopeRows.length,2).setValues(scopeRows);
+    scopeRows.forEach((line,i) => {
+      sh.getRange(top+i,5).setNumberFormat('$#,##0.00');
+      toks.push({a1:'F'+scopeRow(line[0]),tok:'+E'+(top+i)});
+    });
+    b.scopeRows=scopeRows; b.top=top; b.tot = tot;
+    entry.last = Math.max(tot, top+scopeRows.length-1);
+    r = entry.last + 2;
   });
   toks.forEach(t => {
     const c = sh.getRange(t.a1), f = c.getFormula();
@@ -502,8 +508,9 @@ function applyJob(day, job, log) {
   // read back: every total is in its place before anything goes green
   const has = (f, tok) => new RegExp('(\\+|^=)' + tok.slice(1).replace(/[/]/g, '\\/') + '(?![0-9])').test(f);
   const bad = toks.filter(t => !has(sh.getRange(t.a1).getFormula(), t.tok));
+  const scopeOff = todo.some(b => b.scopeRows.some((line,i)=>sh.getRange(b.top+i,4).getValue()!==line[0] || sh.getRange(b.top+i,5).getFormula()!==line[1]));
   const off = todo.filter(b => Math.abs(Number(sh.getRange(b.tot, 3).getValue()) - b.rows.reduce((a, m) => a + m[1], 0)) > 0.01);
-  if (bad.length || off.length) {
+  if (bad.length || off.length || scopeOff) {
     log.push('read-back detail: ' + JSON.stringify({ bad: bad, off: off.map(b => [b.tot, sh.getRange(b.tot, 3).getValue()]) }));
     backOut([entry], log);
     log.push(when + ': ' + job.key + ' — read-back failed, taken back out. Not applied, not green.');
@@ -520,14 +527,14 @@ function lastFilled(vals) {
 }
 
 // His last SMS block (rows, then a total row with no name) and his last one-line sub entry.
-function findTemplates(sh, vals) {
+function findTemplates(sh, vals, firstRow = LOG_FIRST) {
   const out = { sms: null, sub: null };
   let i = vals.length - 1;
   while (i >= 0 && (!out.sms || !out.sub)) {
     while (i >= 0 && !vals[i].some(v => String(v).trim() !== '')) i--;
     if (i < 0) break;
     let j = i; while (j - 1 >= 0 && vals[j - 1].some(v => String(v).trim() !== '')) j--;
-    const top = LOG_FIRST + j, bot = LOG_FIRST + i;
+    const top = firstRow + j, bot = firstRow + i;
     const isTotal = !String(vals[i][1]).trim() && String(vals[i][2]).trim();
     if (isTotal && bot > top && !out.sms) out.sms = {
       first: sh.getRange(top, 1, 1, 4), mid: sh.getRange(bot - top > 1 ? top + 1 : top, 1, 1, 4), total: sh.getRange(bot, 1, 1, 4) };
@@ -625,13 +632,16 @@ function postApprovedPayrollDay(ss, props, day, log) {
     if(prior && prior.signature!==signature) {
       log.push(day.date+': '+job.label+' changed after posting; reconciliation required. Not marked complete.'); return;
     }
-    if(prior && prior.verified) { completed[job.id]=true; return; }
     const route=POST_ROUTES[job.id];
     if(!route) { log.push(day.date+': '+job.label+' has no verified posting route. Not marked complete; will retry.'); return; }
     // Check destination before changing any ledger. A bid Labor tab is not Actual Labor.
     const destination=SpreadsheetApp.openById(route.id).getSheetByName(route.tab);
     if(!destination) { log.push(day.date+': '+job.label+' needs an Actual Labor ledger; the existing bid Labor tab is not a posting destination.'); return; }
+    if(prior && prior.verified) {
+      migratePostedScopes(destination,day,job,log); completed[job.id]=true; return;
+    }
     const result=applyJob(day,{...job,key:route.key},log);
+    if(result) migratePostedScopes(destination,day,job,log);
     if(!result) return;
     props.setProperty(key,JSON.stringify({signature,verified:true,entry:result.entry}));
     completed[job.id]=true;
@@ -651,4 +661,64 @@ function postApprovedPayrollDay(ss, props, day, log) {
   });
   SpreadsheetApp.flush();
   log.push(day.date+': job-cost posting verified '+Object.keys(completed).length+'/'+jobs.length+' tickets.');
+}
+
+
+// One visible amount per scope beside its ledger block; summaries reference E cells.
+function ledgerScopeRows(top,totalRow,scopes) {
+  return scopes.map(name=>String(name).trim()).filter(Boolean).map(name=>[name,'=C'+totalRow+(scopes.length>1?'/'+scopes.length:'')]);
+}
+function migratePostedScopes(sh,day,job,log) {
+  const logFirst=ledgerFirstRow(sh);
+  const values=sh.getRange(logFirst,1,Math.max(1,sh.getLastRow()-logFirst+1),5).getValues();
+  const groups=job.sms.map(g=>({kind:'sms',scopes:g.scopes,men:g.men})).concat(job.subs.map(g=>({kind:'sub',scopes:g.scopes,men:[{name:g.leader,amt:g.total}]})));
+  groups.forEach(g=>{
+    if(!g.scopes.length)return;
+    const matches=[];
+    values.forEach((row,i)=>{
+      const date=row[0] instanceof Date?row[0]:new Date(row[0]);
+      if(isNaN(date)||Utilities.formatDate(date,'America/Chicago','yyyy-MM-dd')!==day.date)return;
+      if(g.men.every((m,k)=>values[i+k]&&norm(values[i+k][1])===norm(m.name)&&Math.abs(Number(values[i+k][2])-m.amt)<0.005)) matches.push(i);
+    });
+    if(matches.length!==1)throw new Error('Cannot uniquely verify ledger block for '+g.men[0].name+'; scope migration withheld');
+    const i=matches[0],top=logFirst+i,tot=g.kind==='sms'?top+g.men.length:top;
+    const lines=ledgerScopeRows(top,tot,g.scopes), updates=[];
+    // Do not overwrite another crew, a different scope, or an existing side calculation.
+    lines.forEach((line,k)=>{
+      const row=values[i+k]||[];
+      if(k>=g.men.length && (row[0]||row[1]))throw new Error('Scope rows overlap another ledger block; migration withheld');
+      const old=String(row[3]||'');
+      if(old && norm(old)!==norm(line[0]) && !(k===0&&norm(old)===norm(g.scopes.join(' · '))))throw new Error('Different scope beside ledger; migration withheld');
+      const existing=sh.getRange(top+k,5).getFormula();
+      if((existing&&existing!==line[1])||(!existing&&row[4]!==''&&row[4]!=null))throw new Error('Existing side calculation differs; migration withheld');
+      const summary=sh.getRange(2,5,logFirst-4,1).getValues().findIndex(r=>norm(r[0])===norm(line[0]));
+      if(summary<0)throw new Error('Missing summary scope '+line[0]);
+      const target=sh.getRange(summary+2,6),oldFormula=target.getFormula();
+      const term='C'+tot+(lines.length>1?'/'+lines.length:'');
+      const escaped=term.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+      const re=new RegExp('(^=|[+])'+escaped+'(?=$|[+])');
+      const updated=oldFormula.replace(re,(_,prefix)=>prefix+'E'+(top+k));
+      if(updated===oldFormula && !new RegExp('(^=|[+])E'+(top+k)+'(?=$|[+])').test(oldFormula))throw new Error('Summary does not match recorded allocation; migration withheld');
+      updates.push({target,formula:updated});
+    });
+    formatLedgerBlock(sh,top,g.men.length,tot,g.kind);
+    sh.getRange(top,4,lines.length,2).setValues(lines);
+    sh.getRange(top,5,lines.length,1).setNumberFormat('$#,##0.00');
+    updates.forEach(u=>u.target.setFormula(u.formula));
+    SpreadsheetApp.flush();
+    if(lines.some((line,k)=>sh.getRange(top+k,5).getFormula()!==line[1]))throw new Error('Scope-cell readback failed');
+  });
+}
+
+function formatLedgerBlock(sh,top,men,total,kind) {
+  sh.getRange(top,1,men,3).setFontFamily('Calibri').setFontSize(10).setBorder(true,true,true,true,false,false);
+  sh.getRange(top,1).setNumberFormat('M/d/yyyy');
+  sh.getRange(top,3,men,1).setNumberFormat('$#,##0.00');
+  if(kind==='sms') sh.getRange(total,3).setNumberFormat('$#,##0.00');
+}
+
+function ledgerFirstRow(sh) {
+  const rows=sh.getRange(1,1,Math.min(30,sh.getLastRow()),3).getValues();
+  const header=rows.findIndex(r=>norm(r[0])==='date'&&norm(r[1])==='name'&&norm(r[2])==='amount');
+  return header>=0?header+2:LOG_FIRST;
 }
