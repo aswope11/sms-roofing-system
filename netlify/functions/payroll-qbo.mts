@@ -128,7 +128,9 @@ export default async function handler(req:Request) {
           existing:async()=>seat?{qbId:seat.qb_id,dayAmount:dayMap(seat)[date]}:null,
           readInvoice:async(qid:string)=>(await qb("GET",`invoice/${qid}`)).Invoice,
           findInvoiceByMarker:async()=>{
-            const candidates=(await qbQuery(`SELECT * FROM Invoice WHERE CustomerRef = '${qEsc(customerId)}' AND TxnDate >= '${qEsc(date)}' AND TxnDate <= '${qEsc(invoiceDate)}' MAXRESULTS 1000`)).Invoice||[];
+            // Search all invoice dates: an interrupted posting may be on an older placeholder.
+            // At the query limit, refuse the write rather than assume no duplicate exists.
+            const candidates=(await qbQuery(`SELECT * FROM Invoice WHERE CustomerRef = '${qEsc(customerId)}' MAXRESULTS 1000`)).Invoice||[];
             if(candidates.length>=1000)throw new Error("Invoice search requires paging before safe duplicate detection");
             const found=candidates.filter((inv:any)=>(inv.Line||[]).some((l:any)=>String(l.Description||'').includes(plan.marker)));
             if(found.length>1)throw new Error("Duplicate payroll receipts already exist in QuickBooks; reconcile first");
