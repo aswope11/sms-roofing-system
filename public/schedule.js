@@ -32,8 +32,9 @@ export async function schedulePage(start) {
   const workedMen = new Set(w.stops.map(s => s.crew_id));
   w.crew.forEach(c => { if (c.boss_id && workedMen.has(c.id)) workedMen.add(c.boss_id); });
   const onBoard = new Set([...workedMen, ...(w.board_add || [])]);
-  const crew = groupCrew(w.crew).filter(c => allCrew.some(a => a.id === c.id) && (c.group === 'employee' || onBoard.has(c.id)));
-  const offBoard = allCrew.filter(c => c.active && c.group !== 'employee' && !onBoard.has(c.id));
+  const hiddenMen = new Set(w.board_hidden || []);
+  const crew = groupCrew(w.crew).filter(c => allCrew.some(a => a.id === c.id) && !hiddenMen.has(c.id) && (c.group === 'employee' || onBoard.has(c.id)));
+  const offBoard = allCrew.filter(c => c.active && !crew.some(shown => shown.id === c.id));
   const removedMen = groupCrew(w.crew).filter(c => !c.active);   // 11/9/26: removed men live in the pick list so he brings them back right here
   const jobsById = Object.fromEntries(w.jobs.map(j => [j.id, j]));
   const open = w.jobs.filter(j => !j.done_at);
@@ -76,6 +77,8 @@ export async function schedulePage(start) {
       <div class="jt">${pfx(j)}${esc(j.address)}</div>
       ${j.tenant ? `<div class="js jwho">${esc(j.tenant)}</div>` : ''}
       ${j.city ? `<div class="js">${esc(j.city)}</div>` : ''}
+      ${j.title ? `<div class="js">${esc(j.title)}</div>` : ''}
+      ${stopId ? `<div class="js day-scope">${esc(w.stops.find(s => s.id === stopId)?.day_scope || 'No scope selected')}</div>` : ''}
       ${unpaidLine(j)}
     </div>`;   // same card in every row — the stage pills live on the job's row at the bottom of the page
 
@@ -103,7 +106,7 @@ export async function schedulePage(start) {
   // DROP ANYWHERE (10/8/26, his ask): every list is always on the page so a pill can be dropped into it, even when it is empty.
   sections += `<div class="psec" data-dropbucket="ready"><h3 data-fold="readytowork">${fold.readytowork ? '▸' : '▾'} Ready to work <span class="n">${readyRows.length}</span></h3>${fold.readytowork ? '' : (readyRows.map(rowHTML).join('') || '<div class="empty">Nothing here — drop a pill here.</div>')}</div>`;
   [{ k: 'hold', l: 'Waiting on the customer' }, { k: 'trades', l: 'Waiting on other trades' }].forEach(h => {
-    const rows = listed.filter(j => bucketOf(j) === h.k);
+    const rows = listed.filter(j => bucketOf(j) === h.k && !onToday(j));
     sections += `<div class="${schedOpen[h.k] ? 'parked open' : 'parked'}" data-dropbucket="${h.k}"><h3 data-hold="${h.k}">${schedOpen[h.k] ? '▾' : '▸'} ${esc(h.l)} <span class="n">${rows.length}</span></h3>
       <div class="plist"><div class="psec">${rows.sort(jobCmp).map(rowHTML).join('')}</div></div></div>`;
   });
@@ -131,7 +134,7 @@ export async function schedulePage(start) {
       <button id="thisw">Today</button>
     </div>
     <div class="btnrow" style="margin-bottom:10px"><span class="mute">Put somebody on the board</span>
-      <select id="acPick"><option value="">— pick a sub —</option>${offBoard.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}<option value="__new">＋ Somebody new…</option>${removedMen.length ? `<optgroup label="Removed — pick, then Add to bring back">${removedMen.map(c => `<option value="back:${c.id}">${esc(c.name)}</option>`).join('')}</optgroup>` : ''}</select>
+      <select id="acPick"><option value="">— pick someone to add —</option>${offBoard.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}<option value="__new">＋ Somebody new…</option>${removedMen.length ? `<optgroup label="Removed — pick, then Add to bring back">${removedMen.map(c => `<option value="back:${c.id}">${esc(c.name)}</option>`).join('')}</optgroup>` : ''}</select>
       <button type="button" class="small" id="acAdd">Add</button>
       <button type="button" class="small" id="acRemove">Remove</button></div>
     <div class="btnrow" id="newMan" style="display:none;margin-bottom:10px">
@@ -151,11 +154,11 @@ export async function schedulePage(start) {
           <div class="dchk">${st === 'acct' ? '✓ good to bill' : st === 'late' ? 'not accounted' : 'tap when right'}</div></th>`; }).join('')}</tr>
         <tr><th>Nobody on it yet</th>${dates.map(d => `<td class="cell" data-dropdate="${d}" data-dropcrew="">${nobody(d).map(j => jobCardHTML(j, '', d)).join('')}
           <div class="plus ${nobody(d).length ? 'has' : ''}" data-nobody="1" data-date="${d}">+</div></td>`).join('')}</tr>
-        ${crew.map((c, i) => `${i === 0 || (crew[i - 1].group === 'employee') !== (c.group === 'employee') ? `<tr class="grouphead"><th colspan="${dates.length + 1}">${c.group === 'employee' ? 'SMS employees' : 'Subs'}</th></tr>` : ''}<tr><th style="border-left:4px solid ${crewColor(c, w.crew)}">${c.group.startsWith('under-') ? '<span class="mute">↳ </span>' : ''}<span class="manledger" data-ledger="${c.boss_id || c.id}" data-lname="${c.boss_id ? '' : esc(c.name)}" title="Open his pay ledger" style="cursor:pointer;text-decoration:underline dotted">${esc(c.name)}</span> <span data-editman="${c.id}" title="Fix him — name, type, who he works under, rate" style="cursor:pointer">✎</span>${c.group !== 'employee' && !workedMen.has(c.id) ? ` <span class="delx" data-drop="${c.id}" title="Take him off this week" style="cursor:pointer">✕</span>` : ''}</th>${dates.map(d => {
+        ${crew.map((c, i) => `${i === 0 || (crew[i - 1].group === 'employee') !== (c.group === 'employee') ? `<tr class="grouphead"><th colspan="${dates.length + 1}">${c.group === 'employee' ? 'SMS employees' : 'Subs'}</th></tr>` : ''}<tr><th style="border-left:4px solid ${crewColor(c, w.crew)}">${c.group.startsWith('under-') ? '<span class="mute">↳ </span>' : ''}<span class="manledger" data-ledger="${c.boss_id || c.id}" data-lname="${c.boss_id ? '' : esc(c.name)}" title="Open his pay ledger" style="cursor:pointer;text-decoration:underline dotted">${esc(c.name)}</span> <span data-editman="${c.id}" title="Fix him — name, type, who he works under, rate" style="cursor:pointer">✎</span> <span class="delx" data-drop="${c.id}" title="Take him off this week — keep his history" style="cursor:pointer">✕</span></th>${dates.map(d => {
           const mine = w.stops.filter(s => s.crew_id === c.id && s.work_date === d);
           return `<td class="cell" data-dropcrew="${c.id}" data-dropdate="${d}">${mine.map(s => jobsById[s.job_id] ? jobCardHTML(jobsById[s.job_id], c.id, d, s.id) : '').join('')}
             <div class="plus ${mine.length ? 'has' : ''}" data-crew="${c.id}" data-date="${d}">+</div></td>`;
-        }).join('')}</tr>`).join('') || `<tr><td colspan="${dates.length + 1}" class="empty">No crew yet — add men on the <a href="#/crew">Crew</a> tab.</td></tr>`}
+        }).join('')}</tr>`).join('') || `<tr><td colspan="${dates.length + 1}" class="empty">Nobody on this week’s board — use Add a man above.</td></tr>`}
       </table>
     </div>
     <div id="schedSections">${sections}</div>
@@ -180,9 +183,9 @@ export async function schedulePage(start) {
   const addStop = (crew_id, job_id, work_date) => doAndProve('/w/stops', { method: 'POST', body: { crew_id, job_id, work_date } }, weekUrl,
     back => back.stops.some(s => s.crew_id === Number(crew_id) && s.job_id === Number(job_id) && s.work_date === work_date));
   const run = async fn => { try { await fn(); reload(); } catch (e) { fail(e); } };
-  // put a sub up for this week / take him back off (only a sub who has no job this week can come off)
+  // Weekly visibility for SMS employees and subs; work records are independent.
   const board = (id, on) => run(() => doAndProve('/w/board-add', { method: 'PUT', body: { week_start: w.start, crew_id: id, on } }, weekUrl,
-    back => (back.board_add || []).includes(id) === on, on ? 'On the board this week — read back and he is there' : 'Off this week\'s board — he comes back the week he works'));
+    back => on ? (back.board_add || []).includes(id) : (back.board_hidden || []).includes(id), on ? 'On the board this week — read back and he is there' : 'Off this week’s board — logged work and pay kept'));
   const acAdd = document.getElementById('acAdd');
   // THE OLD BOARD'S WAY (9/29/26): the drop-down puts a sub up for this week; "＋ Somebody new…" opens the
   // add box right here — name, SMS or sub (or under a crew leader), rate — he's on the crew for good,
@@ -199,7 +202,7 @@ export async function schedulePage(start) {
     run(async () => {
       await doAndProve(`/w/crew/${c.id}`, { method: 'PUT', body }, '/w/crew',
         list => { const r = list.find(m => m.id === c.id); return r && r.active === true; }, `${c.name} is back`);
-      if (c.kind === 'sub') await doAndProve('/w/board-add', { method: 'PUT', body: { week_start: w.start, crew_id: c.id, on: true } }, weekUrl,
+      await doAndProve('/w/board-add', { method: 'PUT', body: { week_start: w.start, crew_id: c.id, on: true } }, weekUrl,
         back => (back.board_add || []).includes(c.id), `${c.name} is back on the board`);
     });
   };
@@ -239,20 +242,21 @@ export async function schedulePage(start) {
       reload();
     } catch (e) { fail(e); nm('emSave').disabled = false; }
   };
-  // REMOVE A MAN (11/9/26, his ask): takes him off the scheduling page for good. Nothing is deleted —
-  // his past days and pay stay. He comes back by checking Active on the Crew tab.
+  // Weekly visibility only. Historical stops, pay and the crew record stay intact.
   const removeMan = async c => {
     if (!c) return;
-    if (!confirm(`Remove ${c.name} from the scheduling page?\n\nHis past days and pay stay. To bring him back, check Active on the Crew tab.`)) return;
-    const body = { name: c.name, kind: c.kind, day_rate: c.day_rate, pay_to: c.pay_to || '', boss_id: c.boss_id || null, active: false };
-    try {
-      await doAndProve(`/w/crew/${c.id}`, { method: 'PUT', body }, '/w/crew',
-        list => { const r = list.find(m => m.id === c.id); return r && r.active === false; }, `${c.name} removed`);
-      editMan.style.display = 'none'; editId = null; reload();
-    } catch (e) { fail(e); }
+    if (!confirm(`Take ${c.name} off this week's Schedule?\n\nHis logged work and pay stay. Add him back here whenever you need him.`)) return;
+    await board(c.id, false);
+    editMan.style.display = 'none'; editId = null;
   };
   nm('emRemove').onclick = () => removeMan(allCrew.find(m => m.id === editId));
-  document.getElementById('acRemove').onclick = () => { if (acPick.value.startsWith('back:')) { toast('He is already removed.', false); return; } const v = Number(acPick.value); if (!v) { toast('Pick who to remove.', false); return; } removeMan(allCrew.find(m => m.id === v)); };
+  document.getElementById('acRemove').onclick = () => {
+    const v = Number(acPick.value);
+    if (v && crew.some(c => c.id === v)) return removeMan(crew.find(c => c.id === v));
+    acPick.innerHTML = '<option value="">— pick someone to remove, then Remove —</option>' +
+      crew.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+    acPick.focus();
+  };
   const addManHere = async () => {
     const name = nm('nmName').value.trim(); if (!name) { toast("What's his name?", false); return nm('nmName').focus(); }
     if (w.crew.some(c => c.name.trim().toLowerCase() === name.toLowerCase())) { toast(`${name} is already on the crew — pick him from the list`, false); return; }
@@ -268,7 +272,7 @@ export async function schedulePage(start) {
   };
   nm('nmAdd').onclick = addManHere;
   ['nmName', 'nmRate'].forEach(id => nm(id).onkeydown = ev => { if (ev.key === 'Enter') { ev.preventDefault(); addManHere(); } });
-  $app().querySelectorAll('[data-drop]').forEach(x => x.onclick = ev => { ev.stopPropagation(); board(Number(x.dataset.drop), false); });
+  $app().querySelectorAll('[data-drop]').forEach(x => x.onclick = ev => { ev.stopPropagation(); removeMan(crew.find(c => c.id === Number(x.dataset.drop))); });
 
   // tap a day header: green it (good to bill) or take it back
   $app().querySelectorAll('button[data-act]').forEach(b => b.onclick = ev => { ev.stopPropagation(); { const d = b.dataset.act, cur = activeDay || [w.today]; activeDay = cur.includes(d) ? cur.filter(x => x !== d) : [...cur, d]; } schedulePage(w.start); });
@@ -363,7 +367,7 @@ export async function schedulePage(start) {
     const scopePct = { ...(existing && existing.scope_split ? existing.scope_split : {}) };
     const f = document.getElementById('lForm');
     f.innerHTML = `
-      <div class="lfjob">${esc(ticketName(j))}<div class="mute">${esc(j.customer_name || '')}</div></div>
+      <div class="lfjob">${esc(ticketName(j))}<div class="mute">${esc(j.customer_name || '')}</div><a href="#/job/${j.id}">Open job file</a></div>
       <div class="lfrow"><span class="lfl">Paid</span>
         <label class="lfpick"><input type="radio" name="lfDays" value="1" ${days !== 0.5 ? 'checked' : ''}> Full day</label>
         <label class="lfpick"><input type="radio" name="lfDays" value="0.5" ${days === 0.5 ? 'checked' : ''}> Half day</label></div>
@@ -509,7 +513,16 @@ export async function schedulePage(start) {
       try { if (await askDelete('stop', k.dataset.id)) { k.closest('.jobcard')?.remove(); await window._smsSchedReload(); } } catch (err) { fail(err); }
     }, true);
   }
-  $app().querySelectorAll('.jobcard').forEach(c => c.onclick = e => { if (e.target.closest('.kill,.stbar')) return; hidePeek(); location.hash = `#/job/${c.dataset.peek}`; });
+  $app().querySelectorAll('.jobcard').forEach(c => c.onclick = e => { if (e.target.closest('.kill,.stbar')) return; hidePeek();
+    if (c.dataset.stop) {
+      logFor = { crew: c.dataset.row, date: c.dataset.day, nobody: false };
+      const man = crew.find(m => m.id === Number(c.dataset.row));
+      document.getElementById('logTitle').textContent = `${man?.name || ''} — ${dayHead(c.dataset.day)}`;
+      document.getElementById('lPick').style.display = 'none';
+      document.getElementById('lForm').style.display = '';
+      openLogForm(Number(c.dataset.peek)); logBack.style.display = 'flex';
+    } else location.hash = `#/job/${c.dataset.peek}`;
+  });
   $app().querySelectorAll('select.putman').forEach(sel => sel.onchange = () => { if (sel.value) run(() => addStop(sel.value, sel.dataset.job, sel.dataset.date)); });
 
   // (3) the pills
@@ -702,6 +715,8 @@ export async function schedulePage(start) {
   const peekEl = document.getElementById('peek');
   const peekHTML = (j, crewId, day) => {
     const head = `<h4>${esc(j.tag)} - ${esc(j.address)}</h4>`;
+    const stop = w.stops.find(s => s.crew_id === Number(crewId) && s.work_date === day && s.job_id === j.id);
+    const scope = stop ? `<div class="pnote">${esc(stop.day_scope || 'No scope selected')}</div>` : '';
     const e = crewId ? crew.find(c => c.id === Number(crewId)) : null;
     if (!e || !day) return head;
     const stops = w.stops.filter(s => s.crew_id === e.id && s.work_date === day);
@@ -712,7 +727,7 @@ export async function schedulePage(start) {
     const name = o => `${esc(o.tag)} - ${esc(o.address)}`;
     // old board .peek .prow: every job he went to that day, same bold, same color, each with its dollars
     const order = [j.id, ...stops.map(s => s.job_id).filter(id => id !== j.id)];
-    return head +
+    return head + scope +
       `<div class="pwho"><i class="cdot" style="background:${crewColor(e, w.crew)}"></i>${esc(e.name)} — ${dayHead(day)} · ${days === 0.5 ? 'half day' : 'full day'}${dayPay ? ' ' + $(dayPay) : ''}</div>` +
       (dayPay ? order.map(id => jobsById[id] ? `<div class="prow"><span>${name(jobsById[id])}</span><b>${$(cost(id))}</b></div>` : '').join('') : `<div class="pnote">No day rate set for him yet.</div>`);
   };
