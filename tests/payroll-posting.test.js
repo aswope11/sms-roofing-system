@@ -43,7 +43,7 @@ test('historical migration creates clickable scope amounts and redirects only th
  const set=(r,c,value)=>grid.set(key(r,c),value);
  set(2,5,'CF');set(3,5,'Drip Edge');set(2,6,'=C32/2+C36/3');set(3,6,'=C32/2+C36/3');
  set(32,1,new Date('2026-11-06T12:00:00Z'));set(32,2,'Puma');set(32,3,400);set(32,4,'CF · Drip Edge');
- const range=(r,c,h=1,w=1)=>{const a={getValues:()=>Array.from({length:h},(_,i)=>Array.from({length:w},(_,j)=>grid.get(key(r+i,c+j))??'')),getValue:()=>grid.get(key(r,c))??'',getFormula:()=>String(grid.get(key(r,c))??'').startsWith('=')?grid.get(key(r,c)):'',setFormula:f=>set(r,c,f),setValues:rows=>rows.forEach((row,i)=>row.forEach((v,j)=>set(r+i,c+j,v)))};for(const m of ['setNumberFormat','setFontFamily','setFontSize','setBorder'])a[m]=()=>a;return a;};
+ const range=(r,c,h=1,w=1)=>{const a={getValues:()=>Array.from({length:h},(_,i)=>Array.from({length:w},(_,j)=>grid.get(key(r+i,c+j))??'')),getValue:()=>grid.get(key(r,c))??'',getFormula:()=>String(grid.get(key(r,c))??'').startsWith('=')?grid.get(key(r,c)):'',setFormula:f=>set(r,c,f),setValues:rows=>rows.forEach((row,i)=>row.forEach((v,j)=>set(r+i,c+j,v)))};for(const m of ['setNumberFormat','setFontFamily','setFontSize','setBorder','setBackground'])a[m]=()=>a;return a;};
  const c=setup({Utilities:{formatDate:d=>d.toISOString().slice(0,10)},SpreadsheetApp:{flush(){}}});
  c.migratePostedScopes({getLastRow:()=>38,getRange:range},{date:'2026-11-06'},{sms:[],subs:[{leader:'Puma',total:400,scopes:['CF','Drip Edge']}]},[]);
  assert.equal(grid.get(key(32,5)),'=C32/2');assert.equal(grid.get(key(33,5)),'=C32/2');assert.equal(grid.get(key(32,4)),'CF');assert.equal(grid.get(key(33,4)),'Drip Edge');
