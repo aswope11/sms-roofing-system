@@ -1772,11 +1772,13 @@ export async function workInner(req: Request) {
       const scopes = norm(await sql`SELECT job_id, name FROM job_scopes WHERE job_id = ANY(${jobs.map((j: any) => j.id)}::int[]) ORDER BY id`);
       const wInvs = jobs.length ? norm(await sql`SELECT * FROM invoices WHERE job_id = ANY(${jobs.map((j: any) => j.id)}::int[]) AND kind IN ('real','draw') AND paid_at IS NULL`) : [];
       const agedJobs = jobs.map((j: any) => ({ ...j, aging: M.drawAging(j, wInvs, today()) }));
-      const boardAdd = norm(await sql`SELECT crew_id FROM board_add WHERE week_start = ${start} AND on_board`).map((r: any) => r.crew_id);
+      const boardRows = norm(await sql`SELECT crew_id, on_board FROM board_add WHERE week_start = ${start}`);
+      const boardAdd = boardRows.filter((r: any) => r.on_board).map((r: any) => r.crew_id);
+      const boardHidden = boardRows.filter((r: any) => !r.on_board).map((r: any) => r.crew_id);
       // a placeholder holds every green day added to it (10/7/26) — each of those days shows as seated
       const seated = norm(await sql`SELECT job_id, work_date, amount, days FROM invoices WHERE kind = 'placeholder' AND COALESCE(qb_id, '') <> '' AND (work_date = ANY(${dates}::date[]) OR job_id = ANY(${jobs.map((j: any) => j.id)}::int[]))`)
         .flatMap((p: any) => Object.keys(dayMap(p)).filter((d) => dates.includes(d)).map((d) => ({ job_id: p.job_id, work_date: d })));
-      return json({ start, dates, today: today(), crew, stops, crewDays, green, jobs: agedJobs, scopes, board_add: boardAdd, seated });
+      return json({ start, dates, today: today(), crew, stops, crewDays, green, jobs: agedJobs, scopes, board_add: boardAdd, board_hidden: boardHidden, seated });
     }
 
     // ================= DAILY PAYROLL FEED (11/4/26) =================
