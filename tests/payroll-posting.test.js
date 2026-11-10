@@ -28,7 +28,7 @@ test('changed posted source is blocked rather than adding a second ledger entry'
  const logs=[];let ledgerCalls=0;
  const model={sms:{rows:[],men:[]},subs:[]};
  const c=setup({UrlFetchApp:{fetch:()=>({getResponseCode:()=>200,getContentText:()=>JSON.stringify(model)})}});
- c.postingPlan=()=>[{id:19,label:'Fate',sms:[],subs:[]}];c.applyJob=()=>{ledgerCalls++;};
+ c.transferPayrollSubs=()=>[];c.postingPlan=()=>[{id:19,label:'Fate',sms:[],subs:[]}];c.applyJob=()=>{ledgerCalls++;};
  assert.throws(()=>c.postApprovedPayrollDay({}, {getProperty:k=>state.get(k)}, {date:'2026-11-09',stamp:'x'}, logs));
  assert.equal(ledgerCalls,0);assert.match(logs[0],/reconciliation required/);
 });
@@ -57,4 +57,20 @@ test('gross labor only greens after its own SMS or Subs summary contains its tot
  const sh={getRange:(r,col)=>({getFormula:()=>formula,setBackground:v=>colored.push([r,col,v])})};
  assert.throws(()=>c.markLedgerTotalApplied(sh,32,'sub'),/has not reached/);assert.equal(colored.length,0);
  formula='=C14+C32';c.markLedgerTotalApplied(sh,32,'sub');assert.deepEqual(colored,[[32,3,'#00ff00']]);
+});
+test('payroll transfer verifies Subs before greening payroll; repeat uses existing ledger row',()=>{
+ const events=[];let green=0;
+ const model={subs:[{leader_id:2,rows:[{},{},{}],men:[{id:2,name:'Puma',shares:[{job_id:19,day_scope:'Term Bar · Walkpad'}]}]}],allocations:[{leader_id:2,job_id:19,label:'Fate',men:[{amount:200}]}]};
+ const weekly={getName:()=> 'Nov 07 - Nov 13 2026',getRange:(r,col,h,w)=>({getValue:()=> 'Fate',getValues:()=>[[200]],setBackground:()=>{green++;events.push('payroll green');}})};
+ const ledger={getLastRow:()=>1,getRange:(r,col)=>({getValues:()=>[[new Date('2026-11-09T12:00:00Z'),'Puma','Fate',200]],getValue:()=>{events.push('ledger read');return col===3?'Fate':200;}})};
+ const c=setup({Utilities:{formatDate:d=>d.toISOString().slice(0,10)},SpreadsheetApp:{flush(){}}});
+ c.weekTab=()=>weekly;c.layout=()=>({subFirst:35});
+ const result=c.transferPayrollSubs({getSheetByName:()=>ledger},{date:'2026-11-09'},model,[]);
+ assert.equal(result[0].amount,200);assert.equal(result[0].row,1);assert.equal(green,1);assert.ok(events.indexOf('ledger read')<events.indexOf('payroll green'));
+});
+test('checkpoint comparison ignores layout metadata but preserves actual source changes',()=>{
+ const c=setup();const old={id:19,subs:[{leaderId:2,leader:'Puma',sig:'Term Bar',scopes:['Term Bar'],total:200}]};
+ const next={id:19,subs:[{leaderId:2,leader:'Puma',scopes:['Term Bar'],total:200,ledgerRow:1282}]};
+ assert.equal(c.canonicalPostingSignature(JSON.stringify(old)),c.canonicalPostingSignature(JSON.stringify(next)));
+ next.subs[0].total=201;assert.notEqual(c.canonicalPostingSignature(JSON.stringify(old)),c.canonicalPostingSignature(JSON.stringify(next)));
 });
