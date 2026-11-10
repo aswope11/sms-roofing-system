@@ -490,7 +490,10 @@ function applyJob(day, job, log) {
     sh.getRange(top, 3, tot - top + 1, 1).setNumberFormat('$#,##0.00');
     sh.getRange(tot, 3).setBackground(null);   // green comes last
     const scopeRows = ledgerScopeRows(top, tot, b.scopes);
-    if(scopeRows.length) sh.getRange(top,4,scopeRows.length,2).setValues(scopeRows);
+    if(scopeRows.length) {
+      sh.getRange(top,4,scopeRows.length,2).setValues(scopeRows);
+      sh.getRange(top,4,scopeRows.length,2).setBorder(true,true,true,true,true,false);
+    }
     scopeRows.forEach((line,i) => {
       sh.getRange(top+i,5).setNumberFormat('$#,##0.00');
       toks.push({a1:'F'+scopeRow(line[0]),tok:'+E'+(top+i)});
@@ -517,7 +520,7 @@ function applyJob(day, job, log) {
     return null;
   }
   todo.forEach(b => {
-    sh.getRange(b.tot,3).setBackground('#ffffff');
+    markLedgerTotalApplied(sh,b.tot,b.kind);
     b.scopeRows.forEach((line,i)=>sh.getRange(b.top+i,5).setBackground(GREEN));
   });
   log.push(when + ': applied ' + job.key + ' to its Actual Job Cost Sheet (rows ' + entry.first + '–' + entry.last + ').');
@@ -706,11 +709,12 @@ function migratePostedScopes(sh,day,job,log) {
     });
     formatLedgerBlock(sh,top,g.men.length,tot,g.kind);
     sh.getRange(top,4,lines.length,2).setValues(lines);
+    sh.getRange(top,4,lines.length,2).setBorder(true,true,true,true,true,false);
     sh.getRange(top,5,lines.length,1).setNumberFormat('$#,##0.00');
     updates.forEach(u=>u.target.setFormula(u.formula));
     SpreadsheetApp.flush();
     if(lines.some((line,k)=>sh.getRange(top+k,5).getFormula()!==line[1]) || updates.some(u=>u.target.getFormula()!==u.formula))throw new Error('Scope-cell or summary readback failed');
-    sh.getRange(tot,3).setBackground('#ffffff');
+    markLedgerTotalApplied(sh,tot,g.kind);
     lines.forEach((line,k)=>sh.getRange(top+k,5).setBackground(GREEN));
   });
 }
@@ -726,4 +730,12 @@ function ledgerFirstRow(sh) {
   const rows=sh.getRange(1,1,Math.min(30,sh.getLastRow()),3).getValues();
   const header=rows.findIndex(r=>norm(r[0])==='date'&&norm(r[1])==='name'&&norm(r[2])==='amount');
   return header>=0?header+2:LOG_FIRST;
+}
+
+// The gross labor total greens after reaching SMS/Subs; each side amount greens
+// independently after reaching its scope summary. Neither signal means payment.
+function markLedgerTotalApplied(sh,total,kind) {
+  const formula=sh.getRange(kind==='sms'?2:3,2).getFormula();
+  if(!new RegExp('(^=|[+])C'+total+'(?=$|[+])').test(formula))throw new Error('Gross labor total has not reached '+(kind==='sms'?'SMS':'Subs')+' summary');
+  sh.getRange(total,3).setBackground(GREEN);
 }
