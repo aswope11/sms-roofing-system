@@ -11,6 +11,7 @@ import { getStore } from "@netlify/blobs";
 import { gate } from "../../lib/gate.mts";
 import type { Config } from "@netlify/functions";
 import * as M from "../../lib/money.js";
+import { buildPayrollDay, payrollSheetPlan } from "../../lib/payroll-layout.js";
 import * as Q from "../../lib/qb-pdf.js";
 import * as W from "../../lib/whoswho.js";
 import { repushReason } from "../../lib/mail-label.js";
@@ -1779,6 +1780,29 @@ export async function workInner(req: Request) {
       const seated = norm(await sql`SELECT job_id, work_date, amount, days FROM invoices WHERE kind = 'placeholder' AND COALESCE(qb_id, '') <> '' AND (work_date = ANY(${dates}::date[]) OR job_id = ANY(${jobs.map((j: any) => j.id)}::int[]))`)
         .flatMap((p: any) => Object.keys(dayMap(p)).filter((d) => dates.includes(d)).map((d) => ({ job_id: p.job_id, work_date: d })));
       return json({ start, dates, today: today(), crew, stops, crewDays, green, jobs: agedJobs, scopes, board_add: boardAdd, board_hidden: boardHidden, seated });
+    }
+
+    // Compact payroll v2 is a separate read-only contract. The legacy feed remains intact
+    // because its scope lines are also used by the old job-costing code.
+    if (kind === "payroll-layout" && m === "GET") {
+      const date = url.searchParams.get("date") || today();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return refuse("Which payroll date?", 400);
+      const dates = M.weekDates(M.payWeekStart(date));
+      const crew = norm(await sql`SELECT * FROM crew ORDER BY sort_order NULLS LAST, id`);
+      const { stops, crewDays } = await shareRowsFor(dates);
+      const ids = [...new Set(stops.map((s: any) => s.job_id))];
+      const jobs = ids.length ? norm(await sql`${JOB_COLS(sql)} WHERE j.id = ANY(${ids}::int[])`) : [];
+      const model = buildPayrollDay({ crew, stops, crewDays, jobs }, date);
+      if (!url.searchParams.has("sheet_id")) return json(model);
+      const options = { sheetId: Number(url.searchParams.get("sheet_id")), col: Number(url.searchParams.get("col")),
+        employeeCapacity: Number(url.searchParams.get("employee_capacity") || 5),
+        subRow: Number(url.searchParams.get("sub_row") || 35),
+        subCapacity: Number(url.searchParams.get("sub_capacity") || 6),
+        allocationRow: Number(url.searchParams.get("allocation_row") || 0) };
+      if (!Number.isInteger(options.sheetId) || options.sheetId < 0 || ![1,5,9,13,17,21].includes(options.col) ||
+        ![options.employeeCapacity,options.subCapacity,options.subRow].every(n => Number.isInteger(n) && n > 0 && n <= 2000))
+        return refuse("Invalid payroll layout coordinates", 400);
+      return json({ model, plan: payrollSheetPlan(model, options) });
     }
 
     // ================= DAILY PAYROLL FEED (11/4/26) =================
