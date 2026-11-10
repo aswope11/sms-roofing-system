@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHmac} from 'node:crypto';
-import {verifyPayrollRequest,payrollBridgePlan,postPayrollPlaceholder,PAYROLL_SOURCE_ID} from '../lib/payroll-bridge.js';
+import {verifyPayrollRequest,payrollBridgePlan,postPayrollPlaceholder,PAYROLL_SOURCE_ID,payrollInvoiceDate} from '../lib/payroll-bridge.js';
+test('placeholder dates are fourteen days from the Chicago posting date',()=>{
+ assert.equal(payrollInvoiceDate(new Date('2026-11-10T22:00:00Z')),'2026-11-24');
+ assert.equal(payrollInvoiceDate(new Date('2026-11-11T05:30:00Z')),'2026-11-24');
+ assert.equal(payrollInvoiceDate(new Date('2026-12-25T12:00:00Z')),'2027-01-08');
+});
 const request={source_spreadsheet:PAYROLL_SOURCE_ID,work_date:'2026-11-09',job_id:121,expected_cost:200};
 const make=extra=>payrollBridgePlan({request,job:{id:121,tag:'R'},approved:true,shares:[{job_id:121,work_date:'2026-11-09',cost:200}],billLabor:s=>({amount:s.cost*1.5}),...extra});
 test('bridge defaults disabled and rejects expired or forged requests',()=>{
