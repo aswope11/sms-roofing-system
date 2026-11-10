@@ -82,3 +82,13 @@ test('posting checkpoint ignores JSON field order but still detects changed doll
  assert.equal(c.canonicalPostingSignature(JSON.stringify(old)),c.canonicalPostingSignature(JSON.stringify(now)));
  now.subs[0].total=201;assert.notEqual(c.canonicalPostingSignature(JSON.stringify(old)),c.canonicalPostingSignature(JSON.stringify(now)));
 });
+
+test('labor balance retains real scopes and exposes unidentified dollars separately',()=>{
+ const c=setup();const rows=[{row:2,label:'CF',actualFormula:'=E14'},{row:3,label:'Drip Edge',actualFormula:'=E15'},{row:4,label:'Run Panels',actualFormula:'=E19'},{row:5,label:'',actualFormula:'=SUM(F2:F4)'},{row:6,label:'',actualFormula:'',overheadFormula:''}];
+ const p=c.laborBalancePlan(rows);assert.equal(p.total,5);assert.equal(p.unknown,6);assert.equal(p.residual,'=$B$4-SUM(F2,F3,F4)');assert.equal(p.actual,'=SUM(F2,F3,F4,F6)');assert.equal(p.overhead,'=SUM(G2,G3,G4,G6)');
+ rows[3].label='Scope total';rows[3].actualFormula=p.actual;rows[4].label=p.unknownLabel;rows[4].actualFormula=p.residual;
+ const again=c.laborBalancePlan(rows);assert.equal(again.unknown,6);assert.equal(again.residual,p.residual);
+});
+test('labor reconciliation refuses to overwrite an occupied summary row',()=>{
+ const c=setup();assert.throws(()=>c.laborBalancePlan([{row:2,label:'CF'},{row:3,label:'',actualFormula:'=SUM(F2:F2)'},{row:4,label:'',overheadFormula:'=LegacyBudget'}]),/No empty summary row/);
+});
