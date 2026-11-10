@@ -61,3 +61,18 @@ The installed compact writer copied approved November 9 at 10:14 AM but never ca
 Exact routes are ticket 19 -> Fate 20k Actual Labor and ticket 1 -> Eastlake Actual Labor. Ticket 18 (Fate 9k) must not share ticket 19's destination by street-number inference. Unmapped tickets, non-JC QuickBooks routing, missing destination ledgers, and changed previously posted input remain explicit incomplete states. Eastlake currently contains bid tabs only; its Labor tab is a bid, not an actual-cost ledger. Its Actual Labor destination needs to be established. The Google Apps Script must be installed and run through its first verified posting before this repair is live. Existing unverified/partial historical rows and summary formulas require reconciliation before adoption. The old compact mirror's sub green remains a distinct breakdown-placement signal.
 
 Validation: 139 passing tests, including saved unequal shares, same-address ticket separation, historical retry isolation, and refusal to duplicate changed posted input. These are code checks; no live posting was performed.
+
+## November 10 — posting repair and QuickBooks bridge INSTALLED
+
+The posting repair above is now installed in the Payroll Robot (AppSync.gs, byte-identical to scripts/PayrollRobotAppSync.gs).
+
+Green R / WT / CO / UC days with no job cost sheet route now go to QuickBooks through /payroll-bridge/qbo:
+
+- Order: weekly tab written → Subs tab line verified → QuickBooks placeholder written and read back → only then the Subs D cell and the day box turn green.
+- One open placeholder per ticket. A new placeholder is dated 2 weeks after the day worked; an existing placeholder's date is never changed.
+- Lines: SMS men "X men @ Y hours", $50/hr, no names; subs "Puma cost $200.00 × 1.5 = $300.00".
+- Duplicate guard: "SMS-PAYROLL:<date>:<ticket>" in the invoice's private memo. A retry reuses it. A day already typed on the placeholder by hand is refused, not added again.
+- Caller check: the robot signs in as the owner's Google account (ScriptApp.getOAuthToken). Netlify env PAYROLL_BRIDGE_GOOGLE_EMAIL names the only account allowed. No shared secret exists.
+- Never sends, never records or makes a payment, never deletes.
+- checkPayrollQuickBooks(date, ticket) in the editor is a read-only dry run.
+- JC days still go only to the Actual Job Cost Sheet; JC without a route stays incomplete.
