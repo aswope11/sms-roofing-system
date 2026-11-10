@@ -74,3 +74,11 @@ test('checkpoint comparison ignores layout metadata but preserves actual source 
  assert.equal(c.canonicalPostingSignature(JSON.stringify(old)),c.canonicalPostingSignature(JSON.stringify(next)));
  next.subs[0].total=201;assert.notEqual(c.canonicalPostingSignature(JSON.stringify(old)),c.canonicalPostingSignature(JSON.stringify(next)));
 });
+
+test('posting checkpoint ignores JSON field order but still detects changed dollars',()=>{
+ const c=setup();
+ const old={id:19,label:'Fate',sms:[],subs:[{leaderId:2,leader:'Puma',sig:'Term Bar|Walkpad',scopes:['Term Bar','Walkpad'],total:200}]};
+ const now={id:19,label:'Fate',sms:[],subs:[{leaderId:2,leader:'Puma',total:200,scopes:['Term Bar','Walkpad']}]};
+ assert.equal(c.canonicalPostingSignature(JSON.stringify(old)),c.canonicalPostingSignature(JSON.stringify(now)));
+ now.subs[0].total=201;assert.notEqual(c.canonicalPostingSignature(JSON.stringify(old)),c.canonicalPostingSignature(JSON.stringify(now)));
+});
