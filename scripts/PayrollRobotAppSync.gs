@@ -632,10 +632,13 @@ function postApprovedPayrollDay(ss, props, day, log) {
   const response=UrlFetchApp.fetch(APP_URL+'/w/payroll-layout?date='+day.date,{muteHttpExceptions:true});
   if(response.getResponseCode()!==200) throw new Error('Cannot read saved job shares');
   const model=JSON.parse(response.getContentText()), jobs=postingPlan(model), completed={};
+  // Sub dollars are read from the Subs ledger only after the payroll transfer verifies.
+  const transfers=transferPayrollSubs(ss,day,model,log);
+  jobs.forEach(job=>{job.subs=transfers.filter(t=>t.jobId===job.id).map(t=>({leaderId:t.leaderId,leader:t.leader,total:t.amount,scopes:t.scopes,ledgerRow:t.row}));});
   jobs.forEach(job => {
-    const key='posted:v1:'+day.date+':'+job.id, signature=JSON.stringify(job);
+    const key='posted:v1:'+day.date+':'+job.id, signature=JSON.stringify({...job,subs:job.subs.map(({ledgerRow,...block})=>block)});
     const prior=JSON.parse(props.getProperty(key)||'null');
-    if(prior && prior.signature!==signature) {
+    if(prior && canonicalPostingSignature(prior.signature)!==canonicalPostingSignature(signature)) {
       log.push(day.date+': '+job.label+' changed after posting; reconciliation required. Not marked complete.'); return;
     }
     const route=POST_ROUTES[job.id];
@@ -644,13 +647,13 @@ function postApprovedPayrollDay(ss, props, day, log) {
     const destination=SpreadsheetApp.openById(route.id).getSheetByName(route.tab);
     if(!destination) { log.push(day.date+': '+job.label+' needs an Actual Labor ledger; the existing bid Labor tab is not a posting destination.'); return; }
     if(prior && prior.verified) {
-      migratePostedScopes(destination,day,job,log); completed[job.id]=true; return;
+      migratePostedScopes(destination,day,job,log); markSubsPosted(ss,job.subs); completed[job.id]=true; return;
     }
     const result=applyJob(day,{...job,key:route.key},log);
     if(result) migratePostedScopes(destination,day,job,log);
     if(!result) return;
     props.setProperty(key,JSON.stringify({signature,verified:true,entry:result.entry}));
-    completed[job.id]=true;
+    markSubsPosted(ss,job.subs); completed[job.id]=true;
   });
   // Approval may change during a slow ledger write: re-read before marking anything complete.
   const latest=UrlFetchApp.fetch(APP_URL+'/w/payroll-feed?start='+day.date,{muteHttpExceptions:true});
@@ -738,4 +741,63 @@ function markLedgerTotalApplied(sh,total,kind) {
   const formula=sh.getRange(kind==='sms'?2:3,2).getFormula();
   if(!new RegExp('(^=|[+])C'+total+'(?=$|[+])').test(formula))throw new Error('Gross labor total has not reached '+(kind==='sms'?'SMS':'Subs')+' summary');
   sh.getRange(total,3).setBackground(GREEN);
+}
+
+
+// Daily Payroll -> Subs is a separate, verified stage. No accounting is posted here.
+function transferPayrollSubs(ss,day,model,log) {
+  const saturday=new Date(day.date+'T12:00:00Z');saturday.setUTCDate(saturday.getUTCDate()-((saturday.getUTCDay()+1)%7));
+  const weekly=weekTab(ss,Utilities.formatDate(saturday,'UTC','yyyy-MM-dd'),log);
+  const ledger=ss.getSheetByName('Subs');if(!weekly||!ledger)throw new Error('Payroll or Subs ledger missing');
+  const col=DAY_COL[dow(day.date)],L=layout(weekly);
+  const size=model.subs.reduce((n,s)=>n+s.rows.length+1,0)-(model.subs.length?1:0);
+  let sourceRow=L.subFirst+size+1;
+  const existing=ledger.getRange(1,1,Math.max(1,ledger.getLastRow()),4).getValues();
+  const result=[];
+  model.allocations.forEach(a=>{
+    const first=sourceRow,n=a.men.length;sourceRow+=n+1;
+    const label=String(weekly.getRange(first,col).getValue()).trim();
+    const sourceAmount=r2(weekly.getRange(first,col+2,n,1).getValues().reduce((sum,r)=>sum+Number(r[0]||0),0));
+    const expected=r2(a.men.reduce((sum,m)=>sum+m.amount,0));
+    if(label!==a.label||sourceAmount!==expected)throw new Error('Daily Payroll breakdown differs from saved work; not transferred: '+a.label);
+    const crew=model.subs.find(s=>s.leader_id===a.leader_id),boss=crew.men.find(m=>m.id===a.leader_id);
+    const leader=boss?boss.name:(crew.men[0]||{}).name;if(!leader)throw new Error('Sub crew leader missing');
+    const quoted="'"+weekly.getName().replace(/'/g,"''")+"'!";
+    const jobFormula='='+quoted+colA1(col)+first;
+    const amountFormula='=SUM('+quoted+colA1(col+2)+first+':'+colA1(col+2)+(first+n-1)+')';
+    const matches=[];
+    existing.forEach((r,i)=>{
+      const d=r[0] instanceof Date?r[0]:new Date(r[0]);
+      if(!isNaN(d)&&Utilities.formatDate(d,'America/Chicago','yyyy-MM-dd')===day.date&&norm(r[1])===norm(leader)&&norm(r[2])===norm(label))matches.push(i+1);
+    });
+    if(matches.length>1)throw new Error('Duplicate Subs entries require review: '+label);
+    let row=matches[0];
+    if(row&&Math.abs(Number(ledger.getRange(row,4).getValue())-sourceAmount)>0.005)throw new Error('Existing Subs amount differs; left unchanged: '+label);
+    if(!row){
+      row=ledger.getLastRow()+1;if(row>ledger.getMaxRows())ledger.insertRowsAfter(ledger.getMaxRows(),1);
+      ledger.getRange(row,1,1,4).setValues([[new Date(day.date+'T12:00:00Z'),leader,jobFormula,amountFormula]]);
+      ledger.getRange(row,1).setNumberFormat('M/d');ledger.getRange(row,4).setNumberFormat('$#,##0.00').setBackground('#ffffff');
+      ledger.getRange(row,4).setNote('Payroll transfer '+day.date+' / ticket '+a.job_id+' / crew '+a.leader_id+'; not paid.');
+    }
+    SpreadsheetApp.flush();
+    if(norm(ledger.getRange(row,3).getValue())!==norm(label)||Math.abs(Number(ledger.getRange(row,4).getValue())-sourceAmount)>0.005)throw new Error('Subs transfer readback failed; payroll not greened');
+    weekly.getRange(first,col+2,n,1).setBackground(GREEN);
+    // Only now read the authoritative subcontractor amount from Subs.
+    const amount=Number(ledger.getRange(row,4).getValue());
+    const scopes=[...new Set(crew.men.flatMap(m=>m.shares.filter(s=>s.job_id===a.job_id).flatMap(s=>String(s.day_scope||'').split(' · ').filter(Boolean))))];
+    result.push({jobId:a.job_id,leaderId:a.leader_id,leader,amount,scopes,row});
+  });
+  return result;
+}
+function markSubsPosted(ss,blocks) {
+  const ledger=ss.getSheetByName('Subs');
+  blocks.forEach(b=>{
+    if(!b.ledgerRow||Math.abs(Number(ledger.getRange(b.ledgerRow,4).getValue())-b.total)>0.005)throw new Error('Subs source changed before job posting completion');
+    ledger.getRange(b.ledgerRow,4).setBackground(GREEN);
+  });
+}
+
+function canonicalPostingSignature(raw) {
+  try {const job=JSON.parse(raw);job.subs=(job.subs||[]).map(({sig,ledgerRow,...block})=>block);return JSON.stringify(job);}
+  catch(e){return raw;}
 }
