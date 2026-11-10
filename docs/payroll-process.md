@@ -35,3 +35,21 @@ Required repair: size boxes for all crew and scope rows, preserve employee formu
 - Focused UI behavior tests plus the existing regression suite.
 
 Live browser UI testing remains unavailable in this conversation. Deployment must be checked against the live JavaScript and week API. Payroll Robot repair remains open until its source is editable and its complete output is verified.
+
+## Confirmed correction — compact payroll, November 9 walkthrough
+
+This supersedes the earlier assumptions about scopes and green on Daily Payroll:
+
+- Payroll day boxes show only concise ticket/job names; scope pills remain in the app and must not clutter this sheet.
+- The employee box includes only workers with entries for that day. Charlie $250, Tony $230 and half-day Hugo $150 total $630 for the demonstrated November 9 plan.
+- Matching color AND boldness link job labels to people within one SMS section or individual subcontractor crew section. Styling is not a cross-section join. A job with a different bold setting does not match just because its color matches.
+- Repeated job names are intentional when different worker groups did different work at the same site. Ticket IDs and saved scopes define those groups internally; only job names are displayed.
+- Sub summary shows full daily pay. Job breakdown boxes below show each worker's saved job share. Moscar: Eastlake $150, Fate 20k $150; Puma: Fate 20k $400.
+- Green on the summary means placed in the job breakdown below, NOT applied to the Actual Job Cost Sheet or approved for payment. Each job label greens after its breakdown is verified. A person's daily entry greens only after ALL his job shares are present and verified. An interrupted step leaves incomplete entries white and retryable.
+- Breakdown boxes have outer borders and vertical separators around the names column; no unnecessary total row or blank employee roster rows inside a box.
+
+The compact renderer in lib/payroll-layout.js regenerates this stage from the app's ticket IDs, saved work and money rules. It never reads or copies Adam's reference cells. It checks per-person allocation conservation. Sheet writes are verified before separate green requests.
+
+The November 9 sheet was regenerated through the connected Sheets API using this renderer. The manual example was shifted down four cells within the Monday block solely to reserve breakdown space; its values/formatting and Saturday's entries were preserved. No job costs, payments, approvals or Subs ledger entries were posted.
+
+The /w/payroll-layout read-only endpoint exposes the same model and sheet-write plan. The existing /w/payroll-feed remains unchanged because the legacy job-cost script depends on its scopes. scripts/PayrollCompactSync.gs is a staged adapter, NOT installed. The running Google script is inaccessible from the present browser/Drive connection. Its old timer is still active and can overwrite a correction after app data changes. Installing and validating the replacement is required before automatic syncing can be called fixed. The staged adapter conservatively refuses a missing week, roster remap or manual-content collision; those checks must be addressed and tested before installation.
