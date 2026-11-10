@@ -41,7 +41,7 @@ test('scope allocation cells sit beside the ledger and point to the block total'
 test('historical migration creates clickable scope amounts and redirects only their summary terms',()=>{
  const grid=new Map();const key=(r,c)=>r+':'+c;
  const set=(r,c,value)=>grid.set(key(r,c),value);
- set(2,5,'CF');set(3,5,'Drip Edge');set(2,6,'=C32/2+C36/3');set(3,6,'=C32/2+C36/3');
+ set(3,2,'=C32');set(2,5,'CF');set(3,5,'Drip Edge');set(2,6,'=C32/2+C36/3');set(3,6,'=C32/2+C36/3');
  set(32,1,new Date('2026-11-06T12:00:00Z'));set(32,2,'Puma');set(32,3,400);set(32,4,'CF · Drip Edge');
  const range=(r,c,h=1,w=1)=>{const a={getValues:()=>Array.from({length:h},(_,i)=>Array.from({length:w},(_,j)=>grid.get(key(r+i,c+j))??'')),getValue:()=>grid.get(key(r,c))??'',getFormula:()=>String(grid.get(key(r,c))??'').startsWith('=')?grid.get(key(r,c)):'',setFormula:f=>set(r,c,f),setValues:rows=>rows.forEach((row,i)=>row.forEach((v,j)=>set(r+i,c+j,v)))};for(const m of ['setNumberFormat','setFontFamily','setFontSize','setBorder','setBackground'])a[m]=()=>a;return a;};
  const c=setup({Utilities:{formatDate:d=>d.toISOString().slice(0,10)},SpreadsheetApp:{flush(){}}});
@@ -50,4 +50,11 @@ test('historical migration creates clickable scope amounts and redirects only th
  assert.equal(grid.get(key(2,6)),'=E32+C36/3');assert.equal(grid.get(key(3,6)),'=E33+C36/3');assert.equal(grid.get(key(32,3)),400);
  c.migratePostedScopes({getLastRow:()=>38,getRange:range},{date:'2026-11-06'},{sms:[],subs:[{leader:'Puma',total:400,scopes:['CF','Drip Edge']}]},[]);
  assert.equal(grid.get(key(2,6)),'=E32+C36/3');
+});
+
+test('gross labor only greens after its own SMS or Subs summary contains its total',()=>{
+ const colored=[];let formula='=C99';const c=setup();
+ const sh={getRange:(r,col)=>({getFormula:()=>formula,setBackground:v=>colored.push([r,col,v])})};
+ assert.throws(()=>c.markLedgerTotalApplied(sh,32,'sub'),/has not reached/);assert.equal(colored.length,0);
+ formula='=C14+C32';c.markLedgerTotalApplied(sh,32,'sub');assert.deepEqual(colored,[[32,3,'#00ff00']]);
 });
