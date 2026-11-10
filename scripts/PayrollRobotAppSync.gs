@@ -87,6 +87,7 @@ function syncFromApp() {
         log.push('Wrote ' + day.date + ' (' + day.employees.length + ' men, ' + day.subs.length + ' sub boxes)' + (day.green ? ' — OK\'d in the app' : ' — not OK\'d yet'));
       });
     });
+    retryApprovedPayroll(ss, props, log, today);
   } catch (e) {
     log.push('ERROR: ' + e);
   } finally {
@@ -358,13 +359,19 @@ const JOB_SHEETS = {
   // tag-street# : { id, tab, label as the app writes it }
   'JC-4860': { id: '1rEaFLZD79_-mTmXsV2EeSiHPBPUtcjJftBffYJnDTto', tab: 'Actual Labor', label: 'JC-4860 E. I - 30' }
 };
+const POST_ROUTES = {
+  '19': { key: 'JC-ticket-19', id: '1rEaFLZD79_-mTmXsV2EeSiHPBPUtcjJftBffYJnDTto', tab: 'Actual Labor' },
+  '1': { key: 'JC-ticket-1', id: '1opWjiNIMrb41r2c6Ipbob8Mdmw-kV4lQcyVxOIbMQoQ', tab: 'Actual Labor' }
+};
+Object.keys(POST_ROUTES).forEach(id => { const route = POST_ROUTES[id]; JOB_SHEETS[route.key] = route; });
 const LOG_FIRST = 31;   // the Actual Labor log starts under the frozen header
 
 function jobKey(line) {
   const m = String(line || '').match(/^\s*([A-Za-z]+)\s*-\s*(\d+)/);
   return m ? m[1].toUpperCase() + '-' + m[2] : String(line || '').trim();
 }
-function jobTag(key) { return String(key).split('-')[0]; }
+function jobTag(key) { return String(key).split('-')[0].trim().toUpperCase(); }
+const QB_TAGS = ['R', 'WT', 'CO', 'UC'];   // same list as lib/money.js — these bill through a QuickBooks placeholder
 function scopeOf(line) {
   const j = JOB_SHEETS[jobKey(line)];
   if (!j || String(line).indexOf(j.label) !== 0) return '';
@@ -428,8 +435,9 @@ function applyJob(day, job, log) {
   const sh = SpreadsheetApp.openById(J.id).getSheetByName(J.tab);
   if (!sh) throw 'no "' + J.tab + '" tab on the job cost sheet';
 
+  const logFirst=ledgerFirstRow(sh);
   // every scope needs its line in the summary (E2:E…)
-  const sumVals = sh.getRange(2, 5, LOG_FIRST - 4, 1).getValues();
+  const sumVals = sh.getRange(2, 5, logFirst - 4, 1).getValues();
   const scopeRow = s => { for (let i = 0; i < sumVals.length; i++) if (norm(sumVals[i][0]) === norm(s)) return i + 2; return 0; };
   // blocks to log
   const blocks = [];
@@ -437,11 +445,17 @@ function applyJob(day, job, log) {
   job.subs.forEach(s => blocks.push({ kind: 'sub', scopes: s.scopes, rows: [[s.leader, s.total]] }));
 
   // what's already on the log (his hand entries, or an earlier pass)
-  const last = Math.max(sh.getLastRow(), LOG_FIRST);
-  const logVals = sh.getRange(LOG_FIRST, 1, last - LOG_FIRST + 1, 4).getValues();
+  const last = Math.max(sh.getLastRow(), logFirst);
+  const logVals = sh.getRange(logFirst, 1, last - logFirst + 1, 5).getValues();
   const dayStr = new Date(day.date + 'T12:00:00').toDateString();
   const sameDay = v => { const d = v instanceof Date ? v : new Date(v); return !isNaN(d) && d.toDateString() === dayStr; };
-  const already = b => logVals.some(r => sameDay(r[0]) && norm(r[1]) === norm(b.rows[0][0]) && Math.abs(Number(r[2]) - b.rows[0][1]) < 0.01);
+  const already = b => logVals.some((r,i) => sameDay(r[0]) && (norm(r[3]) === norm(b.scopes.join(' · ')) || b.scopes.every((name,k)=>norm((logVals[i+k]||[])[3])===norm(name))) &&
+    b.rows.every((m,k) => logVals[i+k] && norm(logVals[i+k][1])===norm(m[0]) && Math.abs(Number(logVals[i+k][2])-m[1])<0.005));
+  for(const b of blocks) {
+    if(already(b)) continue;
+    if(logVals.some(r=>sameDay(r[0]) && b.rows.some(m=>norm(m[0])===norm(r[1]))))
+      throw new Error('Existing labor differs or is incomplete; reconcile before adding another entry');
+  }
   const todo = blocks.filter(b => !already(b));
   if (!todo.length) return { entry: null };   // logged by hand already — counts as applied
   const missing = [];
@@ -449,13 +463,13 @@ function applyJob(day, job, log) {
   if (missing.length) { log.push(when + ': ' + job.key + ' — scope "' + missing.join('", "') + '" has no line on the job cost sheet. Not applied, not green.'); return null; }
 
   // his layout: copy the formatting of his last entries of the same kind
-  const tpl = findTemplates(sh, logVals);
-  let r = lastFilled(logVals) + LOG_FIRST + 2;   // one blank row, then the block
+  const tpl = findTemplates(sh, logVals, logFirst);
+  let r = lastFilled(logVals) + logFirst + 2;   // one blank row, then the block
   const entry = { id: J.id, tab: J.tab, first: r, last: 0, refs: [] };
   const toks = [];   // {a1, tok}
   todo.forEach(b => {
     const top = r;
-    const vals = b.rows.map((m, i) => [i ? '' : new Date(day.date + 'T12:00:00'), m[0], m[1], i ? '' : b.scopes.join(' · ')]);
+    const vals = b.rows.map((m, i) => [i ? '' : new Date(day.date + 'T12:00:00'), m[0], m[1], '']);
     sh.getRange(top, 1, vals.length, 4).setValues(vals);
     let tot;
     if (b.kind === 'sms') {
@@ -472,14 +486,22 @@ function applyJob(day, job, log) {
       tot = top;
       toks.push({ a1: 'B3', tok: '+C' + tot });
     }
+    formatLedgerBlock(sh,top,b.rows.length,tot,b.kind);
     sh.getRange(top, 1).setNumberFormat('M/d/yyyy');
     sh.getRange(top, 3, tot - top + 1, 1).setNumberFormat('$#,##0.00');
     sh.getRange(tot, 3).setBackground(null);   // green comes last
-    const n = b.scopes.length;
-    b.scopes.forEach(s => toks.push({ a1: 'F' + scopeRow(s), tok: '+C' + tot + (n > 1 ? '/' + n : '') }));
-    b.tot = tot;
-    entry.last = tot;
-    r = tot + 2;
+    const scopeRows = ledgerScopeRows(top, tot, b.scopes);
+    if(scopeRows.length) {
+      sh.getRange(top,4,scopeRows.length,2).setValues(scopeRows);
+      sh.getRange(top,4,scopeRows.length,2).setBorder(true,true,true,true,true,false);
+    }
+    scopeRows.forEach((line,i) => {
+      sh.getRange(top+i,5).setNumberFormat('$#,##0.00');
+      toks.push({a1:'F'+scopeRow(line[0]),tok:'+E'+(top+i)});
+    });
+    b.scopeRows=scopeRows; b.top=top; b.tot = tot;
+    entry.last = Math.max(tot, top+scopeRows.length-1);
+    r = entry.last + 2;
   });
   toks.forEach(t => {
     const c = sh.getRange(t.a1), f = c.getFormula();
@@ -490,14 +512,18 @@ function applyJob(day, job, log) {
   // read back: every total is in its place before anything goes green
   const has = (f, tok) => new RegExp('(\\+|^=)' + tok.slice(1).replace(/[/]/g, '\\/') + '(?![0-9])').test(f);
   const bad = toks.filter(t => !has(sh.getRange(t.a1).getFormula(), t.tok));
+  const scopeOff = todo.some(b => b.scopeRows.some((line,i)=>sh.getRange(b.top+i,4).getValue()!==line[0] || sh.getRange(b.top+i,5).getFormula()!==line[1]));
   const off = todo.filter(b => Math.abs(Number(sh.getRange(b.tot, 3).getValue()) - b.rows.reduce((a, m) => a + m[1], 0)) > 0.01);
-  if (bad.length || off.length) {
+  if (bad.length || off.length || scopeOff) {
     log.push('read-back detail: ' + JSON.stringify({ bad: bad, off: off.map(b => [b.tot, sh.getRange(b.tot, 3).getValue()]) }));
     backOut([entry], log);
     log.push(when + ': ' + job.key + ' — read-back failed, taken back out. Not applied, not green.');
     return null;
   }
-  todo.forEach(b => sh.getRange(b.tot, 3).setBackground(GREEN));
+  todo.forEach(b => {
+    markLedgerTotalApplied(sh,b.tot,b.kind);
+    b.scopeRows.forEach((line,i)=>sh.getRange(b.top+i,5).setBackground(GREEN));
+  });
   log.push(when + ': applied ' + job.key + ' to its Actual Job Cost Sheet (rows ' + entry.first + '–' + entry.last + ').');
   return { entry };
 }
@@ -508,14 +534,14 @@ function lastFilled(vals) {
 }
 
 // His last SMS block (rows, then a total row with no name) and his last one-line sub entry.
-function findTemplates(sh, vals) {
+function findTemplates(sh, vals, firstRow = LOG_FIRST) {
   const out = { sms: null, sub: null };
   let i = vals.length - 1;
   while (i >= 0 && (!out.sms || !out.sub)) {
     while (i >= 0 && !vals[i].some(v => String(v).trim() !== '')) i--;
     if (i < 0) break;
     let j = i; while (j - 1 >= 0 && vals[j - 1].some(v => String(v).trim() !== '')) j--;
-    const top = LOG_FIRST + j, bot = LOG_FIRST + i;
+    const top = firstRow + j, bot = firstRow + i;
     const isTotal = !String(vals[i][1]).trim() && String(vals[i][2]).trim();
     if (isTotal && bot > top && !out.sms) out.sms = {
       first: sh.getRange(top, 1, 1, 4), mid: sh.getRange(bot - top > 1 ? top + 1 : top, 1, 1, 4), total: sh.getRange(bot, 1, 1, 4) };
@@ -560,3 +586,335 @@ function shiftApplied(id, tab, at, n) {
     if (changed) props.setProperty(k, JSON.stringify(list));
   });
 }
+
+
+// Posting is independent of the mirror stamp. A copied day is not a posted day.
+// Scan historical weeks in bounded batches; retain the cursor until all dates are checked.
+function retryApprovedPayroll(ss, props, log, today) {
+  const cursorKey = 'posting-scan:v1';
+  let cursor = props.getProperty(cursorKey) || SYNC_FROM;
+  for (let week = 0; week < 8 && cursor <= today; week++) {
+    const response = UrlFetchApp.fetch(APP_URL + '/w/payroll-feed?start=' + cursor, {muteHttpExceptions:true});
+    if (response.getResponseCode() !== 200) throw new Error('Posting scan refused; cursor retained at ' + cursor);
+    const feed = JSON.parse(response.getContentText());
+    feed.days.filter(d => d.date >= SYNC_FROM && d.date <= today && d.green).forEach(day => {
+      try { postApprovedPayrollDay(ss, props, day, log); }
+      catch (e) { log.push(day.date + ': POSTING INCOMPLETE — ' + e + '; will retry.'); }
+    });
+    const next = new Date(feed.start + 'T12:00:00Z'); next.setUTCDate(next.getUTCDate() + 7);
+    cursor = Utilities.formatDate(next, 'UTC', 'yyyy-MM-dd');
+    props.setProperty(cursorKey, cursor > today ? SYNC_FROM : cursor);
+  }
+}
+function postingPlan(model) {
+  const jobs = {};
+  const labels = {};
+  model.sms.rows.forEach(r => { if(r.job) labels[r.job.job_id] = r.job.text; });
+  model.subs.forEach(b => b.rows.forEach(r => { if(r.job) labels[r.job.job_id] = r.job.text; }));
+  const job = id => jobs[id] || (jobs[id] = {id, label:labels[id], sms:[], subs:[]});
+  model.sms.men.forEach(man => man.shares.forEach(share => {
+    const scopes = String(share.day_scope || '').split(' · ').filter(Boolean);
+    const sig = scopes.slice().sort().join('|');
+    const j = job(share.job_id);
+    let group = j.sms.find(g => g.sig === sig);
+    if(!group) { group = {sig,scopes,men:[]}; j.sms.push(group); }
+    group.men.push({name:man.name,amt:r2(share.cost)});
+  }));
+  model.subs.forEach(crew => crew.men.forEach(man => man.shares.forEach(share => {
+    const j=job(share.job_id), scopes=String(share.day_scope||'').split(' · ').filter(Boolean);
+    const sig=scopes.slice().sort().join('|');
+    let block=j.subs.find(b=>b.leaderId===crew.leader_id && b.sig===sig);
+    if(!block) { block={leaderId:crew.leader_id,leader:(crew.men.find(m=>m.id===crew.leader_id)||man).name,sig,scopes,total:0};j.subs.push(block); }
+    block.total=r2(block.total+share.cost);
+  })));
+  return Object.values(jobs);
+}
+function postApprovedPayrollDay(ss, props, day, log) {
+  const response=UrlFetchApp.fetch(APP_URL+'/w/payroll-layout?date='+day.date,{muteHttpExceptions:true});
+  if(response.getResponseCode()!==200) throw new Error('Cannot read saved job shares');
+  const model=JSON.parse(response.getContentText()), jobs=postingPlan(model), completed={};
+  // Sub dollars are read from the Subs ledger only after the payroll transfer verifies.
+  const transfers=transferPayrollSubs(ss,day,model,log);
+  jobs.forEach(job=>{job.subs=transfers.filter(t=>t.jobId===job.id).map(t=>({leaderId:t.leaderId,leader:t.leader,total:t.amount,scopes:t.scopes,ledgerRow:t.row}));});
+  jobs.forEach(job => {
+    const key='posted:v1:'+day.date+':'+job.id, signature=JSON.stringify({...job,subs:job.subs.map(({ledgerRow,...block})=>block)});
+    const prior=JSON.parse(props.getProperty(key)||'null');
+    if(prior && canonicalPostingSignature(prior.signature)!==canonicalPostingSignature(signature)) {
+      log.push(day.date+': '+job.label+' changed after posting; reconciliation required. Not marked complete.'); return;
+    }
+    const route=POST_ROUTES[job.id];
+    if(!route) {
+      // R / WT / CO / UC → QuickBooks placeholder (rule 4: only after the day is green and the labor is on the sheet).
+      // JC / W / Shop never go to QuickBooks; a JC without a job cost sheet route stays incomplete.
+      if(QB_TAGS.indexOf(jobTag(job.label))<0) { log.push(day.date+': '+job.label+' has no verified posting route. Not marked complete; will retry.'); return; }
+      if(prior && prior.verified && prior.qb) { markSubsPosted(ss,job.subs); completed[job.id]=true; return; }
+      try {
+        const receipt=postPayrollQuickBooks(ss,day,job,log,model);
+        props.setProperty(key,JSON.stringify({signature,verified:true,qb:receipt}));
+        markSubsPosted(ss,job.subs); completed[job.id]=true;
+      } catch(e) { log.push(day.date+': '+job.label+' QuickBooks NOT posted — '+e+'; will retry.'); }
+      return;
+    }
+    // Check destination before changing any ledger. A bid Labor tab is not Actual Labor.
+    const destination=SpreadsheetApp.openById(route.id).getSheetByName(route.tab);
+    if(!destination) { log.push(day.date+': '+job.label+' needs an Actual Labor ledger; the existing bid Labor tab is not a posting destination.'); return; }
+    if(prior && prior.verified) {
+      migratePostedScopes(destination,day,job,log); reconcileLaborSummary(destination); markSubsPosted(ss,job.subs); completed[job.id]=true; return;
+    }
+    const result=applyJob(day,{...job,key:route.key},log);
+    if(result) { migratePostedScopes(destination,day,job,log); reconcileLaborSummary(destination); }
+    if(!result) return;
+    props.setProperty(key,JSON.stringify({signature,verified:true,entry:result.entry}));
+    markSubsPosted(ss,job.subs); completed[job.id]=true;
+  });
+  // Approval may change during a slow ledger write: re-read before marking anything complete.
+  const latest=UrlFetchApp.fetch(APP_URL+'/w/payroll-feed?start='+day.date,{muteHttpExceptions:true});
+  if(latest.getResponseCode()!==200) throw new Error('Cannot verify approval after posting');
+  const current=JSON.parse(latest.getContentText()).days.find(d=>d.date===day.date);
+  if(!current || !current.green || current.stamp!==day.stamp) throw new Error('Day changed during posting; completion withheld');
+  // Resolve by the feed's Saturday, not the requested day's weekday.
+  const saturday=JSON.parse(latest.getContentText()).start;
+  const target=weekTab(ss,saturday,log); if(!target) throw new Error('Weekly payroll tab missing');
+  const col=DAY_COL[dow(day.date)], L=layout(target);
+  model.sms.rows.forEach((r,i)=>{
+    if(r.job) target.getRange(EMP_FIRST+i,col).setBackground(completed[r.job.job_id]?GREEN:'#ffffff');
+    if(r.person) target.getRange(EMP_FIRST+i,col+1,1,2).setBackground(r.person.shares.every(s=>completed[s.job_id])?GREEN:'#ffffff');
+  });
+  SpreadsheetApp.flush();
+  log.push(day.date+': job-cost posting verified '+Object.keys(completed).length+'/'+jobs.length+' tickets.');
+}
+
+
+// One visible amount per scope beside its ledger block; summaries reference E cells.
+function ledgerScopeRows(top,totalRow,scopes) {
+  return scopes.map(name=>String(name).trim()).filter(Boolean).map(name=>[name,'=C'+totalRow+(scopes.length>1?'/'+scopes.length:'')]);
+}
+function migratePostedScopes(sh,day,job,log) {
+  const logFirst=ledgerFirstRow(sh);
+  const values=sh.getRange(logFirst,1,Math.max(1,sh.getLastRow()-logFirst+1),5).getValues();
+  const groups=job.sms.map(g=>({kind:'sms',scopes:g.scopes,men:g.men})).concat(job.subs.map(g=>({kind:'sub',scopes:g.scopes,men:[{name:g.leader,amt:g.total}]})));
+  groups.forEach(g=>{
+    if(!g.scopes.length)return;
+    const matches=[];
+    values.forEach((row,i)=>{
+      const date=row[0] instanceof Date?row[0]:new Date(row[0]);
+      if(isNaN(date)||Utilities.formatDate(date,'America/Chicago','yyyy-MM-dd')!==day.date)return;
+      if(g.men.every((m,k)=>values[i+k]&&norm(values[i+k][1])===norm(m.name)&&Math.abs(Number(values[i+k][2])-m.amt)<0.005)) matches.push(i);
+    });
+    if(matches.length!==1)throw new Error('Cannot uniquely verify ledger block for '+g.men[0].name+'; scope migration withheld');
+    const i=matches[0],top=logFirst+i,tot=g.kind==='sms'?top+g.men.length:top;
+    const lines=ledgerScopeRows(top,tot,g.scopes), updates=[];
+    // Do not overwrite another crew, a different scope, or an existing side calculation.
+    lines.forEach((line,k)=>{
+      const row=values[i+k]||[];
+      if(k>=g.men.length && (row[0]||row[1]))throw new Error('Scope rows overlap another ledger block; migration withheld');
+      const old=String(row[3]||'');
+      if(old && norm(old)!==norm(line[0]) && !(k===0&&norm(old)===norm(g.scopes.join(' · '))))throw new Error('Different scope beside ledger; migration withheld');
+      const existing=sh.getRange(top+k,5).getFormula();
+      if((existing&&existing!==line[1])||(!existing&&row[4]!==''&&row[4]!=null))throw new Error('Existing side calculation differs; migration withheld');
+      const summary=sh.getRange(2,5,logFirst-4,1).getValues().findIndex(r=>norm(r[0])===norm(line[0]));
+      if(summary<0)throw new Error('Missing summary scope '+line[0]);
+      const target=sh.getRange(summary+2,6),oldFormula=target.getFormula();
+      const term='C'+tot+(lines.length>1?'/'+lines.length:'');
+      const escaped=term.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+      const re=new RegExp('(^=|[+])'+escaped+'(?=$|[+])');
+      const updated=oldFormula.replace(re,(_,prefix)=>prefix+'E'+(top+k));
+      if(updated===oldFormula && !new RegExp('(^=|[+])E'+(top+k)+'(?=$|[+])').test(oldFormula))throw new Error('Summary does not match recorded allocation; migration withheld');
+      updates.push({target,formula:updated});
+    });
+    formatLedgerBlock(sh,top,g.men.length,tot,g.kind);
+    sh.getRange(top,4,lines.length,2).setValues(lines);
+    sh.getRange(top,4,lines.length,2).setBorder(true,true,true,true,true,false);
+    sh.getRange(top,5,lines.length,1).setNumberFormat('$#,##0.00');
+    updates.forEach(u=>u.target.setFormula(u.formula));
+    SpreadsheetApp.flush();
+    if(lines.some((line,k)=>sh.getRange(top+k,5).getFormula()!==line[1]) || updates.some(u=>u.target.getFormula()!==u.formula))throw new Error('Scope-cell or summary readback failed');
+    markLedgerTotalApplied(sh,tot,g.kind);
+    lines.forEach((line,k)=>sh.getRange(top+k,5).setBackground(GREEN));
+  });
+}
+
+function formatLedgerBlock(sh,top,men,total,kind) {
+  sh.getRange(top,1,men,3).setFontFamily('Calibri').setFontSize(10).setBorder(true,true,true,true,false,false);
+  sh.getRange(top,1).setNumberFormat('M/d/yyyy');
+  sh.getRange(top,3,men,1).setNumberFormat('$#,##0.00');
+  if(kind==='sms') sh.getRange(total,3).setNumberFormat('$#,##0.00');
+}
+
+function ledgerFirstRow(sh) {
+  const rows=sh.getRange(1,1,Math.min(30,sh.getLastRow()),3).getValues();
+  const header=rows.findIndex(r=>norm(r[0])==='date'&&norm(r[1])==='name'&&norm(r[2])==='amount');
+  return header>=0?header+2:LOG_FIRST;
+}
+
+// The gross labor total greens after reaching SMS/Subs; each side amount greens
+// independently after reaching its scope summary. Neither signal means payment.
+function markLedgerTotalApplied(sh,total,kind) {
+  const formula=sh.getRange(kind==='sms'?2:3,2).getFormula();
+  if(!new RegExp('(^=|[+])C'+total+'(?=$|[+])').test(formula))throw new Error('Gross labor total has not reached '+(kind==='sms'?'SMS':'Subs')+' summary');
+  sh.getRange(total,3).setBackground(GREEN);
+}
+
+
+// Daily Payroll -> Subs is a separate, verified stage. No accounting is posted here.
+function transferPayrollSubs(ss,day,model,log) {
+  const saturday=new Date(day.date+'T12:00:00Z');saturday.setUTCDate(saturday.getUTCDate()-((saturday.getUTCDay()+1)%7));
+  const weekly=weekTab(ss,Utilities.formatDate(saturday,'UTC','yyyy-MM-dd'),log);
+  const ledger=ss.getSheetByName('Subs');if(!weekly||!ledger)throw new Error('Payroll or Subs ledger missing');
+  const col=DAY_COL[dow(day.date)],L=layout(weekly);
+  const size=model.subs.reduce((n,s)=>n+s.rows.length+1,0)-(model.subs.length?1:0);
+  let sourceRow=L.subFirst+size+1;
+  const existing=ledger.getRange(1,1,Math.max(1,ledger.getLastRow()),4).getValues();
+  const result=[];
+  model.allocations.forEach(a=>{
+    const first=sourceRow,n=a.men.length;sourceRow+=n+1;
+    const label=String(weekly.getRange(first,col).getValue()).trim();
+    const sourceAmount=r2(weekly.getRange(first,col+2,n,1).getValues().reduce((sum,r)=>sum+Number(r[0]||0),0));
+    const expected=r2(a.men.reduce((sum,m)=>sum+m.amount,0));
+    if(label!==a.label||sourceAmount!==expected)throw new Error('Daily Payroll breakdown differs from saved work; not transferred: '+a.label);
+    const crew=model.subs.find(s=>s.leader_id===a.leader_id),boss=crew.men.find(m=>m.id===a.leader_id);
+    const leader=boss?boss.name:(crew.men[0]||{}).name;if(!leader)throw new Error('Sub crew leader missing');
+    const quoted="'"+weekly.getName().replace(/'/g,"''")+"'!";
+    const jobFormula='='+quoted+colA1(col)+first;
+    const amountFormula='=SUM('+quoted+colA1(col+2)+first+':'+colA1(col+2)+(first+n-1)+')';
+    const matches=[];
+    existing.forEach((r,i)=>{
+      const d=r[0] instanceof Date?r[0]:new Date(r[0]);
+      if(!isNaN(d)&&Utilities.formatDate(d,'America/Chicago','yyyy-MM-dd')===day.date&&norm(r[1])===norm(leader)&&norm(r[2])===norm(label))matches.push(i+1);
+    });
+    if(matches.length>1)throw new Error('Duplicate Subs entries require review: '+label);
+    let row=matches[0];
+    if(row&&Math.abs(Number(ledger.getRange(row,4).getValue())-sourceAmount)>0.005)throw new Error('Existing Subs amount differs; left unchanged: '+label);
+    if(!row){
+      row=ledger.getLastRow()+1;if(row>ledger.getMaxRows())ledger.insertRowsAfter(ledger.getMaxRows(),1);
+      ledger.getRange(row,1,1,4).setValues([[new Date(day.date+'T12:00:00Z'),leader,jobFormula,amountFormula]]);
+      ledger.getRange(row,1).setNumberFormat('M/d');ledger.getRange(row,4).setNumberFormat('$#,##0.00').setBackground('#ffffff');
+      ledger.getRange(row,4).setNote('Payroll transfer '+day.date+' / ticket '+a.job_id+' / crew '+a.leader_id+'; not paid.');
+    }
+    SpreadsheetApp.flush();
+    if(norm(ledger.getRange(row,3).getValue())!==norm(label)||Math.abs(Number(ledger.getRange(row,4).getValue())-sourceAmount)>0.005)throw new Error('Subs transfer readback failed; payroll not greened');
+    weekly.getRange(first,col+2,n,1).setBackground(GREEN);
+    // Only now read the authoritative subcontractor amount from Subs.
+    const amount=Number(ledger.getRange(row,4).getValue());
+    const scopes=[...new Set(crew.men.flatMap(m=>m.shares.filter(s=>s.job_id===a.job_id).flatMap(s=>String(s.day_scope||'').split(' · ').filter(Boolean))))];
+    result.push({jobId:a.job_id,leaderId:a.leader_id,leader,amount,scopes,row});
+  });
+  return result;
+}
+function markSubsPosted(ss,blocks) {
+  const ledger=ss.getSheetByName('Subs');
+  blocks.forEach(b=>{
+    if(!b.ledgerRow||Math.abs(Number(ledger.getRange(b.ledgerRow,4).getValue())-b.total)>0.005)throw new Error('Subs source changed before job posting completion');
+    ledger.getRange(b.ledgerRow,4).setBackground(GREEN);
+  });
+}
+
+function canonicalPostingSignature(raw) {
+  try {
+    const job=JSON.parse(raw);
+    job.subs=(job.subs||[]).map(({sig,ledgerRow,...block})=>block);
+    const stable=value=>Array.isArray(value)?value.map(stable):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,stable(value[key])])):value;
+    return JSON.stringify(stable(job));
+  } catch(e){return raw;}
+}
+
+// Labor is conserved: named scopes plus an explicit unidentified balance must
+// equal the SMS + Subs total. This balance is not evidence of a verified scope.
+function laborBalancePlan(rows) {
+  const unknownLabel='Scope not identified';
+  const total=rows.find(r=>norm(r.label)==='scope total' || (!r.label && /^=SUM\(F2:F\d+\)/i.test(r.actualFormula||'')));
+  if(!total)throw new Error('Cannot identify scope total; labor balance withheld');
+  const known=rows.filter(r=>r.label && norm(r.label)!==norm(unknownLabel) && r.row!==total.row);
+  if(!known.length)throw new Error('No named scope summary; labor balance withheld');
+  const existing=rows.filter(r=>norm(r.label)===norm(unknownLabel));
+  if(existing.length>1)throw new Error('Duplicate unidentified scope summary; reconcile first');
+  const lastScope=Math.max(...known.map(r=>r.row));
+  const unknown=existing[0] || rows.find(r=>r.row>lastScope && r.row!==total.row && !r.label && !r.actualFormula && !r.overheadFormula && !r.actualValue && !r.overheadValue);
+  if(!unknown)throw new Error('No empty summary row for unidentified scope; labor balance withheld');
+  const refs=known.map(r=>'F'+r.row);
+  return {total:total.row,unknown:unknown.row,known:known.map(r=>r.row),unknownLabel,
+    residual:'=$B$4-SUM('+refs.join(',')+')',
+    actual:'=SUM('+refs.concat('F'+unknown.row).join(',')+')',
+    overhead:'=SUM('+known.map(r=>'G'+r.row).concat('G'+unknown.row).join(',')+')'};
+}
+function reconcileLaborSummary(sh) {
+  const count=ledgerFirstRow(sh)-2;
+  const vals=sh.getRange(2,5,count,3).getValues(), formulas=sh.getRange(2,5,count,3).getFormulas();
+  const plan=laborBalancePlan(vals.map((v,i)=>({row:i+2,label:String(v[0]||''),actualValue:v[1],overheadValue:v[2],actualFormula:formulas[i][1],overheadFormula:formulas[i][2]})));
+  sh.getRange(plan.unknown,5).setValue(plan.unknownLabel);
+  sh.getRange(plan.unknown,6).setFormula(plan.residual).setNote('Labor recorded on the left without an identified scope on the right. This is a visible reconciliation balance, not a verified work allocation. Identify the work before assigning it to a named scope. A negative balance means named scope totals exceed actual labor.');
+  plan.known.concat(plan.unknown).forEach(r=>sh.getRange(r,7).setFormula('=F'+r+'/0.5'));
+  sh.getRange(2,3).setFormula('=B2/0.5');sh.getRange(3,3).setFormula('=B3/0.5');sh.getRange(4,3).setFormula('=SUM(C2:C3)');
+  sh.getRange(plan.total,5).setValue('Scope total');
+  sh.getRange(plan.total,6).setFormula(plan.actual);sh.getRange(plan.total,7).setFormula(plan.overhead);
+  sh.getRange(plan.unknown,5,1,3).setFontFamily('Calibri').setFontSize(10);
+  sh.getRange(plan.unknown,6,1,2).setNumberFormat('$#,##0.00');
+  const marker='SMS_LABOR_BALANCE';
+  const rules=sh.getConditionalFormatRules().filter(rule=>{const b=rule.getBooleanCondition();return !b || !b.getCriteriaValues().some(v=>String(v).includes(marker));});
+  const add=(ranges,condition,color)=>rules.unshift(SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=AND(N("'+marker+'")=0,'+condition+')').setBackground(color).setRanges(ranges).build());
+  const actual=[sh.getRange('B4'),sh.getRange(plan.total,6)], overhead=[sh.getRange('C4'),sh.getRange(plan.total,7)];
+  add(actual,'IFERROR(ROUND($B$4-$F$'+plan.total+',2)=0,FALSE)',GREEN);
+  add(actual,'IFERROR(ROUND($B$4-$F$'+plan.total+',2)<>0,TRUE)','#ea9999');
+  add(overhead,'IFERROR(ROUND($C$4-$G$'+plan.total+',2)=0,FALSE)',GREEN);
+  add(overhead,'IFERROR(ROUND($C$4-$G$'+plan.total+',2)<>0,TRUE)','#ea9999');
+  add([sh.getRange(plan.unknown,6,1,2)],'ROUND($F$'+plan.unknown+',2)=0','#ffffff');
+  add([sh.getRange(plan.unknown,6,1,2)],'ROUND($F$'+plan.unknown+',2)>0','#ffe599');
+  add([sh.getRange(plan.unknown,6,1,2)],'ROUND($F$'+plan.unknown+',2)<0','#ea9999');
+  sh.setConditionalFormatRules(rules);
+  SpreadsheetApp.flush();
+  const actualLeft=Number(sh.getRange('B4').getValue()),actualRight=Number(sh.getRange(plan.total,6).getValue()),
+    overheadLeft=Number(sh.getRange('C4').getValue()),overheadRight=Number(sh.getRange(plan.total,7).getValue());
+  if(![actualLeft,actualRight,overheadLeft,overheadRight].every(Number.isFinite) || Math.abs(actualLeft-actualRight)>=0.005 || Math.abs(overheadLeft-overheadRight)>=0.005)
+    throw new Error('Labor / overhead balance readback failed; completion withheld');
+  if(Number(sh.getRange(plan.unknown,6).getValue()) < -0.005)throw new Error('Scope allocations exceed actual labor; completion withheld');
+  return plan;
+}
+
+// ===================== DAILY PAYROLL → QUICKBOOKS PLACEHOLDER (11/10/26) =====================
+// A green R / WT / CO / UC day, once its men are on the weekly tab and its sub lines are on the Subs tab, goes on that
+// ticket's ONE open QuickBooks placeholder (opened if there is none, dated 2 weeks after the day worked).
+// The app's /payroll-bridge/qbo does the QuickBooks part and only answers this script, signed in as the owner's
+// Google account (no password stored anywhere). It reads the invoice back before saying "verified".
+// Never sends an invoice, never records or makes a payment. Cost here = what the men are paid; the app prices the
+// customer charge (SMS men $50/hr, subs × 1.5), so the two numbers differ on purpose.
+function postPayrollQuickBooks(ss,day,job,log,model,dryRun) {
+  const sat=new Date(day.date+'T12:00:00Z');sat.setUTCDate(sat.getUTCDate()-((sat.getUTCDay()+1)%7));
+  const weekly=weekTab(ss,Utilities.formatDate(sat,'UTC','yyyy-MM-dd'),log);
+  if(!weekly)throw new Error('Weekly payroll tab missing');
+  const L=layout(weekly),col=DAY_COL[dow(day.date)];
+  const people=weekly.getRange(EMP_FIRST,col+1,L.boxLast-EMP_FIRST+1,2).getValues();
+  // The sheet must say what the app says before a dollar is billed.
+  model.sms.men.forEach(man=>{
+    const found=people.filter(row=>norm(row[0])===norm(man.name));
+    if(found.length!==1||Math.abs(Number(found[0][1])-man.total)>0.005)throw new Error('Employee payroll on the sheet differs for '+man.name+'; QuickBooks withheld');
+  });
+  const amount=r2(job.sms.reduce((n,g)=>n+g.men.reduce((s,m)=>s+m.amt,0),0)+job.subs.reduce((n,g)=>n+g.total,0));
+  const body={job_id:job.id,work_date:day.date,expected_cost:amount,source_spreadsheet:PAYROLL_ID};
+  if(dryRun)body.dry_run=true;
+  const response=UrlFetchApp.fetch(APP_URL+'/payroll-bridge/qbo',{method:'post',contentType:'application/json',payload:JSON.stringify(body),
+    headers:{authorization:'Bearer '+ScriptApp.getOAuthToken()},muteHttpExceptions:true});
+  let receipt={};try{receipt=JSON.parse(response.getContentText());}catch(e){}
+  if(dryRun)return receipt;
+  if(response.getResponseCode()!==200||!receipt.verified||!receipt.qbId||Math.abs(Number(receipt.cost)-amount)>0.005||Number(receipt.job_id)!==Number(job.id)||receipt.work_date!==day.date)
+    throw new Error('QuickBooks payroll verification failed: '+(receipt.error||('HTTP '+response.getResponseCode())));
+  const subs=ss.getSheetByName('Subs');
+  job.subs.forEach(b=>{ if(b.ledgerRow) subs.getRange(b.ledgerRow,4).setNote('QuickBooks placeholder #'+receipt.number+': labor cost $'+amount+' billed $'+receipt.charge+'. Not sent, not paid.'); });
+  log.push(day.date+': '+job.label+' on QuickBooks placeholder #'+receipt.number+' — cost $'+amount+', billed $'+receipt.charge+', placeholder total $'+receipt.total+(receipt.reused?' (already there, not added again).':'.'));
+  return {number:receipt.number,qbId:receipt.qbId,charge:receipt.charge,total:receipt.total};
+}
+// Read-only check: run from the editor to see exactly what a day/ticket WOULD do in QuickBooks. Writes nothing anywhere.
+function checkPayrollQuickBooks(ymd,jobId) {
+  ymd=ymd||'2026-11-09'; jobId=jobId||121;
+  const ss=SpreadsheetApp.openById(PAYROLL_ID),log=[];
+  const model=JSON.parse(UrlFetchApp.fetch(APP_URL+'/w/payroll-layout?date='+ymd).getContentText());
+  const job=postingPlan(model).find(j=>Number(j.id)===Number(jobId));
+  if(!job)return 'No saved work for ticket '+jobId+' on '+ymd;
+  const subs=ss.getSheetByName('Subs').getRange(1,1,ss.getSheetByName('Subs').getLastRow(),4).getValues();
+  job.subs=job.subs.map(b=>{
+    const i=subs.findIndex(r=>r[0] instanceof Date&&Utilities.formatDate(r[0],'America/Chicago','yyyy-MM-dd')===ymd&&norm(r[1])===norm(b.leader)&&norm(r[2])===norm(job.label));
+    return {...b,total:i>=0?Number(subs[i][3]):b.total,ledgerRow:i>=0?i+1:null};
+  });
+  const out=JSON.stringify(postPayrollQuickBooks(ss,{date:ymd},job,log,model,true));
+  Logger.log(out);return out;
+}
+
