@@ -87,6 +87,7 @@ function syncFromApp() {
         log.push('Wrote ' + day.date + ' (' + day.employees.length + ' men, ' + day.subs.length + ' sub boxes)' + (day.green ? ' — OK\'d in the app' : ' — not OK\'d yet'));
       });
     });
+    retryApprovedPayroll(ss, props, log, today);
   } catch (e) {
     log.push('ERROR: ' + e);
   } finally {
@@ -358,6 +359,11 @@ const JOB_SHEETS = {
   // tag-street# : { id, tab, label as the app writes it }
   'JC-4860': { id: '1rEaFLZD79_-mTmXsV2EeSiHPBPUtcjJftBffYJnDTto', tab: 'Actual Labor', label: 'JC-4860 E. I - 30' }
 };
+const POST_ROUTES = {
+  '19': { key: 'JC-ticket-19', id: '1rEaFLZD79_-mTmXsV2EeSiHPBPUtcjJftBffYJnDTto', tab: 'Actual Labor' },
+  '1': { key: 'JC-ticket-1', id: '1opWjiNIMrb41r2c6Ipbob8Mdmw-kV4lQcyVxOIbMQoQ', tab: 'Actual Labor' }
+};
+Object.keys(POST_ROUTES).forEach(id => { const route = POST_ROUTES[id]; JOB_SHEETS[route.key] = route; });
 const LOG_FIRST = 31;   // the Actual Labor log starts under the frozen header
 
 function jobKey(line) {
@@ -441,7 +447,13 @@ function applyJob(day, job, log) {
   const logVals = sh.getRange(LOG_FIRST, 1, last - LOG_FIRST + 1, 4).getValues();
   const dayStr = new Date(day.date + 'T12:00:00').toDateString();
   const sameDay = v => { const d = v instanceof Date ? v : new Date(v); return !isNaN(d) && d.toDateString() === dayStr; };
-  const already = b => logVals.some(r => sameDay(r[0]) && norm(r[1]) === norm(b.rows[0][0]) && Math.abs(Number(r[2]) - b.rows[0][1]) < 0.01);
+  const already = b => logVals.some((r,i) => sameDay(r[0]) && norm(r[3]) === norm(b.scopes.join(' · ')) &&
+    b.rows.every((m,k) => logVals[i+k] && norm(logVals[i+k][1])===norm(m[0]) && Math.abs(Number(logVals[i+k][2])-m[1])<0.005));
+  for(const b of blocks) {
+    if(already(b)) continue;
+    if(logVals.some(r=>sameDay(r[0]) && b.rows.some(m=>norm(m[0])===norm(r[1]))))
+      throw new Error('Existing labor differs or is incomplete; reconcile before adding another entry');
+  }
   const todo = blocks.filter(b => !already(b));
   if (!todo.length) return { entry: null };   // logged by hand already — counts as applied
   const missing = [];
@@ -559,4 +571,84 @@ function shiftApplied(id, tab, at, n) {
     });
     if (changed) props.setProperty(k, JSON.stringify(list));
   });
+}
+
+
+// Posting is independent of the mirror stamp. A copied day is not a posted day.
+// Scan historical weeks in bounded batches; retain the cursor until all dates are checked.
+function retryApprovedPayroll(ss, props, log, today) {
+  const cursorKey = 'posting-scan:v1';
+  let cursor = props.getProperty(cursorKey) || SYNC_FROM;
+  for (let week = 0; week < 8 && cursor <= today; week++) {
+    const response = UrlFetchApp.fetch(APP_URL + '/w/payroll-feed?start=' + cursor, {muteHttpExceptions:true});
+    if (response.getResponseCode() !== 200) throw new Error('Posting scan refused; cursor retained at ' + cursor);
+    const feed = JSON.parse(response.getContentText());
+    feed.days.filter(d => d.date >= SYNC_FROM && d.date <= today && d.green).forEach(day => {
+      try { postApprovedPayrollDay(ss, props, day, log); }
+      catch (e) { log.push(day.date + ': POSTING INCOMPLETE — ' + e + '; will retry.'); }
+    });
+    const next = new Date(feed.start + 'T12:00:00Z'); next.setUTCDate(next.getUTCDate() + 7);
+    cursor = Utilities.formatDate(next, 'UTC', 'yyyy-MM-dd');
+    props.setProperty(cursorKey, cursor > today ? SYNC_FROM : cursor);
+  }
+}
+function postingPlan(model) {
+  const jobs = {};
+  const labels = {};
+  model.sms.rows.forEach(r => { if(r.job) labels[r.job.job_id] = r.job.text; });
+  model.subs.forEach(b => b.rows.forEach(r => { if(r.job) labels[r.job.job_id] = r.job.text; }));
+  const job = id => jobs[id] || (jobs[id] = {id, label:labels[id], sms:[], subs:[]});
+  model.sms.men.forEach(man => man.shares.forEach(share => {
+    const scopes = String(share.day_scope || '').split(' · ').filter(Boolean);
+    const sig = scopes.slice().sort().join('|');
+    const j = job(share.job_id);
+    let group = j.sms.find(g => g.sig === sig);
+    if(!group) { group = {sig,scopes,men:[]}; j.sms.push(group); }
+    group.men.push({name:man.name,amt:r2(share.cost)});
+  }));
+  model.subs.forEach(crew => crew.men.forEach(man => man.shares.forEach(share => {
+    const j=job(share.job_id), scopes=String(share.day_scope||'').split(' · ').filter(Boolean);
+    const sig=scopes.slice().sort().join('|');
+    let block=j.subs.find(b=>b.leaderId===crew.leader_id && b.sig===sig);
+    if(!block) { block={leaderId:crew.leader_id,leader:(crew.men.find(m=>m.id===crew.leader_id)||man).name,sig,scopes,total:0};j.subs.push(block); }
+    block.total=r2(block.total+share.cost);
+  })));
+  return Object.values(jobs);
+}
+function postApprovedPayrollDay(ss, props, day, log) {
+  const response=UrlFetchApp.fetch(APP_URL+'/w/payroll-layout?date='+day.date,{muteHttpExceptions:true});
+  if(response.getResponseCode()!==200) throw new Error('Cannot read saved job shares');
+  const model=JSON.parse(response.getContentText()), jobs=postingPlan(model), completed={};
+  jobs.forEach(job => {
+    const key='posted:v1:'+day.date+':'+job.id, signature=JSON.stringify(job);
+    const prior=JSON.parse(props.getProperty(key)||'null');
+    if(prior && prior.signature!==signature) {
+      log.push(day.date+': '+job.label+' changed after posting; reconciliation required. Not marked complete.'); return;
+    }
+    if(prior && prior.verified) { completed[job.id]=true; return; }
+    const route=POST_ROUTES[job.id];
+    if(!route) { log.push(day.date+': '+job.label+' has no verified posting route. Not marked complete; will retry.'); return; }
+    // Check destination before changing any ledger. A bid Labor tab is not Actual Labor.
+    const destination=SpreadsheetApp.openById(route.id).getSheetByName(route.tab);
+    if(!destination) { log.push(day.date+': '+job.label+' needs an Actual Labor ledger; the existing bid Labor tab is not a posting destination.'); return; }
+    const result=applyJob(day,{...job,key:route.key},log);
+    if(!result) return;
+    props.setProperty(key,JSON.stringify({signature,verified:true,entry:result.entry}));
+    completed[job.id]=true;
+  });
+  // Approval may change during a slow ledger write: re-read before marking anything complete.
+  const latest=UrlFetchApp.fetch(APP_URL+'/w/payroll-feed?start='+day.date,{muteHttpExceptions:true});
+  if(latest.getResponseCode()!==200) throw new Error('Cannot verify approval after posting');
+  const current=JSON.parse(latest.getContentText()).days.find(d=>d.date===day.date);
+  if(!current || !current.green || current.stamp!==day.stamp) throw new Error('Day changed during posting; completion withheld');
+  // Resolve by the feed's Saturday, not the requested day's weekday.
+  const saturday=JSON.parse(latest.getContentText()).start;
+  const target=weekTab(ss,saturday,log); if(!target) throw new Error('Weekly payroll tab missing');
+  const col=DAY_COL[dow(day.date)], L=layout(target);
+  model.sms.rows.forEach((r,i)=>{
+    if(r.job) target.getRange(EMP_FIRST+i,col).setBackground(completed[r.job.job_id]?GREEN:'#ffffff');
+    if(r.person) target.getRange(EMP_FIRST+i,col+1,1,2).setBackground(r.person.shares.every(s=>completed[s.job_id])?GREEN:'#ffffff');
+  });
+  SpreadsheetApp.flush();
+  log.push(day.date+': job-cost posting verified '+Object.keys(completed).length+'/'+jobs.length+' tickets.');
 }
