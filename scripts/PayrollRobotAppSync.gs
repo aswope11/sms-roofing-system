@@ -516,7 +516,10 @@ function applyJob(day, job, log) {
     log.push(when + ': ' + job.key + ' — read-back failed, taken back out. Not applied, not green.');
     return null;
   }
-  todo.forEach(b => sh.getRange(b.tot, 3).setBackground(GREEN));
+  todo.forEach(b => {
+    sh.getRange(b.tot,3).setBackground('#ffffff');
+    b.scopeRows.forEach((line,i)=>sh.getRange(b.top+i,5).setBackground(GREEN));
+  });
   log.push(when + ': applied ' + job.key + ' to its Actual Job Cost Sheet (rows ' + entry.first + '–' + entry.last + ').');
   return { entry };
 }
@@ -706,7 +709,9 @@ function migratePostedScopes(sh,day,job,log) {
     sh.getRange(top,5,lines.length,1).setNumberFormat('$#,##0.00');
     updates.forEach(u=>u.target.setFormula(u.formula));
     SpreadsheetApp.flush();
-    if(lines.some((line,k)=>sh.getRange(top+k,5).getFormula()!==line[1]))throw new Error('Scope-cell readback failed');
+    if(lines.some((line,k)=>sh.getRange(top+k,5).getFormula()!==line[1]) || updates.some(u=>u.target.getFormula()!==u.formula))throw new Error('Scope-cell or summary readback failed');
+    sh.getRange(tot,3).setBackground('#ffffff');
+    lines.forEach((line,k)=>sh.getRange(top+k,5).setBackground(GREEN));
   });
 }
 
