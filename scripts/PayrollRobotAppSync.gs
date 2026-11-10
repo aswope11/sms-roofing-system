@@ -361,6 +361,9 @@ const JOB_SHEETS = {
 };
 const POST_ROUTES = {
   '19': { key: 'JC-ticket-19', id: '1rEaFLZD79_-mTmXsV2EeSiHPBPUtcjJftBffYJnDTto', tab: 'Actual Labor' },
+  // Fate 9K (11/10/26): his older layout — summary E2:E14, ledger starts row 18, no "Scope total / Scope not identified"
+  // rows, his own date/money formats. Entries copy his last entries' look; the summary block is never rebuilt.
+  '18': { key: 'JC-ticket-18', id: '1d01rXqlmXxh_CB-xRSs-w5lFVVWo2vy74sSi0Tmew5E', tab: 'Labor', first: 18, balance: false, copyFormat: true },
   '1': { key: 'JC-ticket-1', id: '1opWjiNIMrb41r2c6Ipbob8Mdmw-kV4lQcyVxOIbMQoQ', tab: 'Actual Labor' }
 };
 Object.keys(POST_ROUTES).forEach(id => { const route = POST_ROUTES[id]; JOB_SHEETS[route.key] = route; });
@@ -487,8 +490,10 @@ function applyJob(day, job, log) {
       toks.push({ a1: 'B3', tok: '+C' + tot });
     }
     formatLedgerBlock(sh,top,b.rows.length,tot,b.kind);
-    sh.getRange(top, 1).setNumberFormat('M/d/yyyy');
-    sh.getRange(top, 3, tot - top + 1, 1).setNumberFormat('$#,##0.00');
+    if (!routeFor(sh).copyFormat) {
+      sh.getRange(top, 1).setNumberFormat('M/d/yyyy');
+      sh.getRange(top, 3, tot - top + 1, 1).setNumberFormat('$#,##0.00');
+    }
     sh.getRange(tot, 3).setBackground(null);   // green comes last
     const scopeRows = ledgerScopeRows(top, tot, b.scopes);
     if(scopeRows.length) {
@@ -496,7 +501,7 @@ function applyJob(day, job, log) {
       sh.getRange(top,4,scopeRows.length,2).setBorder(true,true,true,true,true,false);
     }
     scopeRows.forEach((line,i) => {
-      sh.getRange(top+i,5).setNumberFormat('$#,##0.00');
+      if (!routeFor(sh).copyFormat) sh.getRange(top+i,5).setNumberFormat('$#,##0.00');
       toks.push({a1:'F'+scopeRow(line[0]),tok:'+E'+(top+i)});
     });
     b.scopeRows=scopeRows; b.top=top; b.tot = tot;
@@ -659,10 +664,10 @@ function postApprovedPayrollDay(ss, props, day, log) {
     const destination=SpreadsheetApp.openById(route.id).getSheetByName(route.tab);
     if(!destination) { log.push(day.date+': '+job.label+' needs an Actual Labor ledger; the existing bid Labor tab is not a posting destination.'); return; }
     if(prior && prior.verified) {
-      migratePostedScopes(destination,day,job,log); reconcileLaborSummary(destination); markSubsPosted(ss,job.subs); completed[job.id]=true; return;
+      migratePostedScopes(destination,day,job,log); if(route.balance!==false) reconcileLaborSummary(destination); markSubsPosted(ss,job.subs); completed[job.id]=true; return;
     }
     const result=applyJob(day,{...job,key:route.key},log);
-    if(result) { migratePostedScopes(destination,day,job,log); reconcileLaborSummary(destination); }
+    if(result) { migratePostedScopes(destination,day,job,log); if(route.balance!==false) reconcileLaborSummary(destination); }
     if(!result) return;
     props.setProperty(key,JSON.stringify({signature,verified:true,entry:result.entry}));
     markSubsPosted(ss,job.subs); completed[job.id]=true;
@@ -735,6 +740,7 @@ function migratePostedScopes(sh,day,job,log) {
 }
 
 function formatLedgerBlock(sh,top,men,total,kind) {
+  if(routeFor(sh).copyFormat) return;   // his own layout: the copied format of his last entry stays as is
   sh.getRange(top,1,men,3).setFontFamily('Calibri').setFontSize(10).setBorder(true,true,true,true,false,false);
   sh.getRange(top,1).setNumberFormat('M/d/yyyy');
   sh.getRange(top,3,men,1).setNumberFormat('$#,##0.00');
@@ -744,7 +750,19 @@ function formatLedgerBlock(sh,top,men,total,kind) {
 function ledgerFirstRow(sh) {
   const rows=sh.getRange(1,1,Math.min(30,sh.getLastRow()),3).getValues();
   const header=rows.findIndex(r=>norm(r[0])==='date'&&norm(r[1])==='name'&&norm(r[2])==='amount');
-  return header>=0?header+2:LOG_FIRST;
+  if(header>=0) return header+2;
+  const route=routeFor(sh);
+  if(route.first) return route.first;
+  // Ledger starts right under the "Scope not identified" summary row (moves down when a scope line is added).
+  const labels=sh.getRange(1,5,Math.min(60,sh.getLastRow()),1).getValues();
+  const unknown=labels.findIndex(r=>norm(r[0])==='scope not identified');
+  return unknown>=0?unknown+2:LOG_FIRST;
+}
+// The posting route a job cost sheet belongs to ({} when none).
+function routeFor(sh) {
+  if(!sh||typeof sh.getParent!=="function") return {};
+  const id=sh.getParent().getId(), tab=sh.getName();
+  return Object.values(POST_ROUTES).find(r=>r.id===id&&r.tab===tab)||{};
 }
 
 // The gross labor total greens after reaching SMS/Subs; each side amount greens
@@ -916,5 +934,54 @@ function checkPayrollQuickBooks(ymd,jobId) {
   });
   const out=JSON.stringify(postPayrollQuickBooks(ss,{date:ymd},job,log,model,true));
   Logger.log(out);return out;
+}
+
+// ===================== ONE-TIME REPAIR: ADD A SCOPE LINE TO A JOB COST SUMMARY (11/10/26) =====================
+// Run from the editor. Adds one named scope line just above "Scope total" so the robot can post that scope.
+// The new line starts at $0: Actual (B4), w/OH (C4), Scope total and Scope not identified read the same after.
+// Rows below move down one; stored posting rows for that sheet move with them.
+function addGravelStopToFate20k() { return addSummaryScope(POST_ROUTES['19'], 'Gravel Stop'); }
+function addSummaryScope(route, label) {
+  const lock=LockService.getScriptLock(); lock.waitLock(120000);   // never while the 5-minute sync is writing
+  try {
+    const sh=SpreadsheetApp.openById(route.id).getSheetByName(route.tab);
+    if(!sh) throw new Error('No "'+route.tab+'" tab');
+    const first=ledgerFirstRow(sh);
+    const labels=sh.getRange(1,5,first-1,1).getValues().map(r=>norm(r[0]));
+    if(labels.indexOf(norm(label))>=0) return '"'+label+'" is already on the summary — nothing changed.';
+    const total=labels.indexOf('scope total')+1, unknown=labels.indexOf('scope not identified')+1;
+    if(!total||!unknown) throw new Error('No "Scope total" / "Scope not identified" rows — this sheet is not the layout this repair is for');
+    const before={b4:sh.getRange('B4').getValue(),c4:sh.getRange('C4').getValue(),total:sh.getRange(total,6).getValue(),unknown:sh.getRange(unknown,6).getValue()};
+    sh.insertRowBefore(total);
+    sh.getRange(total,5).setValue(label);
+    sh.getRange(total,6).clearContent();
+    shiftStoredRows(route.id, route.tab, total, 1);
+    reconcileLaborSummary(sh);   // Scope total / Scope not identified now include the new line
+    SpreadsheetApp.flush();
+    const after={b4:sh.getRange('B4').getValue(),c4:sh.getRange('C4').getValue(),total:sh.getRange(total+1,6).getValue(),unknown:sh.getRange(unknown+1,6).getValue(),line:sh.getRange(total,6).getValue()};
+    const same=(a,b)=>Math.abs(Number(a)-Number(b))<0.005;
+    if(sh.getRange(total,5).getValue()!==label||norm(sh.getRange(total+1,5).getValue())!=='scope total'||!same(after.line,0)||
+       !same(after.b4,before.b4)||!same(after.c4,before.c4)||!same(after.total,before.total)||!same(after.unknown,before.unknown))
+      throw new Error('Readback after adding "'+label+'" does not match: '+JSON.stringify({before,after}));
+    const msg='Added "'+label+'" at row '+total+' on '+route.tab+'. Totals unchanged: '+JSON.stringify(after);
+    Logger.log(msg); return msg;
+  } finally { lock.releaseLock(); }
+}
+// Stored posting records keep sheet rows; when rows are inserted above them, move them down.
+function shiftStoredRows(id, tab, at, n) {
+  const props=PropertiesService.getScriptProperties();
+  const move=t=>String(t).replace(/([CEF])(\d+)/g,(m,c,x)=>c+(Number(x)>=at?Number(x)+n:x));
+  props.getKeys().filter(k=>k.indexOf('applied:')===0||k.indexOf('posted:v1:')===0).forEach(k=>{
+    let v; try{v=JSON.parse(props.getProperty(k)||'null');}catch(e){return;}
+    const list=Array.isArray(v)?v:(v&&v.entry?[v.entry]:[]);
+    let changed=false;
+    list.forEach(e=>{
+      if(!e||e.id!==id||e.tab!==tab) return;
+      if(e.first>=at){e.first+=n;changed=true;}
+      if(e.last>=at){e.last+=n;changed=true;}
+      (e.refs||[]).forEach(t=>{const a=move(t.a1),b=move(t.tok);if(a!==t.a1||b!==t.tok){t.a1=a;t.tok=b;changed=true;}});
+    });
+    if(changed) props.setProperty(k,JSON.stringify(v));
+  });
 }
 

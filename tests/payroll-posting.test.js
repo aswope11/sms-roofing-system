@@ -123,3 +123,35 @@ test('green R ticket goes to the QuickBooks bridge; JC without a route does not;
   assert.deepEqual(greens, []); assert.equal(props.get('posted:v1:2026-11-09:121'), undefined);
   assert.ok(logs.some(l => /QuickBooks NOT posted/.test(l)));
 });
+
+const fakeSheet=(id,tab,colA,colE)=>({getParent:()=>({getId:()=>id}),getName:()=>tab,getLastRow:()=>300,
+ getRange:(r,c,h)=>({getValues:()=>Array.from({length:h},(_,i)=>c===5?[colE[r+i]||'']:[colA[r+i]||'','',''])})});
+test('Fate 9K Labor ledger starts at row 18 (its own layout), 20K follows the "Scope not identified" row',()=>{
+ const c=setup();
+ assert.equal(c.ledgerFirstRow(fakeSheet('1d01rXqlmXxh_CB-xRSs-w5lFVVWo2vy74sSi0Tmew5E','Labor',{},{})),18);
+ assert.equal(c.ledgerFirstRow(fakeSheet('1rEaFLZD79_-mTmXsV2EeSiHPBPUtcjJftBffYJnDTto','Actual Labor',{},{29:'Scope total',30:'Scope not identified'})),31);
+ assert.equal(c.ledgerFirstRow(fakeSheet('1rEaFLZD79_-mTmXsV2EeSiHPBPUtcjJftBffYJnDTto','Actual Labor',{},{30:'Scope total',31:'Scope not identified'})),32);
+ assert.equal(c.routeFor(fakeSheet('1d01rXqlmXxh_CB-xRSs-w5lFVVWo2vy74sSi0Tmew5E','Labor',{},{})).copyFormat,true);
+});
+test('Fate 9K posts to its ledger without rebuilding its summary; 20K still rebalances',()=>{
+ const props=new Map(),logs=[],reconciled=[];
+ const model={sms:{rows:[],men:[]},subs:[]},feed={start:'2026-11-07',days:[{date:'2026-11-10',green:true,stamp:'s'}]};
+ const c=setup({UrlFetchApp:{fetch:u=>({getResponseCode:()=>200,getContentText:()=>JSON.stringify(/payroll-layout/.test(u)?model:feed)})},
+  SpreadsheetApp:{flush(){},openById:id=>({getSheetByName:t=>({id,t})})}});
+ c.transferPayrollSubs=()=>[];c.markSubsPosted=()=>{};c.weekTab=()=>({getRange:()=>({setBackground(){}})});c.layout=()=>({});
+ c.postingPlan=()=>[{id:18,label:'JC-Fate - 9k',sms:[],subs:[]},{id:19,label:'JC-Fate - 20k',sms:[],subs:[]}];
+ c.applyJob=()=>({entry:{first:267}});c.migratePostedScopes=()=>{};c.reconcileLaborSummary=sh=>reconciled.push(sh.t);
+ c.postApprovedPayrollDay({}, {getProperty:k=>props.get(k),setProperty:(k,v)=>props.set(k,v)}, feed.days[0], logs);
+ assert.deepEqual(reconciled,['Actual Labor']);
+ assert.ok(props.get('posted:v1:2026-11-10:18'));assert.ok(props.get('posted:v1:2026-11-10:19'));
+});
+test('rows inserted on a job cost sheet move its stored posting rows down, other sheets untouched',()=>{
+ const state=new Map([
+  ['posted:v1:2026-11-09:19',JSON.stringify({verified:true,entry:{id:'A',tab:'Actual Labor',first:316,last:320,refs:[{a1:'B3',tok:'+C319'},{a1:'F10',tok:'+E319'}]}})],
+  ['posted:v1:2026-11-09:1',JSON.stringify({verified:true,entry:{id:'B',tab:'Actual Labor',first:316,last:320,refs:[{a1:'B3',tok:'+C319'}]}})]]);
+ const c=setup({PropertiesService:{getScriptProperties:()=>({getKeys:()=>[...state.keys()],getProperty:k=>state.get(k),setProperty:(k,v)=>state.set(k,v)})}});
+ c.shiftStoredRows('A','Actual Labor',29,1);
+ const a=JSON.parse(state.get('posted:v1:2026-11-09:19')).entry;
+ assert.deepEqual([a.first,a.last,a.refs[0].tok,a.refs[1].a1,a.refs[1].tok],[317,321,'+C320','F10','+E320']);
+ assert.equal(JSON.parse(state.get('posted:v1:2026-11-09:1')).entry.first,316);
+});
