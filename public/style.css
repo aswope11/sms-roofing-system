@@ -624,3 +624,13 @@ table.pay tr:first-child>th{position:sticky;top:0;z-index:2;background:var(--pan
 .oldgrid table.schedgrid tr:first-child>th:first-child{left:0;z-index:5;background:var(--panel)}
 .oldgrid th.hcell.acct{background:linear-gradient(rgba(61,255,143,.22),rgba(61,255,143,.22)) var(--panel)}
 .oldgrid th.hcell.late{background:linear-gradient(rgba(255,77,141,.16),rgba(255,77,141,.16)) var(--panel)}
+
+/* Schedule: reveal ticket pills only while hovering over their ticket. */
+.oldgrid .prow[data-open] > .pmain > .stbar,
+.oldgrid .jobcard .day-scope{display:none}
+.oldgrid .prow[data-open]:hover > .pmain > .stbar,
+.oldgrid .prow[data-open]:focus-within > .pmain > .stbar{display:flex}
+.oldgrid .jobcard:hover .day-scope,
+.oldgrid .jobcard:focus-within .day-scope{display:block}
+/* Keep actions accessible on devices without hover. */
+@media (hover:none){.oldgrid .prow[data-open] > .pmain > .stbar{display:flex}}
