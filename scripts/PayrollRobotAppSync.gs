@@ -647,10 +647,10 @@ function postApprovedPayrollDay(ss, props, day, log) {
     const destination=SpreadsheetApp.openById(route.id).getSheetByName(route.tab);
     if(!destination) { log.push(day.date+': '+job.label+' needs an Actual Labor ledger; the existing bid Labor tab is not a posting destination.'); return; }
     if(prior && prior.verified) {
-      migratePostedScopes(destination,day,job,log); markSubsPosted(ss,job.subs); completed[job.id]=true; return;
+      migratePostedScopes(destination,day,job,log); reconcileLaborSummary(destination); markSubsPosted(ss,job.subs); completed[job.id]=true; return;
     }
     const result=applyJob(day,{...job,key:route.key},log);
-    if(result) migratePostedScopes(destination,day,job,log);
+    if(result) { migratePostedScopes(destination,day,job,log); reconcileLaborSummary(destination); }
     if(!result) return;
     props.setProperty(key,JSON.stringify({signature,verified:true,entry:result.entry}));
     markSubsPosted(ss,job.subs); completed[job.id]=true;
@@ -804,4 +804,56 @@ function canonicalPostingSignature(raw) {
     const stable=value=>Array.isArray(value)?value.map(stable):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,stable(value[key])])):value;
     return JSON.stringify(stable(job));
   } catch(e){return raw;}
+}
+
+// Labor is conserved: named scopes plus an explicit unidentified balance must
+// equal the SMS + Subs total. This balance is not evidence of a verified scope.
+function laborBalancePlan(rows) {
+  const unknownLabel='Scope not identified';
+  const total=rows.find(r=>norm(r.label)==='scope total' || (!r.label && /^=SUM\(F2:F\d+\)/i.test(r.actualFormula||'')));
+  if(!total)throw new Error('Cannot identify scope total; labor balance withheld');
+  const known=rows.filter(r=>r.label && norm(r.label)!==norm(unknownLabel) && r.row!==total.row);
+  if(!known.length)throw new Error('No named scope summary; labor balance withheld');
+  const existing=rows.filter(r=>norm(r.label)===norm(unknownLabel));
+  if(existing.length>1)throw new Error('Duplicate unidentified scope summary; reconcile first');
+  const lastScope=Math.max(...known.map(r=>r.row));
+  const unknown=existing[0] || rows.find(r=>r.row>lastScope && r.row!==total.row && !r.label && !r.actualFormula && !r.overheadFormula && !r.actualValue && !r.overheadValue);
+  if(!unknown)throw new Error('No empty summary row for unidentified scope; labor balance withheld');
+  const refs=known.map(r=>'F'+r.row);
+  return {total:total.row,unknown:unknown.row,known:known.map(r=>r.row),unknownLabel,
+    residual:'=$B$4-SUM('+refs.join(',')+')',
+    actual:'=SUM('+refs.concat('F'+unknown.row).join(',')+')',
+    overhead:'=SUM('+known.map(r=>'G'+r.row).concat('G'+unknown.row).join(',')+')'};
+}
+function reconcileLaborSummary(sh) {
+  const count=ledgerFirstRow(sh)-2;
+  const vals=sh.getRange(2,5,count,3).getValues(), formulas=sh.getRange(2,5,count,3).getFormulas();
+  const plan=laborBalancePlan(vals.map((v,i)=>({row:i+2,label:String(v[0]||''),actualValue:v[1],overheadValue:v[2],actualFormula:formulas[i][1],overheadFormula:formulas[i][2]})));
+  sh.getRange(plan.unknown,5).setValue(plan.unknownLabel);
+  sh.getRange(plan.unknown,6).setFormula(plan.residual).setNote('Labor recorded on the left without an identified scope on the right. This is a visible reconciliation balance, not a verified work allocation. Identify the work before assigning it to a named scope. A negative balance means named scope totals exceed actual labor.');
+  plan.known.concat(plan.unknown).forEach(r=>sh.getRange(r,7).setFormula('=F'+r+'/0.5'));
+  sh.getRange(2,3).setFormula('=B2/0.5');sh.getRange(3,3).setFormula('=B3/0.5');sh.getRange(4,3).setFormula('=SUM(C2:C3)');
+  sh.getRange(plan.total,5).setValue('Scope total');
+  sh.getRange(plan.total,6).setFormula(plan.actual);sh.getRange(plan.total,7).setFormula(plan.overhead);
+  sh.getRange(plan.unknown,5,1,3).setFontFamily('Calibri').setFontSize(10);
+  sh.getRange(plan.unknown,6,1,2).setNumberFormat('$#,##0.00');
+  const marker='SMS_LABOR_BALANCE';
+  const rules=sh.getConditionalFormatRules().filter(rule=>{const b=rule.getBooleanCondition();return !b || !b.getCriteriaValues().some(v=>String(v).includes(marker));});
+  const add=(ranges,condition,color)=>rules.unshift(SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=AND(N("'+marker+'")=0,'+condition+')').setBackground(color).setRanges(ranges).build());
+  const actual=[sh.getRange('B4'),sh.getRange(plan.total,6)], overhead=[sh.getRange('C4'),sh.getRange(plan.total,7)];
+  add(actual,'IFERROR(ROUND($B$4-$F$'+plan.total+',2)=0,FALSE)',GREEN);
+  add(actual,'IFERROR(ROUND($B$4-$F$'+plan.total+',2)<>0,TRUE)','#ea9999');
+  add(overhead,'IFERROR(ROUND($C$4-$G$'+plan.total+',2)=0,FALSE)',GREEN);
+  add(overhead,'IFERROR(ROUND($C$4-$G$'+plan.total+',2)<>0,TRUE)','#ea9999');
+  add([sh.getRange(plan.unknown,6,1,2)],'ROUND($F$'+plan.unknown+',2)=0','#ffffff');
+  add([sh.getRange(plan.unknown,6,1,2)],'ROUND($F$'+plan.unknown+',2)>0','#ffe599');
+  add([sh.getRange(plan.unknown,6,1,2)],'ROUND($F$'+plan.unknown+',2)<0','#ea9999');
+  sh.setConditionalFormatRules(rules);
+  SpreadsheetApp.flush();
+  const actualLeft=Number(sh.getRange('B4').getValue()),actualRight=Number(sh.getRange(plan.total,6).getValue()),
+    overheadLeft=Number(sh.getRange('C4').getValue()),overheadRight=Number(sh.getRange(plan.total,7).getValue());
+  if(![actualLeft,actualRight,overheadLeft,overheadRight].every(Number.isFinite) || Math.abs(actualLeft-actualRight)>=0.005 || Math.abs(overheadLeft-overheadRight)>=0.005)
+    throw new Error('Labor / overhead balance readback failed; completion withheld');
+  if(Number(sh.getRange(plan.unknown,6).getValue()) < -0.005)throw new Error('Scope allocations exceed actual labor; completion withheld');
+  return plan;
 }
