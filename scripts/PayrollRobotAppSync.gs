@@ -78,12 +78,14 @@ function syncFromApp() {
         const key = 'day:' + day.date;
         const has = day.employees.length || day.subs.length;
         const was = JSON.parse(props.getProperty(key) || 'null');
-        if (was && was.stamp === day.stamp && was.tab === sh.getName()) return;   // nothing changed
+        // Nothing changed. A new sheet layout re-renders an app day once, but ONLY while it is
+        // not OK'd (green) — approved/posted days are never rewritten for a layout change.
+        if (was && was.stamp === day.stamp && was.tab === sh.getName() && (day.green || was.layout === feed.layout)) return;
         if (!was && !has) return;                                               // nothing to do
         const col = DAY_COL[dow(day.date)];
         if (!col) { if (has) log.push(day.date + ' is a Sunday — no Sunday box on the weekly tab. Not written.'); return; }
         const wrote = writeDay(ss, sh, day, col, was, log);
-        props.setProperty(key, JSON.stringify({ stamp: day.stamp, tab: sh.getName(), cells: wrote }));
+        props.setProperty(key, JSON.stringify({ stamp: day.stamp, tab: sh.getName(), cells: wrote, layout: feed.layout }));
         log.push('Wrote ' + day.date + ' (' + day.employees.length + ' men, ' + day.subs.length + ' sub boxes)' + (day.green ? ' — OK\'d in the app' : ' — not OK\'d yet'));
       });
     });

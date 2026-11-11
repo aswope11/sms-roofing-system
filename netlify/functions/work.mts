@@ -11,7 +11,7 @@ import { getStore } from "@netlify/blobs";
 import { gate } from "../../lib/gate.mts";
 import type { Config } from "@netlify/functions";
 import * as M from "../../lib/money.js";
-import { buildPayrollDay, payrollSheetPlan } from "../../lib/payroll-layout.js";
+import { buildPayrollDay, payrollSheetPlan, PAYROLL_LAYOUT_VERSION } from "../../lib/payroll-layout.js";
 import * as Q from "../../lib/qb-pdf.js";
 import * as W from "../../lib/whoswho.js";
 import { repushReason } from "../../lib/mail-label.js";
@@ -1821,7 +1821,7 @@ export async function workInner(req: Request) {
       const byId: any = Object.fromEntries(crew.map((c: any) => [c.id, c]));
       const greenDays = norm(await sql`SELECT work_date FROM green_days WHERE green AND work_date = ANY(${dates}::date[])`).map((g: any) => String(g.work_date).slice(0, 10));
       const out = M.payrollFeed({ dates, shares, crew: byId, jobsById, greenDays });
-      return new Response(JSON.stringify({ start, dates, days: out }), {
+      return new Response(JSON.stringify({ start, dates, layout: PAYROLL_LAYOUT_VERSION, days: out }), {
         headers: { "content-type": "application/json", "cache-control": "no-store" } });
     }
 

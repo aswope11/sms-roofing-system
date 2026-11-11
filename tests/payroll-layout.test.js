@@ -29,3 +29,30 @@ test('employee daily pay stays exact across rounded job shares in both sync feed
     assert.ok(plan.verification.some(c=>c.row===12&&c.col===11&&c.value.numberValue===expected));
   }
 });
+test('Nov 11: Tony split 9k/20k is its own group; Hugo+Martin share Fate 20k; labels stay beside their own men', ()=>{
+  const d='2026-11-11';
+  const w={crew:[{id:1,name:'Charlie',kind:'employee',day_rate:250},{id:4,name:'Tony',kind:'employee',day_rate:230},{id:5,name:'Hugo',kind:'employee',day_rate:300},{id:12,name:'Martin',kind:'employee',day_rate:300}],crewDays:[],
+    jobs:[{id:1,tag:'JC',address:'2409 Eastlake Hill',title:'Standing Seam'},{id:18,tag:'JC',address:'4860 E. I - 30',title:'9k'},{id:19,tag:'JC',address:'4860 E. I - 30',title:'20k'}],
+    stops:[[1,1,'Drip Edge · Install Panels'],[4,18,'Coping Cap'],[4,19,'Field Details · Term Bar · Gravel Stop'],[5,19,'Field Details · Term Bar · Gravel Stop'],[12,19,'Field Details · Term Bar · Gravel Stop']]
+      .map(([crew_id,job_id,day_scope],i)=>({id:i+1,crew_id,job_id,day_scope,work_date:d}))};
+  const m=buildPayrollDay(w,d);
+  assert.deepEqual(m.sms.rows.map(r=>[r.job?.text||'',r.person?.name||'',r.person?.total??'']),
+    [['JC-2409 Eastlake','Charlie',250],['JC-Fate - 9k','Tony',230],['JC-Fate - 20k','',''],['JC-Fate - 20k','Hugo',300],['','Martin',300]]);
+  const st=n=>m.sms.men.find(p=>p.name===n).style;
+  assert.deepEqual(st('Hugo'),st('Martin'));
+  assert.notDeepEqual(st('Tony'),st('Hugo'));
+  assert.notDeepEqual(st('Charlie'),st('Tony'));
+  assert.notDeepEqual(st('Charlie'),st('Hugo'));
+  // every label row carries the style of the men it belongs to
+  assert.deepEqual(m.sms.rows[1].job.style,st('Tony')); assert.deepEqual(m.sms.rows[2].job.style,st('Tony'));
+  assert.deepEqual(m.sms.rows[3].job.style,st('Hugo'));
+  assert.equal(m.totals.sms,1080);
+  // Same input renders byte-identical output (repeat sync = no change).
+  assert.equal(JSON.stringify(buildPayrollDay(w,d)),JSON.stringify(m));
+});
+test('sub crew leader is always on top even when a helper did a different job', ()=>{
+  const d='2026-11-09'; const w=fixture();
+  const m=buildPayrollDay(w,date);
+  assert.equal(m.subs[0].men[0].name,'Puma');
+  assert.equal(m.subs[0].rows[0].person.name,'Puma');
+});
