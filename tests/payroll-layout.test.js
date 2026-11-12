@@ -107,3 +107,8 @@ test('same tickets with different split proportions remain separate groups',()=>
   w.stops.forEach(s=>{s.pct=s.crew_id===1?(s.job_id===1?75:25):50;});
   const m=buildPayrollDay(w,date);assert.equal(m.sms.groups.length,2);
 });
+
+test('display rollout does not invalidate existing day checkpoints',async()=>{
+  const {PAYROLL_LAYOUT_VERSION}=await import('../lib/payroll-layout.js');
+  assert.equal(PAYROLL_LAYOUT_VERSION,'fixed-rows-1');
+});
