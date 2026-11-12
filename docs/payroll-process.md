@@ -90,3 +90,5 @@ Layout version `fixed-rows-1`: unapproved days re-render once on the next pass.
 
 Men who worked the exact same jobs all day look the same; anyone whose day differed looks different.
 Every SMS group is bold: 1st group bold black, 2nd bold red, 3rd bold blue. Layout `fixed-rows-2`.
+Job column (his hand layout, 11/11/26): one consecutive list from the top of the box, each group's jobs in turn in that group's look — never tied to a man's row, never a gap. Layout `fixed-rows-3`.
+A day not OK'd in the app shows no green in its SMS box.

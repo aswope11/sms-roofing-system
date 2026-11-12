@@ -270,6 +270,8 @@ function writeDay(ss, sh, day, col, was, log) {
     row+=a.men.length+1;
   });
   plan.green.forEach(r=>compactNativeRequest(sh,r));
+  // A day that is NOT OK'd in the app carries no green in its SMS box (11/11/26: OK taken back = green off).
+  if(!day.green) Object.keys(kept).forEach(k=>{ if(k.indexOf('E|')===0) delete kept[k]; });
   restoreGreen(sh,col,L,last,kept);
   sh.getRange(HEAD_ROW,col).setNote('Mirrors the SMS Schedule. Edit assignments in the app. Green on subs means every share is placed in the breakdown below; it does not mean paid or posted to job cost.');
   log.push(day.date+': compact mirror verified; SMS $'+model.totals.sms+', subs $'+model.totals.subs+'; '+model.allocations.length+' job breakdowns.');

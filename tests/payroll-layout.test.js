@@ -29,7 +29,7 @@ test('employee daily pay stays exact across rounded job shares in both sync feed
     assert.ok(plan.verification.some(c=>c.row===13&&c.col===11&&c.value.numberValue===expected));
   }
 });
-test('Nov 11: Tony split 9k/20k is its own group; Hugo+Martin share Fate 20k; labels stay beside their own men', ()=>{
+test('Nov 11: Tony split 9k/20k is its own group; Hugo+Martin share Fate 20k; jobs listed in order, no gaps', ()=>{
   const d='2026-11-11';
   const w={crew:[{id:1,name:'Charlie',kind:'employee',day_rate:250},{id:4,name:'Tony',kind:'employee',day_rate:230},{id:5,name:'Hugo',kind:'employee',day_rate:300},{id:12,name:'Martin',kind:'employee',day_rate:300}],crewDays:[],
     jobs:[{id:1,tag:'JC',address:'2409 Eastlake Hill',title:'Standing Seam'},{id:18,tag:'JC',address:'4860 E. I - 30',title:'9k'},{id:19,tag:'JC',address:'4860 E. I - 30',title:'20k'}],
@@ -41,18 +41,17 @@ test('Nov 11: Tony split 9k/20k is its own group; Hugo+Martin share Fate 20k; la
   // RULE 1: every man stays on his own Totals row (12 Charlie, 13 Tony, 14 Hugo, 15 Martin, 16 Hugo Nephew).
   assert.deepEqual(view.map(r=>r[1]),['Charlie','Tony','Hugo','Martin','','']);
   assert.deepEqual(view.map(r=>r[2]),[250,230,300,300,'','']);
-  assert.deepEqual(view.slice(0,4).map(r=>r[0]),['JC-2409 Eastlake','JC-Fate - 9k','JC-Fate - 20k','']);
-  // Tony's second ticket takes a spare job cell, never a man's row; it carries Tony's ink.
-  const spare=m.sms.rows.findIndex((r,i)=>i>3&&r.job);
-  assert.ok(spare>=4); assert.equal(m.sms.rows[spare].job.text,'JC-Fate - 20k');
+  // HIS LAYOUT: the job column is one consecutive list, each group's jobs in turn, no gaps.
+  assert.deepEqual(view.map(r=>r[0]),['JC-2409 Eastlake','JC-Fate - 9k','JC-Fate - 20k','JC-Fate - 20k','','']);
   const st=n=>m.sms.men.find(p=>p.name===n).style;
-  assert.deepEqual(m.sms.rows[spare].job.style,st('Tony'));
+  assert.deepEqual(m.sms.rows[0].job.style,st('Charlie'));
   assert.deepEqual(st('Hugo'),st('Martin'));
   assert.notDeepEqual(st('Tony'),st('Hugo'));
   assert.notDeepEqual(st('Charlie'),st('Tony'));
   assert.notDeepEqual(st('Charlie'),st('Hugo'));
   assert.deepEqual(m.sms.rows[1].job.style,st('Tony'));
-  assert.deepEqual(m.sms.rows[2].job.style,st('Hugo'));
+  assert.deepEqual(m.sms.rows[2].job.style,st('Tony'));
+  assert.deepEqual(m.sms.rows[3].job.style,st('Hugo'));
   assert.equal(m.totals.sms,1080);
   // Same input renders byte-identical output (repeat sync = no change).
   assert.equal(JSON.stringify(buildPayrollDay(w,d,{roster,slots:6})),JSON.stringify(m));
