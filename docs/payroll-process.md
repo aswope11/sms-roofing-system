@@ -85,3 +85,8 @@ Two defects fixed for good:
 2. **A refresh never wipes green.** `writeDay` remembers every green cell before it rewrites a day and gives it back when the same entry is still there (job label by text; a man by name + amount; a sub/breakdown line by its whole line). Green only comes off when that entry itself changed. Posting still greens/whitens by verified completion, now on the pinned rows.
 
 Layout version `fixed-rows-1`: unapproved days re-render once on the next pass.
+
+## November 11 (evening) — group look, his words
+
+Men who worked the exact same jobs all day look the same; anyone whose day differed looks different.
+Every SMS group is bold: 1st group bold black, 2nd bold red, 3rd bold blue. Layout `fixed-rows-2`.
