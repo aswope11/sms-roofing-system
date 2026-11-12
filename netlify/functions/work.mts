@@ -1792,7 +1792,11 @@ export async function workInner(req: Request) {
       const { stops, crewDays } = await shareRowsFor(dates);
       const ids = [...new Set(stops.map((s: any) => s.job_id))];
       const jobs = ids.length ? norm(await sql`${JOB_COLS(sql)} WHERE j.id = ANY(${ids}::int[])`) : [];
-      const model = buildPayrollDay({ crew, stops, crewDays, jobs }, date);
+      // roster = the weekly tab's Totals names (fixed employee rows); employee_capacity = rows in the day box.
+      const roster = (url.searchParams.get("roster") || "").split("|").map((n) => n.trim()).filter(Boolean);
+      const slots = Number(url.searchParams.get("employee_capacity") || 0);
+      if (roster.length > 60 || !Number.isInteger(slots) || slots < 0 || slots > 200) return refuse("Invalid payroll roster", 400);
+      const model = buildPayrollDay({ crew, stops, crewDays, jobs }, date, { roster, slots });
       if (!url.searchParams.has("sheet_id")) return json(model);
       const options = { sheetId: Number(url.searchParams.get("sheet_id")), col: Number(url.searchParams.get("col")),
         employeeCapacity: Number(url.searchParams.get("employee_capacity") || 5),

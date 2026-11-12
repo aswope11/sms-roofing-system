@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 const source=readFileSync(new URL('../scripts/PayrollRobotAppSync.gs',import.meta.url),'utf8');
 const load=(extra={})=>vm.createContext({console,...extra});
-function setup(extra={}) {const c=load(extra);vm.runInContext(source,c);return c;}
+function setup(extra={}) {const c=load(extra);vm.runInContext(source,c);if(!extra.keepPin)c.pinFor=()=>'';return c;}
 test('posting plan uses saved shares rather than dividing daily pay evenly',()=>{
  const c=setup();
  const model={sms:{rows:[{job:{job_id:19,text:'JC-Fate - 20k'}}],men:[{name:'Tony',shares:[{job_id:19,cost:172.5,day_scope:'Coping Cap'},{job_id:1,cost:57.5,day_scope:'CF'}]}]},subs:[]};
@@ -154,4 +154,31 @@ test('rows inserted on a job cost sheet move its stored posting rows down, other
  const a=JSON.parse(state.get('posted:v1:2026-11-09:19')).entry;
  assert.deepEqual([a.first,a.last,a.refs[0].tok,a.refs[1].a1,a.refs[1].tok],[317,321,'+C320','F10','+E320']);
  assert.equal(JSON.parse(state.get('posted:v1:2026-11-09:1')).entry.first,316);
+});
+
+// Fake grid: values + backgrounds, 1-based rows/cols.
+function grid(){const v={},b={};const k=(r,c)=>r+','+c;
+ const range=(r,c,h=1,w=1)=>({getValues:()=>Array.from({length:h},(_,i)=>Array.from({length:w},(_,j)=>v[k(r+i,c+j)]??'')),
+  getBackgrounds:()=>Array.from({length:h},(_,i)=>Array.from({length:w},(_,j)=>b[k(r+i,c+j)]||'#ffffff')),
+  setBackground(x){for(let i=0;i<h;i++)for(let j=0;j<w;j++)b[k(r+i,c+j)]=x;return this;}});
+ return {v,b,k,sh:{getRange:range}};}
+test('refresh keeps green on entries that did not change, even when a row moved; changed entries lose it',()=>{
+ const c=setup();const g=grid();const L={boxLast:17,subFirst:36};const col=13;
+ const put=(r,vals,bg)=>vals.forEach((x,j)=>{g.v[g.k(r,col+j)]=x;if(bg)g.b[g.k(r,col+j)]=bg;});
+ // before: Hugo pushed to row 15 (the bug), green; Tony green; sub breakdown line green
+ put(13,['JC-Fate - 9k','Tony',230],'#00ff00');put(15,['JC-Fate - 20k','Hugo',300],'#00ff00');
+ put(16,['','Martin',300],'#00ff00');put(40,['JC-Fate - 20k','Puma',400],'#00ff00');
+ const kept=c.captureGreen(g.sh,col,L,45);
+ // rewrite: everything white, Hugo back on row 14, Martin on 15 at a NEW amount
+ Object.keys(g.v).forEach(x=>{delete g.v[x];delete g.b[x];});
+ put(13,['JC-Fate - 9k','Tony',230]);put(14,['JC-Fate - 20k','Hugo',300]);put(15,['','Martin',150]);put(41,['JC-Fate - 20k','Puma',400]);
+ c.restoreGreen(g.sh,col,L,45,kept);
+ const green=(r,j)=>g.b[g.k(r,col+j)]==='#00ff00';
+ assert.ok(green(13,0)&&green(13,1)&&green(13,2));      // Tony unchanged → still green
+ assert.ok(green(14,0)&&green(14,1)&&green(14,2));      // Hugo moved home, same entry → green follows him
+ assert.ok(!green(15,1)&&!green(15,2));                 // Martin's amount changed → not green
+ assert.ok(green(41,0)&&green(41,1)&&green(41,2));      // verified sub line kept
+ // a second identical pass changes nothing
+ const again=c.captureGreen(g.sh,col,L,45);c.restoreGreen(g.sh,col,L,45,again);
+ assert.ok(green(14,1)&&!green(15,1));
 });

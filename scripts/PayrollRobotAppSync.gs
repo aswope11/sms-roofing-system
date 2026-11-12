@@ -214,13 +214,16 @@ function writeDay(ss, sh, day, col, was, log) {
     if (res.getResponseCode() !== 200) throw new Error('Payroll source refused: '+res.getContentText());
     return JSON.parse(res.getContentText());
   };
-  const model = get(APP_URL+'/w/payroll-layout?date='+day.date);
-  model.sms.men.forEach(p => empRow(sh,p.name,log));
+  // A man new to the app gets his own Totals line (and day-box row) FIRST. Then every man is drawn
+  // on the row of his Totals name — the app never moves an SMS employee (11/11/26 rule).
+  get(APP_URL+'/w/payroll-layout?date='+day.date).sms.men.forEach(p => empRow(sh,p.name,log));
   let L=layout(sh);
-  while(model.sms.rows.length>L.boxLast-EMP_FIRST+1) { growDayBox(sh,L); L=layout(sh); }
+  while(L.namesLast-L.namesFirst+1>L.boxLast-EMP_FIRST+1) { growDayBox(sh,L); L=layout(sh); }
+  const pin=rosterQuery(sh,L);
+  const model = get(APP_URL+'/w/payroll-layout?date='+day.date+pin);
   const size=model.subs.reduce((n,s)=>n+s.rows.length+1,0)-(model.subs.length?1:0);
-  const result=get(APP_URL+'/w/payroll-layout?date='+day.date+'&sheet_id='+sh.getSheetId()+'&col='+col+
-    '&employee_capacity='+(L.boxLast-EMP_FIRST+1)+'&sub_row='+L.subFirst+'&sub_capacity='+Math.max(6,size)+
+  const result=get(APP_URL+'/w/payroll-layout?date='+day.date+pin+'&sheet_id='+sh.getSheetId()+'&col='+col+
+    '&sub_row='+L.subFirst+'&sub_capacity='+Math.max(6,size)+
     '&allocation_row='+(L.subFirst+size+1));
   // The model and plan must come from the same app state; never mix two snapshots.
   if(JSON.stringify(model)!==JSON.stringify(result.model)) throw new Error('App changed during sync; retry next pass');
@@ -232,6 +235,10 @@ function writeDay(ss, sh, day, col, was, log) {
   });
   if(last>sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(),last-sh.getMaxRows());
   sh.getProtections(SpreadsheetApp.ProtectionType.RANGE).filter(p=>p.getDescription()===SYNC_TAG+' '+day.date).forEach(p=>p.remove());
+  // GREEN IS NEVER WIPED BY A REFRESH (11/11/26). Remember every green cell first; after the rewrite
+  // a cell gets its green back when the same entry (same job label, or same man + same amount, or the
+  // same sub/breakdown line) is still there. Green only goes when the entry itself changed.
+  const kept=captureGreen(sh,col,L,last);
   // The day-owned area is replaced as a whole, including obsolete scope rows/borders.
   [sh.getRange(EMP_FIRST,col,L.boxLast-EMP_FIRST+1,3),sh.getRange(L.subFirst,col,last-L.subFirst+1,3)].forEach(r=>
     r.clearContent().setBackground('#ffffff').setFontColor('#000000').setFontWeight('normal').setBorder(false,false,false,false,false,false));
@@ -263,6 +270,7 @@ function writeDay(ss, sh, day, col, was, log) {
     row+=a.men.length+1;
   });
   plan.green.forEach(r=>compactNativeRequest(sh,r));
+  restoreGreen(sh,col,L,last,kept);
   sh.getRange(HEAD_ROW,col).setNote('Mirrors the SMS Schedule. Edit assignments in the app. Green on subs means every share is placed in the breakdown below; it does not mean paid or posted to job cost.');
   log.push(day.date+': compact mirror verified; SMS $'+model.totals.sms+', subs $'+model.totals.subs+'; '+model.allocations.length+' job breakdowns.');
   return [sh.getRange(EMP_FIRST,col,L.boxLast-EMP_FIRST+1,3).getA1Notation(),sh.getRange(L.subFirst,col,Math.max(1,plan.endRow-L.subFirst+1),3).getA1Notation()];
@@ -286,6 +294,43 @@ function compactNativeRequest(sh,request) {
       c.setBackground(f.backgroundColor?color(f.backgroundColor):'#ffffff').setFontFamily(t.fontFamily||'Calibri').setFontSize(t.fontSize||10).setFontColor(t.foregroundColor?color(t.foregroundColor):'#000000').setFontWeight(t.bold?'bold':'normal');
       if(f.numberFormat)c.setNumberFormat(f.numberFormat.pattern);
     }));
+  }
+}
+// The Totals names top to bottom = the fixed SMS rows (Totals name #1 → row 12, #2 → row 13 …).
+function rosterQuery(sh,L) {
+  L=L||layout(sh);
+  const names=sh.getRange(L.namesFirst,2,L.namesLast-L.namesFirst+1,1).getValues().map(r=>String(r[0]).trim()).filter(Boolean);
+  return '&roster='+encodeURIComponent(names.join('|'))+'&employee_capacity='+(L.boxLast-EMP_FIRST+1);
+}
+const isGreen=bg=>String(bg||'').toLowerCase()===GREEN;
+const cellKey=v=>v instanceof Date?v.toDateString():typeof v==='number'?String(Math.round(v*100)/100):String(v==null?'':v).trim();
+// Green cells of one day, keyed by what they say (not where they sit): job labels by their text,
+// a man by name + amount, a sub/breakdown line by its whole line. Listed with how many of each.
+function captureGreen(sh,col,L,last) {
+  const keep={};
+  const add=(k,c)=>{ if(!k) return; (keep[k]=keep[k]||[]).push(c); };
+  const box=sh.getRange(EMP_FIRST,col,L.boxLast-EMP_FIRST+1,3), bv=box.getValues(), bb=box.getBackgrounds();
+  bv.forEach((r,i)=>{
+    if(isGreen(bb[i][0])&&cellKey(r[0])) add('E|job|'+cellKey(r[0]),[0]);
+    const man=[1,2].filter(j=>isGreen(bb[i][j])); if(man.length&&cellKey(r[1])) add('E|man|'+cellKey(r[1])+'|'+cellKey(r[2]),man);
+  });
+  if(last>=L.subFirst){
+    const sub=sh.getRange(L.subFirst,col,last-L.subFirst+1,3), sv=sub.getValues(), sb=sub.getBackgrounds();
+    sv.forEach((r,i)=>{ const g=[0,1,2].filter(j=>isGreen(sb[i][j])&&cellKey(r[j])); if(g.length) add('S|'+r.map(cellKey).join('|'),g); });
+  }
+  return keep;
+}
+function restoreGreen(sh,col,L,last,keep) {
+  const take=k=>keep[k]&&keep[k].length?keep[k].shift():null;
+  const box=sh.getRange(EMP_FIRST,col,L.boxLast-EMP_FIRST+1,3), bv=box.getValues();
+  bv.forEach((r,i)=>{
+    if(cellKey(r[0])&&take('E|job|'+cellKey(r[0]))) sh.getRange(EMP_FIRST+i,col).setBackground(GREEN);
+    const man=cellKey(r[1])&&take('E|man|'+cellKey(r[1])+'|'+cellKey(r[2]));
+    if(man) man.forEach(j=>sh.getRange(EMP_FIRST+i,col+j).setBackground(GREEN));
+  });
+  if(last>=L.subFirst){
+    const sv=sh.getRange(L.subFirst,col,last-L.subFirst+1,3).getValues();
+    sv.forEach((r,i)=>{ const g=take('S|'+r.map(cellKey).join('|')); if(g) g.forEach(j=>sh.getRange(L.subFirst+i,col+j).setBackground(GREEN)); });
   }
 }
 // One-time migration. Preserves the original week before repairing only Nov 9.
@@ -613,11 +658,17 @@ function retryApprovedPayroll(ss, props, log, today) {
     props.setProperty(cursorKey, cursor > today ? SYNC_FROM : cursor);
   }
 }
+function pinFor(ss,date,log) {
+  const sat=new Date(date+'T12:00:00Z');sat.setUTCDate(sat.getUTCDate()-((sat.getUTCDay()+1)%7));
+  const tab=weekTab(ss,Utilities.formatDate(sat,'UTC','yyyy-MM-dd'),log);
+  if(!tab) throw new Error('Weekly payroll tab missing');
+  return rosterQuery(tab);
+}
 function postingPlan(model) {
   const jobs = {};
-  const labels = {};
-  model.sms.rows.forEach(r => { if(r.job) labels[r.job.job_id] = r.job.text; });
-  model.subs.forEach(b => b.rows.forEach(r => { if(r.job) labels[r.job.job_id] = r.job.text; }));
+  const labels = Object.assign({}, model.labels || {});
+  model.sms.rows.forEach(r => { if(r.job && !labels[r.job.job_id]) labels[r.job.job_id] = r.job.text; });
+  model.subs.forEach(b => b.rows.forEach(r => { if(r.job && !labels[r.job.job_id]) labels[r.job.job_id] = r.job.text; }));
   const job = id => jobs[id] || (jobs[id] = {id, label:labels[id], sms:[], subs:[]});
   model.sms.men.forEach(man => man.shares.forEach(share => {
     const scopes = String(share.day_scope || '').split(' · ').filter(Boolean);
@@ -637,7 +688,9 @@ function postingPlan(model) {
   return Object.values(jobs);
 }
 function postApprovedPayrollDay(ss, props, day, log) {
-  const response=UrlFetchApp.fetch(APP_URL+'/w/payroll-layout?date='+day.date,{muteHttpExceptions:true});
+  // Same pinned rows the mirror drew, so a man's green lands on HIS row.
+  const pin=pinFor(ss,day.date,log);
+  const response=UrlFetchApp.fetch(APP_URL+'/w/payroll-layout?date='+day.date+pin,{muteHttpExceptions:true});
   if(response.getResponseCode()!==200) throw new Error('Cannot read saved job shares');
   const model=JSON.parse(response.getContentText()), jobs=postingPlan(model), completed={};
   // Sub dollars are read from the Subs ledger only after the payroll transfer verifies.
@@ -684,7 +737,7 @@ function postApprovedPayrollDay(ss, props, day, log) {
   const target=weekTab(ss,saturday,log); if(!target) throw new Error('Weekly payroll tab missing');
   const col=DAY_COL[dow(day.date)], L=layout(target);
   model.sms.rows.forEach((r,i)=>{
-    if(r.job) target.getRange(EMP_FIRST+i,col).setBackground(completed[r.job.job_id]?GREEN:'#ffffff');
+    if(r.job) target.getRange(EMP_FIRST+i,col).setBackground((r.job.job_ids||[r.job.job_id]).every(id=>completed[id])?GREEN:'#ffffff');
     if(r.person) target.getRange(EMP_FIRST+i,col+1,1,2).setBackground(r.person.shares.every(s=>completed[s.job_id])?GREEN:'#ffffff');
   });
   SpreadsheetApp.flush();

@@ -76,3 +76,12 @@ Green R / WT / CO / UC days with no job cost sheet route now go to QuickBooks th
 - Never sends, never records or makes a payment, never deletes.
 - checkPayrollQuickBooks(date, ticket) in the editor is a read-only dry run.
 - JC days still go only to the Actual Job Cost Sheet; JC without a route stays incomplete.
+
+## November 11 — fixed employee rows + green kept (INSTALLED)
+
+Two defects fixed for good:
+
+1. **SMS employees never move.** Row 12 + n on the weekly tab belongs to the n-th name of the Totals block (Charlie 12, Tony 13, Hugo 14, Martin 15, Hugo Nephew 16), every day. The old `section()` built `Math.max(labels.length, men.length)` rows per group, so a man on two tickets pushed everyone below him down. Now `employeeSection()` gives each Totals name its own slot. Groups are shown only by matching color + bold. A group's job labels sit beside its own men; a leftover label (Tony on Fate 9k AND Fate 20k) goes in the nearest job cell nobody uses that day; with no free cell it is joined " / " in the same cell. It never takes a man's row. The robot sends the Totals names (`roster=`) and the box size (`employee_capacity=`) to /w/payroll-layout, for both the mirror and the posting greens, so greens land on the right man.
+2. **A refresh never wipes green.** `writeDay` remembers every green cell before it rewrites a day and gives it back when the same entry is still there (job label by text; a man by name + amount; a sub/breakdown line by its whole line). Green only comes off when that entry itself changed. Posting still greens/whitens by verified completion, now on the pinned rows.
+
+Layout version `fixed-rows-1`: unapproved days re-render once on the next pass.
