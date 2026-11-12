@@ -81,3 +81,26 @@ test('fixed rows: nobody moves when the day changes; no free cell joins labels i
   assert.deepEqual(m2.sms.rows.map(r=>r.person?.name||''),['Charlie','','Hugo','Martin','Hugo Nephew']);
   assert.ok(m.labels[30] && m.labels[18]);
 });
+test('15 jobs: one job per row down the column, men never move, box asks to grow', ()=>{
+  const d='2026-11-12', roster=['Charlie','Tony','Hugo','Martin','Hugo Nephew'];
+  const crew=roster.map((name,i)=>({id:i+1,name,kind:'employee',day_rate:200}));
+  const jobs=Array.from({length:15},(_,i)=>({id:100+i,tag:'R',address:`${i+1} Main`}));
+  const stops=[...jobs.slice(0,10).map(j=>[1,j.id]),...jobs.slice(10).map(j=>[3,j.id])].map(([crew_id,job_id],i)=>({id:i+1,crew_id,job_id,work_date:d}));
+  const m=buildPayrollDay({crew,crewDays:[],jobs,stops},d,{roster,slots:5});
+  assert.equal(m.sms.rows.length,15);
+  assert.deepEqual(m.sms.rows.map(r=>r.job.text),jobs.map(j=>`R-${j.address}`));
+  assert.ok(m.sms.rows.every(r=>!r.job.text.includes(' / ')));
+  assert.deepEqual(m.sms.rows.slice(0,5).map(r=>r.person?.name||''),['Charlie','','Hugo','','']);
+  assert.ok(m.sms.rows.slice(5).every(r=>!r.person));
+  assert.throws(()=>payrollSheetPlan(m,{sheetId:1,col:13,employeeCapacity:5}),/Grow the SMS day box to 15/);
+  assert.doesNotThrow(()=>payrollSheetPlan(m,{sheetId:1,col:13,employeeCapacity:15}));
+});
+test('same jobs, different scopes = same look', ()=>{
+  const d='2026-11-12';
+  const crew=[{id:1,name:'Charlie',kind:'employee',day_rate:250},{id:2,name:'Tony',kind:'employee',day_rate:230}];
+  const jobs=[{id:19,tag:'JC',address:'4860 E. I - 30',title:'20k'}];
+  const stops=[[1,19,'Term Bar'],[2,19,'Coping']].map(([crew_id,job_id,day_scope],i)=>({id:i+1,crew_id,job_id,day_scope,work_date:d}));
+  const m=buildPayrollDay({crew,crewDays:[],jobs,stops},d);
+  assert.deepEqual(m.sms.men[0].style,m.sms.men[1].style);
+  assert.equal(m.sms.rows.filter(r=>r.job).length,1);
+});
