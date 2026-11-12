@@ -125,3 +125,36 @@ test('only the owner\'s Google account gets through', async () => {
   await assert.rejects(() => verifyGoogleCaller({authorization: 'Bearer abc', allowedEmail: 'owner@x.com', fetchImpl: async () => ({ok: false})}), /refused/);
   assert.equal(await verifyGoogleCaller({authorization: 'Bearer abc', allowedEmail: 'Owner@x.com', fetchImpl: google('owner@x.com')}), 'owner@x.com');
 });
+const L = (date, amt, words) => ({DetailType: 'SalesItemLineDetail', Amount: amt, Description: `Date: ${date}\n\n${words}`, SalesItemLineDetail: {ItemRef: {value: '1'}, Qty: 1, UnitPrice: amt}});
+test('payroll changed after posting: the day\'s old lines are swapped for the new ones, other days untouched', async () => {
+  const mk = payrollMarker('2026-11-09', 121);
+  const other = L('11/2/26', 225, 'Puma cost $150.00 × 1.5 = $225.00'), oldDay = L('11/9/26', 150, 'Puma cost $100.00 × 1.5 = $150.00');
+  const inv = {Id: '9', DocNumber: '4944', SyncToken: '2', TotalAmt: 375, TxnDate: '2026-11-16', PrivateNote: 'R-11/2/26\n' + mk, CustomerRef: {value: CUST}, Line: [other, oldDay]};
+  const qb = fakeQB({invoices: [inv], seat: {qbId: '9', dayAmount: 150}});
+  const out = await postPayrollPlaceholder(make(), qb);
+  assert.equal(out.action, 'replaced-day'); assert.equal(out.total, 525); assert.equal(qb.writes, 1);
+  const back = qb.db.get('9');
+  assert.equal(back.TxnDate, '2026-11-16'); assert.equal(back.Line.length, 2);
+  assert.equal(back.Line[0].Description, other.Description); assert.equal(back.Line[1].Amount, 300);
+  assert.equal(back.PrivateNote.split('\n').filter(l => l === mk).length, 1);
+  assert.equal(qb.records[0].created, false);
+});
+test('changed day whose lines don\'t match what was recorded is left alone', async () => {
+  const mk = payrollMarker('2026-11-09', 121);
+  const inv = {Id: '9', DocNumber: '4944', SyncToken: '2', TotalAmt: 160, TxnDate: '2026-11-16', PrivateNote: mk, CustomerRef: {value: CUST}, Line: [L('11/9/26', 160, 'hand edit')]};
+  const qb = fakeQB({invoices: [inv], seat: {qbId: '9', dayAmount: 150}});
+  await assert.rejects(() => postPayrollPlaceholder(make(), qb), /reconcile/); assert.equal(qb.writes, 0);
+});
+test('ticket taken off a day: its lines and mark come off; refused when it is the only day', async () => {
+  const {removePayrollDay} = await import('../lib/payroll-bridge.js');
+  const mk = payrollMarker('2026-11-09', 121);
+  const other = L('11/2/26', 225, 'x');
+  const inv = {Id: '9', DocNumber: '4944', SyncToken: '2', TotalAmt: 525, TxnDate: '2026-11-16', PrivateNote: 'R-11/2/26\n' + mk, CustomerRef: {value: CUST}, Line: [other, L('11/9/26', 300, 'y')]};
+  const qb = fakeQB({invoices: [inv], seat: {qbId: '9', dayAmount: 300}}); let gone = null; qb.removed = async r => { gone = r; };
+  const out = await removePayrollDay({workDate: '2026-11-09', jobId: 121}, qb);
+  assert.equal(out.total, 225); assert.ok(gone);
+  assert.equal(qb.db.get('9').PrivateNote, 'R-11/2/26'); assert.equal(qb.db.get('9').Line.length, 1);
+  const only = {Id: '8', DocNumber: '4943', SyncToken: '1', TotalAmt: 300, TxnDate: '2026-11-23', PrivateNote: mk, CustomerRef: {value: CUST}, Line: [L('11/9/26', 300, 'y')]};
+  const qb2 = fakeQB({invoices: [only], seat: {qbId: '8', dayAmount: 300}}); qb2.removed = async () => {};
+  await assert.rejects(() => removePayrollDay({workDate: '2026-11-09', jobId: 121}, qb2), /only day/); assert.equal(qb2.writes, 0);
+});

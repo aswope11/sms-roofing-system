@@ -7,7 +7,7 @@ import {getStore} from "@netlify/blobs";
 import type {Config} from "@netlify/functions";
 import * as M from "../../lib/money.js";
 import * as W from "../../lib/whoswho.js";
-import {verifyGoogleCaller,payrollBridgePlan,postPayrollPlaceholder} from "../../lib/payroll-bridge.js";
+import {verifyGoogleCaller,payrollBridgePlan,postPayrollPlaceholder,removePayrollDay,PAYROLL_SOURCE_ID} from "../../lib/payroll-bridge.js";
 const json=(data:unknown,status=200)=>new Response(JSON.stringify(data),{status,headers:{"content-type":"application/json","cache-control":"no-store"}});
 const refuse=(error:string,status=400)=>json({error},status);
 function norm(v: any): any {
@@ -108,6 +108,27 @@ export default async function handler(req:Request) {
   const crewDays=norm(await sql`SELECT * FROM crew_days WHERE work_date=${date}::date`);
   const crew=norm(await sql`SELECT * FROM crew`);
   const shares=M.stopShares({stops,crew,crewDays});
+  // A ticket taken off a posted day (11/12/26): its day comes off the placeholder. Only when the app has NO work for it that day.
+  if(b?.remove===true){
+   if(b.source_spreadsheet!==PAYROLL_SOURCE_ID)throw new Error("Verified Daily Payroll source required");
+   if(!job||!M.canPlaceholder(job.tag))throw new Error("Ticket is not a placeholder ticket");
+   if(shares.some((s:any)=>Number(s.job_id)===jid))throw new Error("This ticket still has work that day; nothing taken off");
+   const d0=await mapDecisionFor(sql,job);
+   if(!d0.ok)throw new Error("No confirmed QuickBooks customer for this ticket (Who's Who); no write made");
+   const seats0=norm(await sql`SELECT * FROM invoices WHERE job_id=${jid} AND kind='placeholder' AND amount>0 AND zeroed_by IS NULL ORDER BY id`);
+   if(seats0.length!==1||!seats0[0].qb_id)throw new Error("Ticket needs exactly one open QuickBooks placeholder to take a day off");
+   const s0=seats0[0];
+   const out=await removePayrollDay({workDate:date,jobId:jid},{
+    customer:async()=>({id:String(d0.row.qb_customer_id)}),
+    existing:async()=>({qbId:s0.qb_id,dayAmount:dayMap(s0)[date]??null}),
+    readInvoice:async(qid:string)=>(await qb("GET",`invoice/${encodeURIComponent(qid)}`)).Invoice,
+    writeInvoice:async(payload:any,requestId:string)=>(await qb("POST","invoice?requestid="+requestId,payload)).Invoice,
+    removed:async({invoice}:any)=>{const days=dayMap(s0);delete days[date];
+     await sql`UPDATE invoices SET amount=${Number(invoice.TotalAmt)},days=${JSON.stringify(days)}::jsonb,qb_error='' WHERE id=${s0.id}`;}
+   },{dryRun});
+   await lock.query("COMMIT");
+   return json({...out,job_id:jid,work_date:date});
+  }
   const plan=payrollBridgePlan({request:b,job,approved:greens.length===1,shares,billLabor:M.billLabor,menAtHours:M.menAtHours,canPlaceholder:M.canPlaceholder});
   const decision=await mapDecisionFor(sql,job);
   if(!decision.ok)throw new Error("No confirmed QuickBooks customer for this ticket (Who's Who); no write made");
