@@ -85,3 +85,26 @@ Two defects fixed for good:
 2. **A refresh never wipes green.** `writeDay` remembers every green cell before it rewrites a day and gives it back when the same entry is still there (job label by text; a man by name + amount; a sub/breakdown line by its whole line). Green only comes off when that entry itself changed. Posting still greens/whitens by verified completion, now on the pinned rows.
 
 Layout version `fixed-rows-1`: unapproved days re-render once on the next pass.
+
+
+## November 11 owner walkthrough — independent job list
+
+The employee column remains Charlie, Tony, Hugo, Martin in its existing roster order.
+The job column is an independent list of each group's complete assignments; matching text
+style links jobs to people, even when they occupy different rows. Never reposition men to
+line up with labels. Keep the ordinary black grid; group styles affect text only.
+
+Reset each day to plain black. With multiple groups, the first is bold black, intermediate
+groups are bold red, then blue and other distinct inks, and the final group stays plain black.
+A single group stays plain. Jobs and every man in their group have exactly the same style.
+
+- Tuesday: Fate 20K and Fate 9K labels bold black; Charlie, Hugo, Martin bold black.
+  Tony and his UC Strait Lane, CO Strait Lane, R Hampton labels plain black.
+- Wednesday: Charlie and Eastlake bold black; Tony and his Fate 20K + Fate 9K labels bold red;
+  Hugo and Martin and their separate Fate 20K label plain black.
+- Tony's two-job day remains separate from Hugo/Martin's one-job day, even though all touch 20K.
+- Daily wages remain $250/$230/$300/$300. Display grouping does not change saved costs or posting.
+
+Implementation changes are tested separately from live sheet edits. Do not rerender an existing
+manually corrected day just to install a display change. Approved days retain their existing
+layout until the source work changes under the normal approval/reconciliation workflow.
