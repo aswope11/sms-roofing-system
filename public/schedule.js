@@ -100,16 +100,20 @@ export async function schedulePage(start) {
       <span class="pgo">›</span>
     </div>`;
   const rowHTML = j => j.tag === 'R' ? `<div class="smsrep">${pRow(j)}</div>` : pRow(j);
+  // Ticket columns are presentation only: moving between them must not change billing type.
+  const columnOf = j => j.tag === 'UC' ? 'UC' : j.tag === 'JC' ? 'JC' : 'Repairs';
   const fold = foldState();
-  let sections = '';
-  const readyRows = listed.filter(j => bucketOf(j) === 'ready' && !onToday(j)).sort(jobCmp);
-  // DROP ANYWHERE (10/8/26, his ask): every list is always on the page so a pill can be dropped into it, even when it is empty.
-  sections += `<div class="psec" data-dropbucket="ready"><h3 data-fold="readytowork">${fold.readytowork ? '▸' : '▾'} Ready to work <span class="n">${readyRows.length}</span></h3>${fold.readytowork ? '' : (readyRows.map(rowHTML).join('') || '<div class="empty">Nothing here — drop a pill here.</div>')}</div>`;
-  [{ k: 'hold', l: 'Waiting on the customer' }, { k: 'trades', l: 'Waiting on other trades' }].forEach(h => {
-    const rows = listed.filter(j => bucketOf(j) === h.k && !onToday(j));
-    sections += `<div class="${schedOpen[h.k] ? 'parked open' : 'parked'}" data-dropbucket="${h.k}"><h3 data-hold="${h.k}">${schedOpen[h.k] ? '▾' : '▸'} ${esc(h.l)} <span class="n">${rows.length}</span></h3>
-      <div class="plist"><div class="psec">${rows.sort(jobCmp).map(rowHTML).join('')}</div></div></div>`;
-  });
+  const columns = ['Repairs', 'UC', 'JC'];
+  const sections = columns.map(column => {
+    const jobs = listed.filter(j => columnOf(j) === column && !onToday(j));
+    const buckets = [{ k: 'ready', l: 'Ready to work' }, { k: 'hold', l: 'Waiting on the customer' }, { k: 'trades', l: 'Waiting on other trades' }];
+    return `<section class="sched-ticket-column" aria-label="${column}"><h2>${column} <span class="n">${jobs.length}</span></h2>${buckets.map(h => {
+      const rows = jobs.filter(j => bucketOf(j) === h.k).sort(jobCmp);
+      const key = column + '-' + h.k;
+      const closed = h.k === 'ready' ? !!fold[key] : (fold[key] === undefined ? true : !!fold[key]);
+      return `<div class="psec" data-dropcolumn="${column}" data-dropbucket="${h.k}"><h3 data-fold="${key}">${closed ? '▸' : '▾'} ${h.l} <span class="n">${rows.length}</span></h3>${closed ? '' : rows.map(rowHTML).join('') || '<div class="empty">Nothing here — drop a pill here.</div>'}</div>`;
+    }).join('')}</section>`;
+  }).join('');
 
   // ADD A MAN / FIX A MAN (10/30/26): one add box (the one with crew leader / works under), and a ✎ on
   // every man on the board to change his name, type, who he works under, rate and pay-to after he's added.
@@ -161,6 +165,16 @@ export async function schedulePage(start) {
         }).join('')}</tr>`).join('') || `<tr><td colspan="${dates.length + 1}" class="empty">Nobody on this week’s board — use Add a man above.</td></tr>`}
       </table>
     </div>
+    <style>
+      #schedSections { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:20px; align-items:start; margin-top:24px; }
+      #schedSections .sched-ticket-column { min-width:0; border:1px solid var(--line,#46505d); border-radius:10px; padding:12px; }
+      #schedSections .sched-ticket-column > h2 { margin:0 0 14px; }
+      #schedSections .prow { min-width:0; }
+      #schedSections .pmain { min-width:0; overflow-wrap:anywhere; }
+      #schedSections .stbar { flex-wrap:wrap; }
+      #schedSections .psec { margin-top:16px; }
+      @media(max-width:700px) { #schedSections { grid-template-columns:1fr; } }
+    </style>
     <div id="schedSections">${sections}</div>
     <div class="peek" id="peek"></div>
     <div class="modalback" id="ledBack" style="display:none"><div class="card logbox" style="width:1000px"><div class="btnrow" style="justify-content:flex-end"><button type="button" class="small" id="ledClose">Close</button></div><div id="ledMount"></div></div></div>
@@ -594,6 +608,8 @@ export async function schedulePage(start) {
       e.preventDefault(); e.stopPropagation();
       const target = jobsById[r.dataset.dragjob];
       if (!target || dragJob === target.id) { clearMarks(); return; }
+      const source = jobsById[dragJob || dragPlan || w.stops.find(s => s.id === dragStop)?.job_id];
+      if (source && columnOf(source) !== columnOf(target)) { clearMarks(); toast('Change the ticket tag in its job file to move it to another column.', false); return; }
       const below = e.clientY > r.getBoundingClientRect().top + r.offsetHeight / 2;
       dropOnList(bucketOf(target), target.id, below);
     };
@@ -602,7 +618,10 @@ export async function schedulePage(start) {
   $app().querySelectorAll('[data-dropbucket]').forEach(box => {
     box.ondragover = e => { if (!dragJob && !dragPlan && !dragStop) return; e.preventDefault(); clearMarks(); box.style.outline = '2px dashed #ff7a3d'; };
     box.ondragleave = e => { if (!box.contains(e.relatedTarget)) box.style.outline = ''; };
-    box.ondrop = e => { e.preventDefault(); dropOnList(box.dataset.dropbucket, 0, false); };
+    box.ondrop = e => { e.preventDefault();
+      const source = jobsById[dragJob || dragPlan || w.stops.find(s => s.id === dragStop)?.job_id];
+      if (source && columnOf(source) !== box.dataset.dropcolumn) { clearMarks(); toast('Change the ticket tag in its job file to move it to another column.', false); return; }
+      dropOnList(box.dataset.dropbucket, 0, false); };
   });
   // DRAG A PILL onto a man or onto Nobody, including a different day.
   // An assigned pill keeps its stop (scope stays on it). An unassigned pill ("Nobody on it yet") moves the plan date,
