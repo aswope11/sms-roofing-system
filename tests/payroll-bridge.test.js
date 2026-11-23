@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as M from '../lib/money.js';
-import {verifyGoogleCaller, payrollBridgePlan, postPayrollPlaceholder, PAYROLL_SOURCE_ID, placeholderDate, payrollMarker, mdyy} from '../lib/payroll-bridge.js';
+import {verifyGoogleCaller, payrollBridgePlan, postPayrollPlaceholder, PAYROLL_SOURCE_ID, placeholderDate, payrollMarker, mdyy, hasPayrollDay} from '../lib/payroll-bridge.js';
 
 const request = {source_spreadsheet: PAYROLL_SOURCE_ID, work_date: '2026-11-09', job_id: 121, expected_cost: 200};
 const puma = {job_id: 121, work_date: '2026-11-09', cost: 200, kind: 'sub', shows_as: 'Puma'};
@@ -15,7 +15,7 @@ function fakeQB({invoices = [], seat = null} = {}) {
     customer: async () => ({id: CUST}),
     existing: async () => seat,
     readInvoice: async id => structuredClone(db.get(String(id)) || null),
-    findInvoiceByMarker: async (cid, marker) => [...db.values()].find(i => String(i.CustomerRef.value) === cid && String(i.PrivateNote || '').split('\n').includes(marker)) || null,
+findInvoiceByMarker: async (cid, marker) => [...db.values()].find(i => String(i.CustomerRef.value) === cid && hasPayrollDay(i, marker)) || null,
     writeInvoice: async (payload) => {
       s.writes++;
       const id = payload.Id || String(9000 + s.writes);
@@ -67,7 +67,7 @@ test('no open placeholder → creates one, reads it back, records it', async () 
   const out = await postPayrollPlaceholder(plan, qb);
   assert.equal(out.action, 'created-placeholder'); assert.equal(out.total, 300); assert.equal(qb.writes, 1);
   const inv = [...qb.db.values()][0];
-  assert.equal(inv.TxnDate, '2026-11-23'); assert.equal(inv.PrivateNote, 'R-11/9/26\n' + payrollMarker('2026-11-09', 121));
+  assert.equal(inv.TxnDate, '2026-11-23'); assert.equal(inv.PrivateNote, 'R-11/9/26');
   assert.equal(qb.records.length, 1); assert.equal(qb.records[0].created, true);
 });
 test('running it twice never adds the day twice (QuickBooks saved, app record lost)', async () => {
@@ -92,7 +92,7 @@ test('adds a day to the open placeholder without changing its date', async () =>
   assert.equal(out.action, 'added-to-placeholder'); assert.equal(out.total, 525);
   const back = qb.db.get('9');
   assert.equal(back.TxnDate, '2026-11-16'); assert.equal(back.Line.length, 2);
-  assert.equal(back.PrivateNote, 'R-11/2/26\n' + payrollMarker('2026-11-09', 121));
+  assert.equal(back.PrivateNote, 'R-11/2/26');
 });
 test('a day already typed on the placeholder by hand is not added again', async () => {
   const line = {DetailType: 'SalesItemLineDetail', Amount: 300, Description: 'Date: 11/9/26\n\nPuma cost $200.00 × 1.5 = $300.00'};
