@@ -19,7 +19,7 @@ import { whosWhoPage, whosWhoPopup, whosWhoLine } from './whoswho.js';
 const $app = document.getElementById('app');
 const $crumbs = document.getElementById('crumbs');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const TAG_NAMES = { BID: 'Bid', R: 'Repair', WT: 'Water test', CO: 'Change order', UC: 'Unit cost (no contract price)', JC: 'Job contract (has a contract price)', W: 'Warranty' };
+const TAG_NAMES = { BID: 'Bid', R: 'Repair', WT: 'Water test', TC: 'Test cut', CO: 'Change order', UC: 'Unit cost (no contract price)', JC: 'Job contract (has a contract price)', W: 'Warranty' };
 
 function toast(msg, ok = true) {
   const t = document.getElementById('toast');
