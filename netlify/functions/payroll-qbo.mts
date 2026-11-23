@@ -7,7 +7,7 @@ import {getStore} from "@netlify/blobs";
 import type {Config} from "@netlify/functions";
 import * as M from "../../lib/money.js";
 import * as W from "../../lib/whoswho.js";
-import {verifyGoogleCaller,payrollBridgePlan,postPayrollPlaceholder,removePayrollDay,PAYROLL_SOURCE_ID} from "../../lib/payroll-bridge.js";
+import {verifyGoogleCaller,payrollBridgePlan,postPayrollPlaceholder,removePayrollDay,PAYROLL_SOURCE_ID,hasPayrollDay} from "../../lib/payroll-bridge.js";
 const json=(data:unknown,status=200)=>new Response(JSON.stringify(data),{status,headers:{"content-type":"application/json","cache-control":"no-store"}});
 const refuse=(error:string,status=400)=>json({error},status);
 function norm(v: any): any {
@@ -56,7 +56,7 @@ async function qbNextNumber() {
 }
 
 const NO_PAY_CUSTOMERS = /wortham|standridge|four corners/i;
-const noPay = (job: any) => (NO_PAY_CUSTOMERS.test(String(job?.customer_name || "")) || !!job?.c_no_pay)
+const noPay = (job: any) => (NO_PAY_CUSTOMERS.test([job?.customer_name, job?.bill_name, job?.c_bill_name].map(s => String(s || "")).join(" ")) || !!job?.c_no_pay)
   ? { AllowOnlinePayment: false, AllowOnlineCreditCardPayment: false, AllowOnlineACHPayment: false, AllowIPNPayment: false } : {};
 // BILL TO / SHIP TO (10/8/26): the building's own bill name wins (Four Corners' owner LLCs), else the company's billing card.
 // Ship To ALWAYS goes on — tenant on line 1, job address under it — even when no Bill To is on file.
@@ -152,12 +152,12 @@ export default async function handler(req:Request) {
      const page=(await qbQuery(`SELECT * FROM Invoice WHERE CustomerRef = '${qEsc(cid)}' STARTPOSITION ${start} MAXRESULTS 1000`)).Invoice||[];
      all.push(...page);if(page.length<1000)break;
     }
-    const hit=all.filter((inv:any)=>String(inv.PrivateNote||"").split(/\r?\n/).some((l:string)=>l.trim()===marker));
+    const hit=all.filter((inv:any)=>hasPayrollDay(inv,marker));
     if(hit.length>1)throw new Error("This payroll day is on more than one QuickBooks invoice; reconcile first");
     return hit[0]||null;
    },
    writeInvoice:async(payload:any,requestId:string)=>{
-    const full=payload.Id?payload:{...payload,DocNumber:await qbNextNumber(),...billTo(withMapBill(job,decision.row)),...noPay(job)};
+    const full=payload.Id?{...payload,...noPay(job),...noPay(withMapBill(job,decision.row))}:{...payload,DocNumber:await qbNextNumber(),...billTo(withMapBill(job,decision.row)),...noPay(job),...noPay(withMapBill(job,decision.row))};
     return (await qb("POST","invoice?requestid="+requestId,full)).Invoice;
    },
    record:async({invoice,created}:any)=>{
