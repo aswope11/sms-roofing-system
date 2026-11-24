@@ -628,12 +628,12 @@ test('a re-push is a different SMS label, and the same label stays quiet', () =>
   assert.ok(repushReason('', '!SMS/R', '', 'R').includes('not the label'));
 });
 
-test('LAW: the app reads only the five SMS labels on its own — no whole-inbox sweep, every 15 minutes, never sends', () => {
+test('LAW: the app reads only the five SMS labels on its own — no whole-inbox sweep, 5 AM and 6 PM Central (11/24/26), never sends', () => {
   const work = readFileSync('netlify/functions/work.mts', 'utf8');
   const sched = readFileSync('netlify/functions/labels.mts', 'utf8');
   for (const l of ['!SMS/BID', '!SMS/R', '!SMS/CO', '!SMS/JC', '!SMS/UC']) assert.ok(work.includes(`"${l}"`), l);
   assert.ok(!work.includes('newer_than:14d -in:chats'), 'the whole-inbox sweep is back');
-  assert.ok(sched.includes('schedule: "*/15 * * * *"'), 'the label check is not on a 15-minute schedule');
+  assert.ok(sched.includes('schedule: "0 0,11 * * *"'), 'the label check is not on the twice-a-day schedule (5 AM / 6 PM Central)');
   assert.ok(sched.includes('10000'), 'the label check stops around 10 seconds and resumes next run');
   assert.ok(!sched.includes('20000'), 'the label check is not still on a 20 second budget');
   assert.ok(work.includes("-label:crm-imported") && !work.includes('-label:"CRM imported"'), 'the exclusion uses Gmail\'s hyphenated label form');
