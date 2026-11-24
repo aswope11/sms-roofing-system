@@ -136,7 +136,22 @@ export default async function handler(req:Request) {
   const customer=(await qb("GET",`customer/${customerId}`)).Customer;
   if(!customer||customer.Active===false)throw new Error("Confirmed QuickBooks customer is inactive or missing");
   const covered=norm(await sql`SELECT number FROM invoices WHERE job_id=${jid} AND kind='real' AND covers_through>=${date}::date`);
-  if(covered.length)throw new Error(`Real invoice #${covered[0].number} already covers this day; reconcile before posting`);
+  if(covered.length){
+// 11/24/26: the ticket was finished after this day was already posted. If QuickBooks already has the day on ONE invoice
+// for this customer at the same charge, nothing is written — it is reported as posted so Daily Payroll can green it.
+// Anything else (missing, twice, different amount) still stops for a reconcile.
+const [yy,mm,dd]=date.split("-");const dayTag=`Date: ${Number(mm)}/${Number(dd)}/${yy.slice(2)}`;
+const isDay=(l:any)=>l.DetailType==="SalesItemLineDetail"&&new RegExp("(^|\\n)"+dayTag.replace(/\//g,"\\/")+"(\\s|$|\\n)").test(String(l.Description||""));
+const all:any[]=[];
+for(let start=1;;start+=1000){const page=(await qbQuery(`SELECT * FROM Invoice WHERE CustomerRef = '${qEsc(customerId)}' STARTPOSITION ${start} MAXRESULTS 1000`)).Invoice||[];all.push(...page);if(page.length<1000)break;}
+const hit=all.filter((inv:any)=>hasPayrollDay(inv,plan.marker));
+const dayCents=hit.length===1?(hit[0].Line||[]).filter(isDay).reduce((n:number,l:any)=>n+Math.round(Number(l.Amount||0)*100),0):-1;
+if(hit.length===1&&dayCents===Math.round(plan.charge*100)){
+await lock.query("COMMIT");
+return json({verified:true,qbId:String(hit[0].Id),number:hit[0].DocNumber,total:Number(hit[0].TotalAmt),charge:plan.charge,cost:plan.cost,reused:true,action:"already-posted",job_id:jid,work_date:date,customer:customer.FullyQualifiedName||customer.DisplayName});
+}
+throw new Error(`Real invoice #${covered[0].number} already covers this day; reconcile before posting`);
+}
   const seats=norm(await sql`SELECT * FROM invoices WHERE job_id=${jid} AND kind='placeholder' AND amount>0 AND zeroed_by IS NULL ORDER BY id`);
   if(seats.length>1)throw new Error("Ticket has more than one open placeholder; fold them first — no duplicate added");
   const seat=seats[0]||null;
