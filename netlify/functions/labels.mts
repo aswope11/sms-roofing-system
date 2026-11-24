@@ -1,4 +1,4 @@
-// THE 15-MINUTE LABEL CHECK (9/21/26) — built into the app on Netlify, not a Claude scheduled task.
+// THE LABEL CHECK (9/21/26; twice a day since 11/24/26) — built into the app on Netlify, not a Claude scheduled task.
 // Every 15 minutes it looks in his five Gmail labels — SMS/BID, SMS/R, SMS/CO, SMS/JC, SMS/UC — and
 // nowhere else. An empty label returns at once and costs nothing: Claude is only called when an email
 // is actually sitting in one. Each email is filed one at a time (so nothing times out), up to eight a
@@ -35,4 +35,7 @@ export default async () => {
   return new Response(JSON.stringify({ filed, stopped }), { headers: { "content-type": "application/json" } });
 };
 
-export const config: Config = { schedule: "*/15 * * * *" };
+// 11/24/26: was every 15 minutes — that kept the database awake 24/7 (~240 credits/day). Now twice a day:
+// 11:00 UTC = 5 AM Central, 00:00 UTC = 6 PM Central (CST; an hour later on the clock during daylight time).
+// Any other time: the "Check the mail now" button on the mail strip runs the same scan.
+export const config: Config = { schedule: "0 0,11 * * *" };
