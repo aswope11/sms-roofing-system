@@ -846,7 +846,8 @@ function transferPayrollSubs(ss,day,model,log) {
     const label=String(weekly.getRange(first,col).getValue()).trim();
     const sourceAmount=r2(weekly.getRange(first,col+2,n,1).getValues().reduce((sum,r)=>sum+Number(r[0]||0),0));
     const expected=r2(a.men.reduce((sum,m)=>sum+m.amount,0));
-    if(label!==a.label||sourceAmount!==expected)throw new Error('Daily Payroll breakdown differs from saved work; not transferred: '+a.label);
+    // Older weeks still show the long label (written before 11/25/26); either one is the same job.
+    if((label!==a.label&&label!==a.full)||sourceAmount!==expected)throw new Error('Daily Payroll breakdown differs from saved work; not transferred: '+a.label);
     const crew=model.subs.find(s=>s.leader_id===a.leader_id),boss=crew.men.find(m=>m.id===a.leader_id);
     const leader=boss?boss.name:(crew.men[0]||{}).name;if(!leader)throw new Error('Sub crew leader missing');
     const quoted="'"+weekly.getName().replace(/'/g,"''")+"'!";

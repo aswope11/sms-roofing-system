@@ -104,3 +104,35 @@ test('same jobs, different scopes = same look', ()=>{
   assert.deepEqual(m.sms.men[0].style,m.sms.men[1].style);
   assert.equal(m.sms.rows.filter(r=>r.job).length,1);
 });
+test('Nov 25 ask: Daily Payroll job cell shows the job only; description stays in the app; QB label unchanged', ()=>{
+  const d='2026-11-23';
+  const w={crew:[{id:1,name:'Charlie',kind:'employee',day_rate:250},{id:4,name:'Tony',kind:'employee',day_rate:230},{id:2,name:'Puma',kind:'sub',day_rate:400},{id:3,name:'Moscar',kind:'sub',boss_id:2,day_rate:300}],crewDays:[],
+    jobs:[{id:1,tag:'UC',address:'10007 Hollow Way',title:'Gravel stop, ballast guard, and ballast installation'},
+      {id:2,tag:'TC',address:'2612 & 2614 Manor Way, Dallas, TX 75235',title:'TC – Section B roof test cut'},
+      {id:3,tag:'UC',address:'1205 E Levee St',title:'Scupper and flashing repairs'},
+      {id:4,tag:'R',address:'216 W. Mulberry St.',title:'MKOA Studio'},
+      {id:5,tag:'UC',address:'10914 Strait Lane',title:'Gravel stop and gutter'}],
+    stops:[[1,1],[4,2],[4,3],[2,4],[3,5],[2,3]].map(([crew_id,job_id],i)=>({id:i+1,crew_id,job_id,day_scope:'',work_date:d}))};
+  const m=buildPayrollDay(w,d,{roster:['Charlie','Tony'],slots:5});
+  const p=payrollSheetPlan(m,{sheetId:1,col:5,employeeCapacity:5});
+  const shown=p.verification.map(v=>v.value.stringValue).filter(Boolean);
+  ['UC-10007 Hollow Way','TC-2612 & 2614 Manor Way','UC-1205 E Levee St','R-216 W. Mulberry St.','UC-10914 Strait Lane'].forEach(t=>assert.ok(shown.includes(t),t));
+  assert.ok(!shown.some(t=>/Gravel stop|Scupper|test cut|MKOA|Dallas, TX/.test(t)));
+  // QuickBooks posting still reads the full label, so posted days are not seen as changed.
+  assert.equal(m.sms.rows[0].job.text,'UC-10007 Hollow Way - Gravel stop, ballast guard, and ballast installation');
+});
+test('two different tickets at one address on the same day still read apart', ()=>{
+  const w=fixture(); w.jobs.push({id:20,tag:'JC',address:'2409 Eastlake Hill',title:'Reflash posts at canopy'});
+  w.stops.push({id:90,crew_id:1,job_id:20,work_date:date,day_scope:'Posts'});
+  const m=buildPayrollDay(w,date);
+  const sheet=m.sms.rows.filter(r=>r.job).map(r=>r.job.sheet);
+  assert.ok(sheet.includes('JC-2409 Eastlake - Standing Seam'));
+  assert.ok(sheet.includes('JC-2409 Eastlake - Reflash posts at'));
+  assert.ok(sheet.includes('JC-Fate - 20k'));
+});
+test('sub breakdown carries both labels so older weeks (long label) and new days (short) both transfer', ()=>{
+  const w=fixture(); w.jobs[1].address='4860 E. I - 30'; w.jobs.push({id:21,tag:'UC',address:'1205 E Levee St',title:'Scupper and flashing repairs'});
+  w.stops.push({id:91,crew_id:2,job_id:21,work_date:date,day_scope:''});
+  const a=buildPayrollDay(w,date).allocations.find(x=>x.job_id===21);
+  assert.equal(a.label,'UC-1205 E Levee St'); assert.equal(a.full,'UC-1205 E Levee St - Scupper and flashing repairs');
+});
