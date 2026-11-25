@@ -38,6 +38,24 @@ function norm(v: any): any {
 }
 // 11/4/26: QuickBooks placeholders come from Daily Payroll now, not from greening a day in the app.
 const APP_GREEN_SENDS_QB = false;
+
+// 11/25/26 (his rule): nothing runs on a timer. Greening a day (or taking the green off) in the app is what starts
+// Daily Payroll: this asks the Payroll Robot to run its whole sync once (sheet, Subs tab, QuickBooks push).
+// The robot answers right away and runs about a minute later. The URL and key live in Netlify settings, never in code.
+async function pingPayrollRobot(workDate: string, green: boolean): Promise<string> {
+  const url = Netlify.env.get("PAYROLL_ROBOT_URL"), key = Netlify.env.get("PAYROLL_ROBOT_KEY");
+  if (!url || !key) return "not set up";
+  const ctrl = new AbortController();
+  const stop = setTimeout(() => ctrl.abort(), 8000);
+  try {
+    const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ key, work_date: workDate, green }), redirect: "follow", signal: ctrl.signal });
+    const text = (await res.text()).trim().slice(0, 40);
+    return res.ok ? text || "sent" : `robot answered ${res.status}`;
+  } catch (e: any) {
+    return ctrl.signal.aborted ? "sent (no answer yet)" : `robot not reached: ${String(e?.message || e).slice(0, 80)}`;
+  } finally { clearTimeout(stop); }
+}
 const today = () => new Date(Date.now() - 5 * 3600 * 1000).toISOString().slice(0, 10); // Central time
 
 const JOB_COLS = (sql: any) => sql`
@@ -1997,11 +2015,12 @@ export async function workInner(req: Request) {
       const b = await body();
       const [row] = await sql`INSERT INTO green_days (work_date, green, changed_at) VALUES (${b.work_date}, ${!!b.green}, NOW())
         ON CONFLICT (work_date) DO UPDATE SET green = EXCLUDED.green, changed_at = NOW() RETURNING *`;
+      const payroll_robot = await pingPayrollRobot(String(b.work_date), !!b.green);
       // Step 2: day goes green → a priced placeholder in QuickBooks for every R / CO / UC ticket that day. Taken back → those placeholders are deleted.
       const qbDone: string[] = [], qbErrors: string[] = [];
       // 11/4/26 (his order): greening a day in the app NO LONGER touches QuickBooks. The crew day goes to Daily Payroll;
       // QuickBooks happens from there, once the day is greened in the sheet. Doing it here too would log it twice.
-      if (!APP_GREEN_SENDS_QB) return json({ ...norm(row), qb_done: qbDone, qb_errors: qbErrors });
+      if (!APP_GREEN_SENDS_QB) return json({ ...norm(row), qb_done: qbDone, qb_errors: qbErrors, payroll_robot });
       if (b.green) {
         // a placeholder he deleted in QuickBooks by hand is gone — clear the app's copy so the day can go in again
         for (const p of norm(await sql`SELECT * FROM invoices WHERE kind = 'placeholder' AND work_date = ${b.work_date} AND amount > 0 AND qb_id <> ''`)) {
