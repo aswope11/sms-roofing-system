@@ -94,11 +94,15 @@ test('adds a day to the open placeholder without changing its date', async () =>
   assert.equal(back.TxnDate, '2026-11-16'); assert.equal(back.Line.length, 2);
   assert.equal(back.PrivateNote, 'R-11/2/26');
 });
-test('a day already typed on the placeholder by hand is not added again', async () => {
+test('a day already typed on the placeholder by hand is not added again; same charge counts as posted (11/26/26)', async () => {
   const line = {DetailType: 'SalesItemLineDetail', Amount: 300, Description: 'Date: 11/9/26\n\nPuma cost $200.00 × 1.5 = $300.00'};
   const inv = {Id: '9', DocNumber: '4950', SyncToken: '1', TotalAmt: 300, TxnDate: '2026-11-23', CustomerRef: {value: CUST}, Line: [line]};
   const qb = fakeQB({invoices: [inv], seat: {qbId: '9', dayAmount: null}});
-  await assert.rejects(() => postPayrollPlaceholder(make(), qb), /already written/); assert.equal(qb.writes, 0);
+  const out = await postPayrollPlaceholder(make(), qb);
+  assert.equal(out.action, 'recorded-existing'); assert.equal(qb.writes, 0); assert.equal(qb.records.length, 1);
+  const off = {...line, Amount: 250};
+  const qb2 = fakeQB({invoices: [{...inv, TotalAmt: 250, Line: [off]}], seat: {qbId: '9', dayAmount: null}});
+  await assert.rejects(() => postPayrollPlaceholder(make(), qb2), /already written/); assert.equal(qb2.writes, 0);
 });
 test('dry run reads everything and writes nothing', async () => {
   const qb = fakeQB();

@@ -76,6 +76,22 @@ const mapTicket = (job: any) => ({ property_id: job.property_id, address: job.ad
 async function mapDecisionFor(sql: any, job: any) {
   return W.mapDecision(norm(await sql`SELECT * FROM whoswho`), mapTicket(job));
 }
+// 11/26/26: no Who's Who confirm needed when the QuickBooks customer already exists (see W.payrollCustomer).
+async function payrollDecision(sql: any, job: any) {
+  const d = await mapDecisionFor(sql, job);
+  let cache: any[] | null = null;
+  const p = await W.payrollCustomer({
+    decision: d, address: job?.address, city: job?.city, tenant: job?.tenant,
+    isActive: async (id: string) => { try { const c = (await qb("GET", `customer/${encodeURIComponent(id)}`)).Customer; return !!c && c.Active !== false; } catch { return false; } },
+    customers: async () => {
+      if (cache) return cache;
+      const all: any[] = [];
+      for (let start = 1; ; start += 1000) { const page = (await qbQuery(`SELECT * FROM Customer WHERE Active = true STARTPOSITION ${start} MAXRESULTS 1000`)).Customer || []; all.push(...page); if (page.length < 1000) break; }
+      return (cache = all);
+    },
+  });
+  return p.ok ? { ok: true, row: { ...(p.row || {}), qb_customer_id: p.id }, how: p.how } : { ok: false, why: p.why };
+}
 // Bill To comes from the map row (it is what he confirmed) — billTo() reads the job's own bill_name first.
 const withMapBill = (job: any, row: any) => row && String(row.bill_name || "").trim() ? { ...job, bill_name: row.bill_name, bill_addr: row.bill_addr } : job;
 
@@ -113,8 +129,8 @@ export default async function handler(req:Request) {
    if(b.source_spreadsheet!==PAYROLL_SOURCE_ID)throw new Error("Verified Daily Payroll source required");
    if(!job||!M.canPlaceholder(job.tag))throw new Error("Ticket is not a placeholder ticket");
    if(shares.some((s:any)=>Number(s.job_id)===jid))throw new Error("This ticket still has work that day; nothing taken off");
-   const d0=await mapDecisionFor(sql,job);
-   if(!d0.ok)throw new Error("No confirmed QuickBooks customer for this ticket (Who's Who); no write made");
+   const d0=await payrollDecision(sql,job);
+   if(!d0.ok)throw new Error(d0.why||"No QuickBooks customer for this ticket; no write made");
    const seats0=norm(await sql`SELECT * FROM invoices WHERE job_id=${jid} AND kind='placeholder' AND amount>0 AND zeroed_by IS NULL ORDER BY id`);
    if(seats0.length!==1||!seats0[0].qb_id)throw new Error("Ticket needs exactly one open QuickBooks placeholder to take a day off");
    const s0=seats0[0];
@@ -130,8 +146,8 @@ export default async function handler(req:Request) {
    return json({...out,job_id:jid,work_date:date});
   }
   const plan=payrollBridgePlan({request:b,job,approved:greens.length===1,shares,billLabor:M.billLabor,menAtHours:M.menAtHours,canPlaceholder:M.canPlaceholder});
-  const decision=await mapDecisionFor(sql,job);
-  if(!decision.ok)throw new Error("No confirmed QuickBooks customer for this ticket (Who's Who); no write made");
+  const decision=await payrollDecision(sql,job);
+  if(!decision.ok)throw new Error(decision.why||"No QuickBooks customer for this ticket; no write made");
   const customerId=String(decision.row.qb_customer_id);
   const customer=(await qb("GET",`customer/${customerId}`)).Customer;
   if(!customer||customer.Active===false)throw new Error("Confirmed QuickBooks customer is inactive or missing");
@@ -150,7 +166,8 @@ if(hit.length===1&&dayCents===Math.round(plan.charge*100)){
 await lock.query("COMMIT");
 return json({verified:true,qbId:String(hit[0].Id),number:hit[0].DocNumber,total:Number(hit[0].TotalAmt),charge:plan.charge,cost:plan.cost,reused:true,action:"already-posted",job_id:jid,work_date:date,customer:customer.FullyQualifiedName||customer.DisplayName});
 }
-throw new Error(`Real invoice #${covered[0].number} already covers this day; reconcile before posting`);
+// 11/26/26 his answer: a day a sent invoice already covers goes on a placeholder (new one if the ticket has none open),
+// dated 2 weeks after the day, memo TAG-date. The sent invoice is never touched.
 }
   const seats=norm(await sql`SELECT * FROM invoices WHERE job_id=${jid} AND kind='placeholder' AND amount>0 AND zeroed_by IS NULL ORDER BY id`);
   if(seats.length>1)throw new Error("Ticket has more than one open placeholder; fold them first — no duplicate added");
